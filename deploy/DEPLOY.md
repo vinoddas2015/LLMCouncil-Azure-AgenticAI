@@ -1,13 +1,16 @@
 # LLM Council MGA — Cloud Deployment Guide
 
-## Quick Start (Local Docker)
+## Quick Start (Local)
 
 ```bash
-# Build and run
-docker compose up --build
+# Backend (Terminal 1)
+uv run python -m backend.main
 
-# With Redis-backed memory
-MEMORY_BACKEND=redis docker compose --profile redis up --build
+# Frontend (Terminal 2)
+cd frontend && npm run dev
+
+# Or use the start script
+./start.sh
 ```
 
 ## Cloud-Agnostic Architecture

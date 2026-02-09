@@ -923,8 +923,6 @@ python -m pytest tests/test_memory_pipeline.py -v
 | `frontend/src/components/MemoryPanel.jsx` | Memory management UI panel |
 | `frontend/src/components/LearnUnlearn.jsx` | Inline learn/unlearn controls |
 | `tests/test_memory_pipeline.py` | 42-test comprehensive test suite |
-| `Dockerfile` | Multi-stage container build |
-| `docker-compose.yml` | Local & Redis deployment profiles |
 | `deploy/DEPLOY.md` | Cloud deployment guide (AWS, Azure, GCP, K8s) |
 
 ---

@@ -83,8 +83,7 @@ LLMCouncilMGA/
 │       └── api.js          # Backend API client
 ├── tests/                  # Test suite
 ├── deploy/                 # Cloud deployment guides
-├── ARCHITECTURE.md         # Full system architecture docs
-└── docker-compose.yml      # Container orchestration
+└── ARCHITECTURE.md         # Full system architecture docs
 ```
 
 ## Adding a New Memory Backend

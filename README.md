@@ -13,7 +13,6 @@
   <a href="#features">Features</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#docker">Docker</a> •
   <a href="#api-reference">API</a> •
   <a href="#testing">Testing</a> •
   <a href="#contributing">Contributing</a>
@@ -159,22 +158,6 @@ Open **http://localhost:5173** in your browser.
 
 ---
 
-## Docker
-
-### Local (JSON storage)
-```bash
-docker compose up --build
-```
-
-### With Redis Memory Backend
-```bash
-MEMORY_BACKEND=redis docker compose --profile redis up --build
-```
-
-See [deploy/DEPLOY.md](deploy/DEPLOY.md) for AWS, Azure, GCP, and Kubernetes deployment guides.
-
----
-
 ## API Reference
 
 ### Conversation Endpoints
@@ -287,8 +270,6 @@ LLMCouncilMGA/
 ├── ARCHITECTURE.md             # Full system architecture
 ├── CONTRIBUTING.md             # Contribution guidelines
 ├── NOTICE                      # Copyright & attribution
-├── Dockerfile                  # Multi-stage container build
-├── docker-compose.yml          # Local + Redis profiles
 ├── pyproject.toml              # Python project metadata
 ├── requirements.txt            # Python dependencies
 ├── .env.example                # Environment config template
@@ -306,7 +287,6 @@ LLMCouncilMGA/
 | **HTTP Client** | httpx (async) | 0.27+ |
 | **Streaming** | Server-Sent Events (SSE) | — |
 | **Storage** | JSON files (pluggable: Redis, DynamoDB, CosmosDB) | — |
-| **Container** | Docker, Docker Compose | — |
 | **Testing** | pytest, pytest-asyncio | 9.x, 1.x |
 | **API Gateway** | Bayer myGenAssist | — |
 
