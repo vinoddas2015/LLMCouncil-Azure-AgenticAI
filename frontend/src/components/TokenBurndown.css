@@ -1,0 +1,261 @@
+/* ── Token / Cost Burndown Card ── */
+.burndown-card {
+  background: rgba(52, 211, 153, 0.06);
+  border: 2px solid rgba(52, 211, 153, 0.20);
+  border-radius: 12px;
+  margin-top: 16px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.burndown-card:hover {
+  border-color: rgba(52, 211, 153, 0.40);
+}
+
+/* ── Header ── */
+.burndown-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 16px 20px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.burndown-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.burndown-stat-value {
+  font-size: 18px;
+  font-weight: 800;
+  font-family: monospace;
+  color: var(--text-primary);
+}
+
+.burndown-stat-value.cost-value {
+  color: var(--accent-primary);
+}
+
+.burndown-stat-value.savings-value {
+  color: var(--success);
+}
+
+.burndown-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.savings-stat {
+  margin-left: auto;
+}
+
+.burndown-toggle {
+  background: none;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-muted);
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.burndown-toggle:hover {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+/* ── Details ── */
+.burndown-details {
+  padding: 0 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.burndown-section h5 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--success);
+  margin: 0 0 10px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ── Per-Stage Table ── */
+.burndown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: monospace;
+}
+
+.burndown-table th {
+  padding: 8px 10px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-align: right;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.burndown-table th:first-child {
+  text-align: left;
+}
+
+.burndown-table td {
+  padding: 8px 10px;
+  text-align: right;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.burndown-table td:first-child {
+  text-align: left;
+}
+
+.stage-name-cell {
+  color: var(--text-primary) !important;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.cost-cell {
+  color: var(--accent-primary) !important;
+}
+
+.direct-cell {
+  color: var(--text-muted) !important;
+  text-decoration: line-through;
+}
+
+.savings-cell {
+  color: var(--success) !important;
+  font-weight: 700;
+}
+
+/* ── Per-Model Breakdown ── */
+.model-cost-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.model-cost-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-primary);
+  border-radius: 6px;
+  border: 1px solid var(--border-default);
+}
+
+.model-cost-name {
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--text-primary);
+  min-width: 120px;
+  font-weight: 500;
+}
+
+.model-cost-bar-track {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-surface);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.model-cost-bar-fill {
+  height: 100%;
+  background: var(--accent-primary);
+  border-radius: 3px;
+  transition: width 0.6s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-cost-bar-fill {
+    transition: none;
+  }
+}
+
+.model-cost-tokens {
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text-secondary);
+  min-width: 60px;
+  text-align: right;
+}
+
+.model-cost-price {
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--accent-primary);
+  font-weight: 700;
+  min-width: 56px;
+  text-align: right;
+}
+
+/* ── Gateway vs Direct Comparison ── */
+.gateway-comparison {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comparison-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.comparison-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 55px;
+}
+
+.comparison-track {
+  flex: 1;
+  height: 10px;
+  background: var(--bg-surface);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.comparison-fill {
+  height: 100%;
+  border-radius: 5px;
+  transition: width 0.6s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .comparison-fill {
+    transition: none;
+  }
+}
+
+.direct-fill {
+  background: var(--text-muted);
+}
+
+.gateway-fill {
+  background: var(--success);
+}
+
+.comparison-amount {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: monospace;
+  color: var(--text-secondary);
+  min-width: 56px;
+  text-align: right;
+}

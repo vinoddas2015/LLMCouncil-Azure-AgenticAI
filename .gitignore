@@ -1,0 +1,64 @@
+# ============================================================
+# LLM Council MGA — Git Ignore
+# ============================================================
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+
+# ── Virtual environments ─────────────────────────────────────
+.venv/
+myenv/
+venv/
+env/
+
+# ── Keys, secrets, tokens ───────────────────────────────────
+.env
+*.pem
+*.key
+
+# ── Data files (user-specific) ───────────────────────────────
+data/
+
+# ── IDE / Editor ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Frontend ─────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+.vite/
+
+# ── Testing / Coverage ───────────────────────────────────────
+.pytest_cache/
+htmlcov/
+.coverage
+*.cover
+
+# ── Docker ───────────────────────────────────────────────────
+*.log
+
+# ── OS files ─────────────────────────────────────────────────
+desktop.ini
+ehthumbs.db
+
+# ── Build artifacts ──────────────────────────────────────────
+uv.lock
+.python-version
+
+# ── Temp / scratch files ────────────────────────────────────
+*.tmp
+response_*.json

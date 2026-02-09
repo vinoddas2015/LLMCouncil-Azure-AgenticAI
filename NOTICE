@@ -1,0 +1,28 @@
+# ============================================================
+# LLM Council MGA — NOTICE
+# ============================================================
+#
+# Copyright (c) 2026 Bayer AG — Pharmaceutical Division
+# Internal Use Only
+#
+# This software is the proprietary property of Bayer AG and is
+# intended solely for use within the Bayer organization. 
+# Unauthorized copying, distribution, or use of this software
+# outside of Bayer AG is strictly prohibited.
+#
+# This project builds upon open-source components licensed
+# under their respective terms (MIT, Apache 2.0, BSD).
+# See requirements.txt and frontend/package.json for details.
+#
+# ============================================================
+#
+# Originally inspired by Andrej Karpathy's LLM Council concept.
+# Extended with enterprise features by the Bayer Digital team:
+#   - Self-healing resilience architecture
+#   - Grounding score & rubric evaluation
+#   - Token/cost burndown tracking
+#   - Three-tier memory management pipeline
+#   - Stage-gate orchestrator agents
+#   - Cloud-agnostic deployment
+#
+# ============================================================

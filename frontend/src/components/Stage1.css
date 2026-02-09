@@ -1,0 +1,65 @@
+.stage {
+  margin: 24px 0;
+  padding: 20px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+}
+
+.stage-title {
+  margin: 0 0 16px 0;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  padding: 8px 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 6px 6px 0 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+}
+
+.tab.active {
+  background: var(--bg-primary);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  border-bottom-color: var(--bg-primary);
+  font-weight: 600;
+}
+
+.tab-content {
+  background: var(--bg-primary);
+  padding: 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border-default);
+}
+
+.model-name {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 12px;
+  font-family: monospace;
+}
+
+.response-text {
+  color: var(--text-primary);
+  line-height: 1.6;
+}

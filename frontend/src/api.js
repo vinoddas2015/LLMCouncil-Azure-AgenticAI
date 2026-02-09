@@ -1,0 +1,352 @@
+/**
+ * API client for the LLM Council backend.
+ */
+
+const API_BASE = 'http://localhost:8001';
+
+export const api = {
+  /**
+   * Get available models and defaults.
+   */
+  async getModels() {
+    const response = await fetch(`${API_BASE}/api/models`);
+    if (!response.ok) {
+      throw new Error('Failed to get models');
+    }
+    return response.json();
+  },
+
+  /**
+   * Enhance a user prompt using AI to produce a more detailed, specific version.
+   * @param {string} content - The original user prompt
+   * @returns {Promise<{original: string, enhanced: string}>}
+   */
+  async enhancePrompt(content) {
+    const response = await fetch(`${API_BASE}/api/enhance-prompt`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ content }),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to enhance prompt');
+    }
+    return response.json();
+  },
+
+  /**
+   * List all conversations.
+   */
+  async listConversations() {
+    const response = await fetch(`${API_BASE}/api/conversations`);
+    if (!response.ok) {
+      throw new Error('Failed to list conversations');
+    }
+    return response.json();
+  },
+
+  /**
+   * Create a new conversation.
+   */
+  async createConversation() {
+    const response = await fetch(`${API_BASE}/api/conversations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to create conversation');
+    }
+    return response.json();
+  },
+
+  /**
+   * Get a specific conversation.
+   */
+  async getConversation(conversationId) {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}`
+    );
+    if (!response.ok) {
+      throw new Error('Failed to get conversation');
+    }
+    return response.json();
+  },
+
+  /**
+   * Export a conversation in the specified format.
+   * @param {string} conversationId - The conversation ID
+   * @param {string} format - Export format: 'markdown' or 'json'
+   * @returns {Promise<{filename: string, content: string, content_type: string}>}
+   */
+  async exportConversation(conversationId, format = 'markdown') {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/export?format=${format}`
+    );
+    if (!response.ok) {
+      throw new Error('Failed to export conversation');
+    }
+    return response.json();
+  },
+
+  /**
+   * Delete a conversation.
+   */
+  async deleteConversation(conversationId) {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}`,
+      {
+        method: 'DELETE',
+      }
+    );
+    if (!response.ok) {
+      throw new Error('Failed to delete conversation');
+    }
+    return response.json();
+  },
+
+  /**
+   * Send a message in a conversation.
+   */
+  async sendMessage(conversationId, content) {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/message`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error('Failed to send message');
+    }
+    return response.json();
+  },
+
+  /**
+   * Send a message and receive streaming updates.
+   * @param {string} conversationId - The conversation ID
+   * @param {string} content - The message content
+   * @param {function} onEvent - Callback function for each event: (eventType, data) => void
+   * @param {Array} attachments - Optional array of attachment objects with base64 content
+   * @param {Object} preferences - Optional object with council_models and chairman_model
+   * @returns {Promise<void>}
+   */
+  async sendMessageStream(conversationId, content, onEvent, attachments = [], preferences = {}) {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/message/stream`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          content,
+          attachments: attachments.map(a => ({
+            name: a.name,
+            type: a.type,
+            size: a.size,
+            base64: a.base64,
+          })),
+          council_models: preferences.council_models || null,
+          chairman_model: preferences.chairman_model || null,
+          web_search_enabled: preferences.web_search_enabled || false,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to send message');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n');
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          try {
+            const event = JSON.parse(data);
+            onEvent(event.type, event);
+          } catch (e) {
+            console.error('Failed to parse SSE event:', e);
+          }
+        }
+      }
+    }
+  },
+
+  // ────────────────────────────────────────────────────────────────────
+  // Kill Switch & Health Monitoring API
+  // ────────────────────────────────────────────────────────────────────
+
+  /**
+   * Kill a specific in-flight council session (primary kill switch).
+   * @param {string} sessionId - The session ID received from session_start event
+   * @param {string} reason - Optional reason for killing
+   */
+  async killSession(sessionId, reason = 'User triggered kill switch') {
+    const response = await fetch(`${API_BASE}/api/kill-switch/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, reason }),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to kill session');
+    }
+    return response.json();
+  },
+
+  /**
+   * Emergency global halt — kills ALL sessions and blocks new ones.
+   * @param {string} reason - Reason for the halt
+   */
+  async globalHalt(reason = 'Emergency halt triggered by user') {
+    const response = await fetch(`${API_BASE}/api/kill-switch/halt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to activate global halt');
+    }
+    return response.json();
+  },
+
+  /**
+   * Release global halt to resume normal operation.
+   */
+  async releaseHalt() {
+    const response = await fetch(`${API_BASE}/api/kill-switch/release`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      throw new Error('Failed to release halt');
+    }
+    return response.json();
+  },
+
+  /**
+   * Get kill switch status (active sessions, halt state).
+   */
+  async getKillSwitchStatus() {
+    const response = await fetch(`${API_BASE}/api/kill-switch/status`);
+    if (!response.ok) {
+      throw new Error('Failed to get kill switch status');
+    }
+    return response.json();
+  },
+
+  /**
+   * Get full system health: circuits, healing actions, kill switch.
+   */
+  async getSystemHealth() {
+    const response = await fetch(`${API_BASE}/api/health`);
+    if (!response.ok) {
+      throw new Error('Failed to get system health');
+    }
+    return response.json();
+  },
+
+  /**
+   * Reset circuit breaker for a model (or all models).
+   * @param {string|null} model - Model ID to reset, or null for all
+   */
+  async resetCircuit(model = null) {
+    const url = model
+      ? `${API_BASE}/api/health/circuits/reset?model=${encodeURIComponent(model)}`
+      : `${API_BASE}/api/health/circuits/reset`;
+    const response = await fetch(url, { method: 'POST' });
+    if (!response.ok) {
+      throw new Error('Failed to reset circuit');
+    }
+    return response.json();
+  },
+
+  // ────────────────────────────────────────────────────────────────────
+  // Memory Management API
+  // ────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get memory statistics across all tiers.
+   */
+  async getMemoryStats() {
+    const response = await fetch(`${API_BASE}/api/memory/stats`);
+    if (!response.ok) throw new Error('Failed to get memory stats');
+    return response.json();
+  },
+
+  /**
+   * List memories for a tier (semantic, episodic, procedural).
+   * @param {string} type - Memory tier
+   * @param {boolean} includeUnlearned - Whether to include unlearned entries
+   */
+  async listMemories(type, includeUnlearned = false) {
+    const url = `${API_BASE}/api/memory/${type}?include_unlearned=${includeUnlearned}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Failed to list ${type} memories`);
+    return response.json();
+  },
+
+  /**
+   * Get a specific memory entry.
+   */
+  async getMemoryEntry(type, id) {
+    const response = await fetch(`${API_BASE}/api/memory/${type}/${id}`);
+    if (!response.ok) throw new Error('Memory entry not found');
+    return response.json();
+  },
+
+  /**
+   * Apply a learn/unlearn decision.
+   * @param {string} decision - "learn" or "unlearn"
+   * @param {string} memoryType - "semantic", "episodic", or "procedural"
+   * @param {string} memoryId - The memory entry ID
+   * @param {string} reason - Optional reason for the decision
+   */
+  async applyMemoryDecision(decision, memoryType, memoryId, reason = '') {
+    const response = await fetch(`${API_BASE}/api/memory/decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        decision,
+        memory_type: memoryType,
+        memory_id: memoryId,
+        reason,
+      }),
+    });
+    if (!response.ok) throw new Error('Failed to apply memory decision');
+    return response.json();
+  },
+
+  /**
+   * Search memories by text.
+   */
+  async searchMemories(type, query, limit = 10) {
+    const url = `${API_BASE}/api/memory/search/${type}?q=${encodeURIComponent(query)}&limit=${limit}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Search failed');
+    return response.json();
+  },
+
+  /**
+   * Delete a memory entry permanently.
+   */
+  async deleteMemory(type, id) {
+    const response = await fetch(`${API_BASE}/api/memory/${type}/${id}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('Failed to delete memory');
+    return response.json();
+  },
+};

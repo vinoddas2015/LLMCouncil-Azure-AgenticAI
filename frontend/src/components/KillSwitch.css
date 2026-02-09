@@ -1,0 +1,198 @@
+/* ─── Kill Switch Styles ───────────────────────────────────────────── */
+
+.kill-switch-container {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Primary stop button (per-session) */
+.kill-switch-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  transition: all 0.15s ease;
+}
+
+.kill-switch-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.kill-session {
+  background: #dc2626;
+  color: #fff;
+  padding: 6px 14px;
+  box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4);
+  animation: kill-pulse 2s infinite;
+}
+
+.kill-session:hover:not(:disabled) {
+  background: #b91c1c;
+  transform: scale(1.04);
+}
+
+@keyframes kill-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.5); }
+  70% { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
+
+.kill-icon {
+  font-size: 14px;
+}
+
+.kill-label {
+  letter-spacing: 0.3px;
+}
+
+/* Emergency halt button (small, always visible) */
+.kill-halt {
+  background: transparent;
+  color: #f59e0b;
+  padding: 4px 8px;
+  font-size: 16px;
+  opacity: 0.6;
+}
+
+.kill-halt:hover:not(:disabled) {
+  opacity: 1;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+/* Spinner for in-progress kill */
+.kill-switch-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Halt active bar */
+.halt-active-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #7f1d1d;
+  color: #fca5a5;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.halt-pulse {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #ef4444;
+  border-radius: 50%;
+  animation: halt-blink 1s infinite;
+}
+
+@keyframes halt-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+.release-btn {
+  background: #fca5a5;
+  color: #7f1d1d;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+.release-btn:hover {
+  background: #fee2e2;
+}
+
+/* Confirmation overlay */
+.kill-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.kill-confirm-modal {
+  background: #1e1e2e;
+  border: 2px solid #ef4444;
+  border-radius: 12px;
+  padding: 28px 32px;
+  max-width: 440px;
+  width: 90%;
+  color: #e2e8f0;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.kill-confirm-modal h3 {
+  color: #ef4444;
+  margin: 0 0 12px 0;
+  font-size: 18px;
+}
+
+.kill-confirm-modal p {
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0 0 10px 0;
+  color: #cbd5e1;
+}
+
+.kill-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.cancel-btn {
+  background: #334155;
+  color: #e2e8f0;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cancel-btn:hover {
+  background: #475569;
+}
+
+.confirm-halt-btn {
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.confirm-halt-btn:hover {
+  background: #b91c1c;
+}

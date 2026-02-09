@@ -1,0 +1,203 @@
+.sidebar {
+  width: 280px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-default);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.sidebar-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.logo-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bayer-logo {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.sidebar-header h1 {
+  font-size: 16px;
+  margin: 0;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-btn {
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.settings-btn:hover {
+  background: rgba(75, 85, 99, 0.5);
+}
+
+.new-conversation-btn {
+  margin: 12px;
+  padding: 12px;
+  background: var(--accent-strong);
+  border: none;
+  border-radius: 8px;
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.new-conversation-btn:hover {
+  background: var(--accent-primary);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.conversation-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.no-conversations {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.conversation-item {
+  padding: 12px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+  position: relative;
+}
+
+.conversation-item:hover {
+  background: rgba(75, 85, 99, 0.4);
+}
+
+.conversation-item.active {
+  background: rgba(75, 85, 99, 0.5);
+  border-left: 3px solid var(--accent-primary);
+}
+
+.conversation-title {
+  color: var(--text-primary);
+  font-size: 14px;
+  margin-bottom: 4px;
+  padding-right: 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.conv-menu-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s;
+}
+
+.conversation-item:hover .conv-menu-btn {
+  opacity: 1;
+}
+
+.conv-menu-btn:hover {
+  background: rgba(75, 85, 99, 0.6);
+  color: var(--text-primary);
+}
+
+.conv-menu {
+  position: absolute;
+  right: 8px;
+  top: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  overflow: hidden;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.conv-menu button {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+
+.conv-menu button:hover {
+  background: rgba(75, 85, 99, 0.6);
+}
+
+.conv-menu button.delete-action {
+  color: var(--error);
+}
+
+.conv-menu button.delete-action:hover {
+  background: rgba(248, 113, 113, 0.15);
+}
+
+.sidebar-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-default);
+  text-align: center;
+}
+
+.powered-by {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.footer-email {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.footer-email:hover {
+  color: var(--accent-hover);
+}

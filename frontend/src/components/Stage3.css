@@ -1,0 +1,25 @@
+.stage3 {
+  background: rgba(52, 211, 153, 0.08);
+  border-color: rgba(52, 211, 153, 0.3);
+}
+
+.final-response {
+  background: var(--bg-primary);
+  padding: 20px;
+  border-radius: 6px;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.chairman-label {
+  color: var(--success);
+  font-size: 12px;
+  font-family: monospace;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.final-text {
+  color: var(--text-primary);
+  line-height: 1.7;
+  font-size: 15px;
+}

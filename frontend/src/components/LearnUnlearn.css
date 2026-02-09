@@ -1,0 +1,127 @@
+/* ── Learn / Unlearn inline bar ── */
+.learn-unlearn-bar {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 2px solid var(--border-default);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.2s;
+}
+
+.learn-unlearn-bar.auto-learned {
+  background: rgba(52, 211, 153, 0.06);
+  border-color: rgba(52, 211, 153, 0.25);
+}
+
+.learn-unlearn-bar.pending {
+  background: rgba(251, 191, 36, 0.06);
+  border-color: rgba(251, 191, 36, 0.25);
+}
+
+.lu-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.lu-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.lu-message {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.lu-details {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lu-score {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.lu-score strong {
+  color: var(--text-primary);
+}
+
+.lu-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.lu-badge.semantic {
+  background: rgba(96, 165, 250, 0.15);
+  color: var(--accent-primary);
+}
+
+.lu-badge.episodic {
+  background: rgba(167, 139, 250, 0.15);
+  color: #a78bfa;
+}
+
+.lu-badge.procedural {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--success);
+}
+
+.lu-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.lu-btn {
+  padding: 7px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border-default);
+  transition: all 0.2s;
+}
+
+.lu-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lu-btn.confirm {
+  background: rgba(52, 211, 153, 0.12);
+  color: var(--success);
+  border-color: rgba(52, 211, 153, 0.3);
+}
+
+.lu-btn.confirm:hover:not(:disabled) {
+  background: rgba(52, 211, 153, 0.25);
+  border-color: var(--success);
+}
+
+.lu-btn.reject {
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--error);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.lu-btn.reject:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.25);
+  border-color: var(--error);
+}
+
+.lu-result {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}

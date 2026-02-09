@@ -1,0 +1,172 @@
+/* EnhancePrompt - MyGenAssist-style prompt enhancement card */
+
+.enhance-prompt-card {
+  display: flex;
+  gap: 16px;
+  margin: 16px 0;
+  padding: 24px;
+  background: linear-gradient(135deg, #0f2d2a 0%, #0a1f1d 50%, #101b2e 100%);
+  border-radius: 12px;
+  border: 1px solid rgba(20, 184, 166, 0.25);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  animation: enhanceSlideIn 0.3s ease-out;
+}
+
+@keyframes enhanceSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.enhance-prompt-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.enhance-prompt-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.enhance-prompt-title {
+  margin: 0 0 8px 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.enhance-prompt-intro {
+  margin: 0 0 16px 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.enhance-prompt-intro strong {
+  color: var(--text-primary);
+}
+
+/* Editable enhanced prompt area */
+.enhance-prompt-editor {
+  position: relative;
+  margin-bottom: 12px;
+}
+
+.enhance-edit-icon {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  font-size: 14px;
+  opacity: 0.7;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.enhance-prompt-textarea {
+  width: 100%;
+  padding: 12px 12px 12px 36px;
+  background: rgba(20, 184, 166, 0.06);
+  border: 1px solid rgba(20, 184, 166, 0.25);
+  border-radius: 8px;
+  color: #5eead4;
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 60px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.enhance-prompt-textarea:focus {
+  border-color: #14b8a6;
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.15);
+}
+
+.enhance-prompt-textarea::selection {
+  background: rgba(20, 184, 166, 0.3);
+}
+
+.enhance-prompt-note {
+  margin: 0 0 20px 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* Action buttons row */
+.enhance-prompt-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.enhance-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+/* Secondary - outlined */
+.enhance-btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+}
+
+.enhance-btn-secondary:hover {
+  background: var(--bg-surface);
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+/* Primary - teal filled (matching MyGenAssist) */
+.enhance-btn-primary {
+  background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
+  border: 1px solid #14b8a6;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.enhance-btn-primary:hover {
+  background: linear-gradient(135deg, #2dd4bf 0%, #14b8a6 100%);
+  box-shadow: 0 4px 12px rgba(20, 184, 166, 0.3);
+}
+
+.enhance-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* Loading state shown while enhancement is generating */
+.enhance-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #0f2d2a 0%, #101b2e 100%);
+  border-radius: 12px;
+  border: 1px solid rgba(20, 184, 166, 0.2);
+  color: #5eead4;
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.enhance-loading .spinner {
+  border-color: rgba(20, 184, 166, 0.2);
+  border-top-color: #14b8a6;
+}
