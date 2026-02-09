@@ -68,7 +68,7 @@ class LocalJSONBackend(MemoryStoreBackend):
         {MEMORY_DIR}/{collection}/{key}.json
 
     A lightweight TF-IDF-ish inverted index is maintained in memory for search.
-    Suitable for single-node dev / POC; swap for a managed store in production.
+    Suitable for single-node dev / POC; swap for a managed store in production to the respective cloud env.
     """
 
     def __init__(self, base_dir: str = MEMORY_DIR):
