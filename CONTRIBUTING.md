@@ -101,6 +101,6 @@ LLMCouncilMGA/
 - **CSS**: Follow existing dark-theme variables (`--bg-primary`, `--accent-primary`, etc.)
 - **Testing**: Every new backend feature needs corresponding tests
 
-## Questions?
+## Questions / Suggestions?
 
-Reach out to the team on Microsoft Teams or open a GitHub Issue.
+Reach out to the team at [llmcouncil@bayer.com](mailto:llmcouncil@bayer.com), on Microsoft Teams, or open a GitHub Issue.
