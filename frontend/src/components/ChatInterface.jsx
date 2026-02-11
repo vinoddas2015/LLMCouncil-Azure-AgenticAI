@@ -15,6 +15,13 @@ const ALLOWED_FILE_TYPES = {
   'application/vnd.openxmlformats-officedocument.presentationml.presentation': { ext: '.pptx', name: 'PowerPoint' },
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': { ext: '.xlsx', name: 'Excel' },
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': { ext: '.docx', name: 'Word' },
+  'text/markdown': { ext: '.md', name: 'Markdown' },
+  'text/plain': { ext: '.txt', name: 'Text' },  // .md files sometimes report as text/plain
+  'image/png': { ext: '.png', name: 'Image' },
+  'image/jpeg': { ext: '.jpg', name: 'Image' },
+  'image/gif': { ext: '.gif', name: 'Image' },
+  'image/webp': { ext: '.webp', name: 'Image' },
+  'image/svg+xml': { ext: '.svg', name: 'SVG' },
 };
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
@@ -23,6 +30,8 @@ export default function ChatInterface({
   conversation,
   onSendMessage,
   isLoading,
+  preferences,
+  onUpdatePreferences,
 }) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState([]);
@@ -62,8 +71,10 @@ export default function ChatInterface({
   }, [conversation]);
 
   const validateFile = (file) => {
-    // Check file type
-    if (!ALLOWED_FILE_TYPES[file.type]) {
+    // Check file type — also allow by extension for .md files (browsers may report text/plain)
+    const isAllowedType = ALLOWED_FILE_TYPES[file.type];
+    const isMarkdownByExt = file.name.endsWith('.md') || file.name.endsWith('.markdown');
+    if (!isAllowedType && !isMarkdownByExt) {
       const allowedExts = Object.values(ALLOWED_FILE_TYPES).map(t => t.ext).join(', ');
       return `Invalid file type. Allowed: ${allowedExts}`;
     }
@@ -193,7 +204,64 @@ export default function ChatInterface({
       case '.pptx': return '📊';
       case '.xlsx': return '📗';
       case '.docx': return '📘';
+      case '.md': return '📝';
+      case '.txt': return '📝';
+      case '.png': case '.jpg': case '.gif': case '.webp': return '🖼️';
+      case '.svg': return '🎨';
       default: return '📄';
+    }
+  };
+
+  // Handle paste events — support pasting images from clipboard
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of items) {
+      // Handle pasted images
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+
+        // Generate a name for clipboard images
+        const ext = file.type.split('/')[1] || 'png';
+        const name = `pasted-image-${Date.now()}.${ext}`;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = reader.result.split(',')[1];
+          setAttachments(prev => [...prev, {
+            name,
+            type: file.type,
+            size: file.size,
+            base64,
+          }]);
+        };
+        reader.readAsDataURL(file);
+      }
+      // Handle pasted files (e.g. .md from file managers)
+      else if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (!file) continue;
+        // Check if it's an allowed file type or a markdown/text file
+        const isAllowed = ALLOWED_FILE_TYPES[file.type] ||
+          file.name.endsWith('.md') || file.name.endsWith('.txt');
+        if (!isAllowed) continue;
+
+        e.preventDefault();
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = reader.result.split(',')[1];
+          setAttachments(prev => [...prev, {
+            name: file.name,
+            type: file.type || 'text/markdown',
+            size: file.size,
+            base64,
+          }]);
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 
@@ -311,6 +379,51 @@ export default function ChatInterface({
 
       {/* Always show input form - for both new conversations and follow-ups */}
       <form className="input-form" onSubmit={handleSubmit}>
+        {/* Follow-up quick-select chips (only show after first exchange) */}
+        {conversation.messages.length > 0 && (
+          <div className="followup-options">
+            <span className="followup-label">Focus on:</span>
+            {['Stage 1', 'Stage 2', 'Stage 3'].map((stage) => (
+              <button
+                key={stage}
+                type="button"
+                className={`followup-chip followup-stage`}
+                onClick={() => {
+                  const prefix = `Regarding ${stage}: `;
+                  setInput(prev => prev.startsWith(prefix) ? prev : prefix + prev);
+                }}
+                disabled={isLoading}
+              >
+                {stage}
+              </button>
+            ))}
+            {/* Show council member chips from the last assistant message */}
+            {(() => {
+              const lastAssistant = [...conversation.messages].reverse().find(m => m.role === 'assistant');
+              const models = lastAssistant?.stage1?.map(r => r.model) || [];
+              const uniqueModels = [...new Set(models)];
+              return uniqueModels.slice(0, 5).map((model) => {
+                const shortName = model.split('/').pop() || model;
+                return (
+                  <button
+                    key={model}
+                    type="button"
+                    className="followup-chip followup-member"
+                    onClick={() => {
+                      const prefix = `Regarding ${shortName}'s response: `;
+                      setInput(prev => prev.startsWith(prefix) ? prev : prefix + prev);
+                    }}
+                    disabled={isLoading}
+                    title={model}
+                  >
+                    {shortName}
+                  </button>
+                );
+              });
+            })()}
+          </div>
+        )}
+
         {/* Attachments Preview */}
         {attachments.length > 0 && (
           <div className="attachments-preview">
@@ -344,7 +457,7 @@ export default function ChatInterface({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,.pptx,.xlsx,.docx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            accept=".pdf,.pptx,.xlsx,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.gif,.webp,.svg,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain,image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
             multiple
             onChange={handleFileSelect}
             style={{ display: 'none' }}
@@ -356,9 +469,27 @@ export default function ChatInterface({
             className="attachment-button"
             onClick={() => fileInputRef.current?.click()}
             disabled={isLoading}
-            title="Attach files (PDF, PPTX, XLSX, DOCX)"
+            title="Attach files (PDF, PPTX, XLSX, DOCX, MD, images)"
           >
             📎
+          </button>
+
+          {/* Web Search Toggle — right next to input */}
+          <button
+            type="button"
+            className={`web-search-btn ${preferences?.web_search_enabled ? 'active' : ''}`}
+            onClick={() => {
+              if (onUpdatePreferences && preferences) {
+                onUpdatePreferences({
+                  ...preferences,
+                  web_search_enabled: !preferences.web_search_enabled,
+                });
+              }
+            }}
+            disabled={isLoading}
+            title={preferences?.web_search_enabled ? 'Web Search: ON — click to disable' : 'Web Search: OFF — click to enable'}
+          >
+            🌐
           </button>
 
           <textarea
@@ -369,6 +500,7 @@ export default function ChatInterface({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             disabled={isLoading || !!enhanceState}
             rows={3}
           />
@@ -384,7 +516,7 @@ export default function ChatInterface({
         <div className="input-hint">
           {conversation.messages.length > 0 
             ? "Continue the conversation with follow-up questions" 
-            : "Supported attachments: PDF, PPTX, XLSX, DOCX (max 10MB each)"}
+            : "Paste images or attach PDF, PPTX, XLSX, DOCX, MD files (max 10MB each)"}
         </div>
       </form>
     </div>

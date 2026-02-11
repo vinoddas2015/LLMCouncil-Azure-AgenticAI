@@ -1,18 +1,29 @@
 """
 Backend Skills Module — Pharma Evidence Retrieval & Benchmarking.
 
-Integrates three external knowledge sources to ground LLM Council
+Integrates external knowledge sources to ground LLM Council
 responses with verifiable, citable evidence BEFORE the chairman
-synthesises the final answer:
+synthesises the final answer.
 
-  1. OpenFDA API   — Drug labels, adverse events, recalls
-  2. ClinicalTrials.gov API (v2) — Active / completed trials
-  3. PubMed / scientific literature — Abstracts via NCBI E-Utilities
+  CORE SKILLS (always active):
+  1. OpenFDA API            — Drug labels, adverse events, recalls
+  2. ClinicalTrials.gov API — Active / completed trials
+  3. PubMed / NCBI          — Abstracts via E-Utilities
+  4. EMA                    — European Medicines Agency product info
+  5. WHO ATC/DDD            — Drug classification / ATC codes
+  6. UniProt                — Protein / drug-target data (human)
+  7. ChEMBL                 — Compound bioactivity & clinical phase
+
+  WEB SEARCH SKILLS (active when web_search_enabled=True):
+  8.  Semantic Scholar       — AI-curated scientific papers + abstracts
+  9.  CrossRef / DOI         — Journal article metadata & DOI links
+  10. Europe PMC             — Full-text open access literature
+  11. DuckDuckGo Scientific  — General web search filtered for .gov / .edu / journals
 
 Each skill returns a list of Citation objects that the chairman
 can embed in the final response.
 
-The `run_evidence_skills` orchestrator fires all three in parallel,
+The `run_evidence_skills` orchestrator fires all sources in parallel,
 deduplicates, ranks by relevance, and returns a consolidated
 evidence bundle.
 """
@@ -29,8 +40,10 @@ logger = logging.getLogger("skills")
 
 # ── Timeouts & Limits ────────────────────────────────────────────
 SKILL_TIMEOUT = 12.0          # seconds per API call
+WEB_SKILL_TIMEOUT = 15.0      # slightly longer for web crawling
 MAX_CITATIONS_PER_SKILL = 5   # top-N per source
-MAX_TOTAL_CITATIONS = 12      # cap for chairman prompt size
+MAX_TOTAL_CITATIONS = 12      # cap when web search is OFF
+MAX_TOTAL_CITATIONS_WEB = 20  # cap when web search is ON
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -315,47 +328,622 @@ def _extract_medical_keywords(text: str) -> List[str]:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Skill 4: EMA (European Medicines Agency)
+# https://www.ema.europa.eu — medicine search
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_ema(query: str) -> List[Citation]:
+    """Search EMA for European drug authorisation data."""
+    citations: List[Citation] = []
+    keywords = _extract_drug_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = "+".join(keywords[:3])
+    url = (
+        f"https://www.ema.europa.eu/en/search?"
+        f"search_api_fulltext={search_term}&f%5B0%5D=content_type%3Amedicine"
+    )
+
+    async with httpx.AsyncClient(timeout=SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(url, headers={"Accept": "text/html"})
+            if resp.status_code != 200:
+                logger.warning(f"[EMA] HTTP {resp.status_code}")
+                return citations
+
+            # Parse basic search results from HTML — look for medicine links
+            text = resp.text
+            # Find medicine page links: /en/medicines/human/EPAR/<name>
+            import re as _re
+            medicine_links = _re.findall(
+                r'href="(/en/medicines/human/EPAR/[^"]+)"[^>]*>([^<]+)', text
+            )
+
+            for i, (path, name) in enumerate(medicine_links[:MAX_CITATIONS_PER_SKILL]):
+                full_url = f"https://www.ema.europa.eu{path}"
+                citations.append(Citation(
+                    id=f"EMA-{i+1}",
+                    source="EMA",
+                    title=f"{name.strip()} — EMA Product Info",
+                    url=full_url,
+                    snippet=f"European Medicines Agency: {name.strip()}",
+                    relevance=0.7 - i * 0.1,
+                ))
+        except Exception as e:
+            logger.warning(f"[EMA] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Skill 5: WHO Essential Medicines & ATC/DDD
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_who(query: str) -> List[Citation]:
+    """Search WHO ATC/DDD index for drug classification data."""
+    citations: List[Citation] = []
+    keywords = _extract_drug_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = keywords[0]
+    url = (
+        f"https://www.whocc.no/atc_ddd_index/"
+        f"?code=&showdescription=no&name={search_term}"
+    )
+
+    async with httpx.AsyncClient(timeout=SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return citations
+
+            text = resp.text
+            import re as _re
+            # Parse ATC code rows from the WHO index page
+            rows = _re.findall(
+                r'<a href="(\?code=[A-Z0-9]+[^"]*)"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*>([^<]*)',
+                text
+            )
+
+            for i, (path, atc_code, name) in enumerate(rows[:MAX_CITATIONS_PER_SKILL]):
+                full_url = f"https://www.whocc.no/atc_ddd_index/{path}"
+                clean_name = name.strip() or atc_code.strip()
+                citations.append(Citation(
+                    id=f"WHO-{i+1}",
+                    source="WHO ATC",
+                    title=f"{clean_name} — ATC {atc_code.strip()}",
+                    url=full_url,
+                    snippet=f"WHO ATC Classification: {atc_code.strip()} {clean_name}",
+                    relevance=0.65 - i * 0.1,
+                ))
+        except Exception as e:
+            logger.warning(f"[WHO] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Skill 6: UniProt (protein / target data)
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_uniprot(query: str) -> List[Citation]:
+    """Search UniProt for protein target information."""
+    citations: List[Citation] = []
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = "+".join(keywords[:3])
+    url = (
+        f"https://rest.uniprot.org/uniprotkb/search"
+        f"?query={search_term}+AND+organism_id:9606"
+        f"&format=json&size={MAX_CITATIONS_PER_SKILL}"
+        f"&fields=accession,protein_name,gene_names,organism_name"
+    )
+
+    async with httpx.AsyncClient(timeout=SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(url, headers={"Accept": "application/json"})
+            if resp.status_code != 200:
+                logger.warning(f"[UniProt] HTTP {resp.status_code}")
+                return citations
+            data = resp.json()
+            results = data.get("results", [])
+            for i, entry in enumerate(results[:MAX_CITATIONS_PER_SKILL]):
+                accession = entry.get("primaryAccession", "")
+                prot_desc = entry.get("proteinDescription", {})
+                rec_name = prot_desc.get("recommendedName", {})
+                full_name = rec_name.get("fullName", {}).get("value", "Unknown Protein")
+                genes = entry.get("genes", [])
+                gene_name = genes[0].get("geneName", {}).get("value", "") if genes else ""
+
+                snippet = f"Protein: {full_name}"
+                if gene_name:
+                    snippet += f" (Gene: {gene_name})"
+
+                citations.append(Citation(
+                    id=f"UP-{i+1}",
+                    source="UniProt",
+                    title=f"{full_name} [{accession}]",
+                    url=f"https://www.uniprot.org/uniprot/{accession}",
+                    snippet=snippet[:200],
+                    relevance=0.65 - i * 0.08,
+                ))
+        except Exception as e:
+            logger.warning(f"[UniProt] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Skill 7: ChEMBL (bioactivity / compound data)
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_chembl(query: str) -> List[Citation]:
+    """Search ChEMBL for compound bioactivity data."""
+    citations: List[Citation] = []
+    keywords = _extract_drug_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = keywords[0]
+    url = (
+        f"https://www.ebi.ac.uk/chembl/api/data/molecule/search.json"
+        f"?q={search_term}&limit={MAX_CITATIONS_PER_SKILL}"
+    )
+
+    async with httpx.AsyncClient(timeout=SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                logger.warning(f"[ChEMBL] HTTP {resp.status_code}")
+                return citations
+
+            data = resp.json()
+            molecules = data.get("molecules", [])
+            for i, mol in enumerate(molecules[:MAX_CITATIONS_PER_SKILL]):
+                chembl_id = mol.get("molecule_chembl_id", "")
+                pref_name = mol.get("pref_name", "") or chembl_id
+                mol_type = mol.get("molecule_type", "Unknown")
+                max_phase = mol.get("max_phase", "")
+                snippet = f"{mol_type}. Max clinical phase: {max_phase}"
+
+                citations.append(Citation(
+                    id=f"CB-{i+1}",
+                    source="ChEMBL",
+                    title=f"{pref_name} ({chembl_id})",
+                    url=f"https://www.ebi.ac.uk/chembl/compound_report_card/{chembl_id}/",
+                    snippet=snippet[:200],
+                    relevance=0.6 - i * 0.08,
+                ))
+        except Exception as e:
+            logger.warning(f"[ChEMBL] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WEB SEARCH SKILL 8: Semantic Scholar
+# https://api.semanticscholar.org — AI-curated scientific literature
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_semantic_scholar(query: str) -> List[Citation]:
+    """Search Semantic Scholar for highly-cited scientific papers."""
+    citations: List[Citation] = []
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = " ".join(keywords[:5])
+    url = (
+        f"https://api.semanticscholar.org/graph/v1/paper/search"
+        f"?query={search_term}"
+        f"&limit={MAX_CITATIONS_PER_SKILL}"
+        f"&fields=title,url,abstract,year,citationCount,journal,authors,externalIds"
+    )
+
+    async with httpx.AsyncClient(timeout=WEB_SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                logger.warning(f"[SemanticScholar] HTTP {resp.status_code}")
+                return citations
+            data = resp.json()
+            papers = data.get("data", [])
+            for i, paper in enumerate(papers[:MAX_CITATIONS_PER_SKILL]):
+                title = paper.get("title", "Scientific Paper")
+                paper_url = paper.get("url", "")
+                abstract = paper.get("abstract", "") or ""
+                year = paper.get("year", "")
+                cite_count = paper.get("citationCount", 0)
+                journal_info = paper.get("journal", {}) or {}
+                journal_name = journal_info.get("name", "") if isinstance(journal_info, dict) else ""
+                authors = paper.get("authors", []) or []
+                first_author = authors[0].get("name", "") if authors else ""
+
+                # Build informative snippet
+                snippet_parts = []
+                if first_author:
+                    snippet_parts.append(f"{first_author} et al.")
+                if journal_name:
+                    snippet_parts.append(journal_name)
+                if year:
+                    snippet_parts.append(f"({year})")
+                if cite_count:
+                    snippet_parts.append(f"Cited {cite_count}x")
+                if abstract:
+                    snippet_parts.append(f"— {abstract[:120]}")
+                snippet = " ".join(snippet_parts)[:200]
+
+                # Boost relevance by citation count
+                base_relevance = 0.85 - i * 0.06
+                if cite_count and cite_count > 100:
+                    base_relevance = min(base_relevance + 0.1, 0.95)
+
+                citations.append(Citation(
+                    id=f"SS-{i+1}",
+                    source="Semantic Scholar",
+                    title=title[:150],
+                    url=paper_url or f"https://www.semanticscholar.org/search?q={search_term}",
+                    snippet=snippet,
+                    relevance=base_relevance,
+                    date=str(year),
+                ))
+        except Exception as e:
+            logger.warning(f"[SemanticScholar] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WEB SEARCH SKILL 9: CrossRef (DOI / journal metadata)
+# https://api.crossref.org
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_crossref(query: str) -> List[Citation]:
+    """Search CrossRef for journal articles and DOI metadata."""
+    citations: List[Citation] = []
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = "+".join(keywords[:5])
+    url = (
+        f"https://api.crossref.org/works"
+        f"?query={search_term}"
+        f"&rows={MAX_CITATIONS_PER_SKILL}"
+        f"&sort=relevance"
+        f"&select=DOI,title,author,published-print,container-title,abstract,URL"
+    )
+
+    async with httpx.AsyncClient(timeout=WEB_SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(
+                url,
+                headers={"User-Agent": "LLMCouncilMGA/1.0 (mailto:research@llmcouncil.dev)"},
+            )
+            if resp.status_code != 200:
+                logger.warning(f"[CrossRef] HTTP {resp.status_code}")
+                return citations
+            data = resp.json()
+            items = data.get("message", {}).get("items", [])
+            for i, item in enumerate(items[:MAX_CITATIONS_PER_SKILL]):
+                doi = item.get("DOI", "")
+                titles = item.get("title", ["Unknown"])
+                title = titles[0] if titles else "CrossRef Article"
+                authors_raw = item.get("author", [])
+                first_author = ""
+                if authors_raw:
+                    a = authors_raw[0]
+                    first_author = f"{a.get('family', '')} {a.get('given', '')}".strip()
+                journal = item.get("container-title", [""])
+                journal_name = journal[0] if journal else ""
+                pub_date = item.get("published-print", {}).get("date-parts", [[]])
+                year = str(pub_date[0][0]) if pub_date and pub_date[0] else ""
+                abstract_raw = item.get("abstract", "") or ""
+                # Strip JATS XML tags from abstract
+                abstract = re.sub(r'<[^>]+>', '', abstract_raw)[:150]
+
+                snippet_parts = []
+                if first_author:
+                    snippet_parts.append(f"{first_author} et al.")
+                if journal_name:
+                    snippet_parts.append(journal_name)
+                if year:
+                    snippet_parts.append(f"({year})")
+                if abstract:
+                    snippet_parts.append(f"— {abstract}")
+                snippet = " ".join(snippet_parts)[:200]
+
+                article_url = item.get("URL", f"https://doi.org/{doi}")
+
+                citations.append(Citation(
+                    id=f"CR-{i+1}",
+                    source="CrossRef",
+                    title=title[:150],
+                    url=article_url,
+                    snippet=snippet,
+                    relevance=0.78 - i * 0.06,
+                    date=year,
+                ))
+        except Exception as e:
+            logger.warning(f"[CrossRef] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WEB SEARCH SKILL 10: Europe PMC (open-access full-text search)
+# https://www.ebi.ac.uk/europepmc
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_europe_pmc(query: str) -> List[Citation]:
+    """Search Europe PMC for open-access biomedical literature."""
+    citations: List[Citation] = []
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = " ".join(keywords[:5])
+    url = (
+        f"https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+        f"?query={search_term}"
+        f"&resultType=core"
+        f"&pageSize={MAX_CITATIONS_PER_SKILL}"
+        f"&format=json"
+        f"&sort=RELEVANCE"
+    )
+
+    async with httpx.AsyncClient(timeout=WEB_SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                logger.warning(f"[EuropePMC] HTTP {resp.status_code}")
+                return citations
+            data = resp.json()
+            results_list = data.get("resultList", {}).get("result", [])
+            for i, article in enumerate(results_list[:MAX_CITATIONS_PER_SKILL]):
+                pmcid = article.get("pmcid", "")
+                pmid = article.get("pmid", "")
+                title = article.get("title", "Europe PMC Article")
+                journal_title = article.get("journalTitle", "")
+                pub_year = article.get("pubYear", "")
+                author_string = article.get("authorString", "")
+                abstract_text = (article.get("abstractText", "") or "")[:150]
+                cited_by = article.get("citedByCount", 0)
+                is_open_access = article.get("isOpenAccess", "N") == "Y"
+
+                # Build URL — prefer PMC full text, fallback to PubMed
+                if pmcid:
+                    article_url = f"https://europepmc.org/article/PMC/{pmcid}"
+                elif pmid:
+                    article_url = f"https://europepmc.org/article/MED/{pmid}"
+                else:
+                    article_url = f"https://europepmc.org/search?query={search_term}"
+
+                snippet_parts = []
+                if author_string:
+                    snippet_parts.append(author_string[:60])
+                if journal_title:
+                    snippet_parts.append(journal_title)
+                if pub_year:
+                    snippet_parts.append(f"({pub_year})")
+                if is_open_access:
+                    snippet_parts.append("[Open Access]")
+                if cited_by:
+                    snippet_parts.append(f"Cited {cited_by}x")
+                if abstract_text:
+                    snippet_parts.append(f"— {abstract_text}")
+                snippet = " ".join(snippet_parts)[:200]
+
+                base_relevance = 0.82 - i * 0.06
+                if cited_by and cited_by > 50:
+                    base_relevance = min(base_relevance + 0.08, 0.92)
+                if is_open_access:
+                    base_relevance = min(base_relevance + 0.03, 0.95)
+
+                citations.append(Citation(
+                    id=f"EPMC-{i+1}",
+                    source="Europe PMC",
+                    title=title[:150],
+                    url=article_url,
+                    snippet=snippet,
+                    relevance=base_relevance,
+                    date=str(pub_year),
+                ))
+        except Exception as e:
+            logger.warning(f"[EuropePMC] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WEB SEARCH SKILL 11: DuckDuckGo Scientific Web Search
+# Filtered for authoritative domains (.gov, .edu, journals)
+# ═══════════════════════════════════════════════════════════════════
+
+# Authoritative scientific domains to prioritise / whitelist
+_SCIENCE_DOMAINS = {
+    "nih.gov", "fda.gov", "who.int", "cdc.gov", "ema.europa.eu",
+    "nature.com", "sciencedirect.com", "thelancet.com", "nejm.org",
+    "bmj.com", "springer.com", "wiley.com", "cell.com",
+    "ncbi.nlm.nih.gov", "pubmed.ncbi.nlm.nih.gov",
+    "mayoclinic.org", "medlineplus.gov", "drugs.com",
+    "drugbank.com", "rxlist.com", "medscape.com",
+    "jamanetwork.com", "cochranelibrary.com",
+    "uptodate.com", "clinicalkey.com",
+    ".edu",  # all educational institutions
+    ".gov",  # all government sites
+}
+
+
+def _is_authoritative(url: str) -> bool:
+    """Check if a URL belongs to an authoritative scientific domain."""
+    url_lower = url.lower()
+    for domain in _SCIENCE_DOMAINS:
+        if domain in url_lower:
+            return True
+    return False
+
+
+async def _query_duckduckgo_science(query: str) -> List[Citation]:
+    """
+    Search DuckDuckGo for scientific / pharma web content.
+
+    Uses DuckDuckGo Lite (HTML) to extract results without JS.
+    Prioritises authoritative scientific domains.
+    """
+    citations: List[Citation] = []
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    # Add scientific qualifiers to improve result quality
+    search_term = " ".join(keywords[:5]) + " site:nih.gov OR site:who.int OR site:fda.gov OR pubmed OR clinical trial"
+
+    url = "https://lite.duckduckgo.com/lite/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+    async with httpx.AsyncClient(timeout=WEB_SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.post(
+                url,
+                data={"q": search_term, "kl": "us-en"},
+                headers=headers,
+                follow_redirects=True,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"[DuckDuckGo] HTTP {resp.status_code}")
+                return citations
+
+            html = resp.text
+
+            # Parse result links from DuckDuckGo Lite HTML
+            link_pattern = re.compile(
+                r'<a[^>]+rel="nofollow"[^>]+href="([^"]+)"[^>]*>\s*([^<]+?)\s*</a>',
+                re.IGNORECASE | re.DOTALL,
+            )
+            # Snippet pattern: <td class="result-snippet">...</td>
+            snippet_pattern = re.compile(
+                r'<td[^>]*class="result-snippet"[^>]*>(.+?)</td>',
+                re.IGNORECASE | re.DOTALL,
+            )
+
+            links = link_pattern.findall(html)
+            snippets_raw = snippet_pattern.findall(html)
+
+            for i, (link_url, title_raw) in enumerate(links[:MAX_CITATIONS_PER_SKILL * 2]):
+                if len(citations) >= MAX_CITATIONS_PER_SKILL:
+                    break
+
+                # Skip non-http links
+                if not link_url.startswith("http"):
+                    continue
+
+                # Skip DuckDuckGo internal links
+                if "duckduckgo.com" in link_url:
+                    continue
+
+                title = re.sub(r'<[^>]+>', '', title_raw).strip()
+                snippet_html = snippets_raw[i] if i < len(snippets_raw) else ""
+                snippet = re.sub(r'<[^>]+>', '', snippet_html).strip()[:200]
+
+                is_auth = _is_authoritative(link_url)
+                base_relevance = 0.75 - len(citations) * 0.08
+                if is_auth:
+                    base_relevance = min(base_relevance + 0.12, 0.90)
+
+                src_label = "Web (.gov/.edu)" if is_auth else "Web Search"
+
+                citations.append(Citation(
+                    id=f"WEB-{len(citations)+1}",
+                    source=src_label,
+                    title=title[:150] or "Web Result",
+                    url=link_url,
+                    snippet=snippet or f"Scientific web result for: {' '.join(keywords[:3])}",
+                    relevance=base_relevance,
+                ))
+        except Exception as e:
+            logger.warning(f"[DuckDuckGo] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Orchestrator — run all skills in parallel
 # ═══════════════════════════════════════════════════════════════════
 
-async def run_evidence_skills(user_query: str) -> Dict[str, Any]:
+async def run_evidence_skills(
+    user_query: str,
+    web_search_enabled: bool = False,
+) -> Dict[str, Any]:
     """
-    Fire all three evidence-retrieval skills in parallel.
+    Fire evidence-retrieval skills in parallel.
+
+    Core skills (always fire):
+      1. OpenFDA      2. ClinicalTrials.gov  3. PubMed
+      4. EMA          5. WHO ATC             6. UniProt
+      7. ChEMBL
+
+    Web search skills (only when web_search_enabled=True):
+      8. Semantic Scholar  9. CrossRef  10. Europe PMC
+      11. DuckDuckGo Scientific
 
     Returns:
         {
-            "citations": [Citation.to_dict(), ...],   # sorted by relevance
-            "skills_used": ["OpenFDA", "ClinicalTrials.gov", "PubMed"],
+            "citations": [Citation.to_dict(), ...],  # sorted by relevance
+            "skills_used": [str, ...],
             "total_found": int,
-            "benchmark": {
-                "openfda_ms": float,
-                "clinicaltrials_ms": float,
-                "pubmed_ms": float,
-                "total_ms": float,
-            }
+            "web_search_active": bool,
+            "benchmark": { ... }
         }
     """
     t0 = datetime.now()
 
-    # Fire all three in parallel
-    fda_task = asyncio.create_task(_query_openfda(user_query))
-    ct_task = asyncio.create_task(_query_clinicaltrials(user_query))
-    pm_task = asyncio.create_task(_query_pubmed(user_query))
+    # ── Core skills (always fire) ──────────────────────────────────
+    tasks = {
+        "OpenFDA":              asyncio.create_task(_query_openfda(user_query)),
+        "ClinicalTrials.gov":   asyncio.create_task(_query_clinicaltrials(user_query)),
+        "PubMed":               asyncio.create_task(_query_pubmed(user_query)),
+        "EMA":                  asyncio.create_task(_query_ema(user_query)),
+        "WHO ATC":              asyncio.create_task(_query_who(user_query)),
+        "UniProt":              asyncio.create_task(_query_uniprot(user_query)),
+        "ChEMBL":               asyncio.create_task(_query_chembl(user_query)),
+    }
 
-    t_fda_start = datetime.now()
-    fda_citations = await fda_task
-    t_fda = (datetime.now() - t_fda_start).total_seconds() * 1000
+    # ── Web search skills (only when toggled ON) ───────────────────
+    if web_search_enabled:
+        logger.info("[Skills] Web search ENABLED — adding Semantic Scholar, CrossRef, Europe PMC, DuckDuckGo")
+        tasks["Semantic Scholar"] = asyncio.create_task(_query_semantic_scholar(user_query))
+        tasks["CrossRef"]         = asyncio.create_task(_query_crossref(user_query))
+        tasks["Europe PMC"]       = asyncio.create_task(_query_europe_pmc(user_query))
+        tasks["DuckDuckGo Sci"]   = asyncio.create_task(_query_duckduckgo_science(user_query))
 
-    t_ct_start = datetime.now()
-    ct_citations = await ct_task
-    t_ct = (datetime.now() - t_ct_start).total_seconds() * 1000
-
-    t_pm_start = datetime.now()
-    pm_citations = await pm_task
-    t_pm = (datetime.now() - t_pm_start).total_seconds() * 1000
+    # Await all tasks and collect benchmarks
+    results = {}
+    benchmarks = {}
+    for source_name, task in tasks.items():
+        t_start = datetime.now()
+        try:
+            citations = await task
+        except Exception as e:
+            logger.warning(f"[{source_name}] Task failed: {e}")
+            citations = []
+        elapsed = (datetime.now() - t_start).total_seconds() * 1000
+        results[source_name] = citations
+        bench_key = source_name.lower().replace(".", "").replace(" ", "_") + "_ms"
+        benchmarks[bench_key] = round(elapsed, 1)
 
     # Merge, deduplicate by URL, sort by relevance
-    all_citations = fda_citations + ct_citations + pm_citations
+    all_citations = []
+    for c_list in results.values():
+        all_citations.extend(c_list)
+
     seen_urls = set()
     unique = []
     for c in all_citations:
@@ -364,37 +952,30 @@ async def run_evidence_skills(user_query: str) -> Dict[str, Any]:
             unique.append(c)
 
     unique.sort(key=lambda c: c.relevance, reverse=True)
-    top = unique[:MAX_TOTAL_CITATIONS]
+    cap = MAX_TOTAL_CITATIONS_WEB if web_search_enabled else MAX_TOTAL_CITATIONS
+    top = unique[:cap]
 
     # Re-number IDs sequentially
     for i, c in enumerate(top):
         c.id = f"[{c.id}]"
 
     total_ms = (datetime.now() - t0).total_seconds() * 1000
+    benchmarks["total_ms"] = round(total_ms, 1)
 
-    skills_used = []
-    if fda_citations:
-        skills_used.append("OpenFDA")
-    if ct_citations:
-        skills_used.append("ClinicalTrials.gov")
-    if pm_citations:
-        skills_used.append("PubMed")
+    skills_used = [name for name, cites in results.items() if cites]
 
     logger.info(
         f"[Skills] Found {len(unique)} citations from {len(skills_used)} sources "
-        f"in {total_ms:.0f}ms"
+        f"({', '.join(skills_used)}) in {total_ms:.0f}ms"
+        f"{' [WEB SEARCH ON]' if web_search_enabled else ''}"
     )
 
     return {
         "citations": [c.to_dict() for c in top],
         "skills_used": skills_used,
         "total_found": len(unique),
-        "benchmark": {
-            "openfda_ms": round(t_fda, 1),
-            "clinicaltrials_ms": round(t_ct, 1),
-            "pubmed_ms": round(t_pm, 1),
-            "total_ms": round(total_ms, 1),
-        },
+        "web_search_active": web_search_enabled,
+        "benchmark": benchmarks,
     }
 
 
@@ -415,7 +996,8 @@ def format_citations_for_prompt(evidence: Dict[str, Any]) -> str:
     lines.append("=" * 60)
     lines.append(
         "CITATION INSTRUCTIONS: When referencing any fact from the above evidence, "
-        "include the citation tag (e.g. [FDA-L1], [CT-2], [PM-3]) inline in your text. "
+        "include the citation tag (e.g. [FDA-L1], [CT-2], [PM-3], [EMA-1], [WHO-1], [UP-1], [CB-1], "
+        "[SS-1], [CR-1], [EPMC-1], [WEB-1]) inline in your text. "
         "At the end of your response, include a numbered REFERENCES section listing "
         "each citation you used with its full URL."
     )

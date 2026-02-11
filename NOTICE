@@ -17,7 +17,7 @@
 # ============================================================
 #
 # Originally inspired by Andrej Karpathy's LLM Council concept.
-# Extended with enterprise features by the Bayer Digital team:
+# Extended with enterprise features by Pharma Drug Innovation Team:
 #   - Self-healing resilience architecture
 #   - Grounding score & rubric evaluation
 #   - Token/cost burndown tracking

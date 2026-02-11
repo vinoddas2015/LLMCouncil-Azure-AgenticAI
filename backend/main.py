@@ -134,6 +134,13 @@ ALLOWED_MIME_TYPES = {
     'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PowerPoint',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word',
+    'text/markdown': 'Markdown',
+    'text/plain': 'Text',
+    'image/png': 'Image (PNG)',
+    'image/jpeg': 'Image (JPEG)',
+    'image/gif': 'Image (GIF)',
+    'image/webp': 'Image (WebP)',
+    'image/svg+xml': 'Image (SVG)',
 }
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -689,7 +696,7 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             # Stage 2: Collect rankings
             # Also fire evidence retrieval in parallel with Stage 2
             yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
-            evidence_task = asyncio.create_task(run_evidence_skills(augmented_content))
+            evidence_task = asyncio.create_task(run_evidence_skills(augmented_content, web_search_enabled=web_search_enabled))
             stage2_results, label_to_model = await stage2_collect_rankings(
                 augmented_content, stage1_results, user_council_models,
                 conversation_history, web_search_enabled, session_id=session_id,

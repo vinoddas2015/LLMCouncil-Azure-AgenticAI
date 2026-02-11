@@ -158,29 +158,7 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
               </div>
             </div>
 
-            <div className="settings-section">
-              <h3>🌐 Web Search</h3>
-              <p className="settings-description">
-                Enable Google web search via MyGenAssist for all council models. When enabled, models can access real-time web results to enhance their responses.
-              </p>
-              <div className="web-search-toggle">
-                <div className="toggle-info">
-                  <span className="toggle-label">Enable Web Search</span>
-                  <span className="toggle-description">
-                    Uses MyGenAssist Google API to provide real-time search results to all council members and the chairman.
-                  </span>
-                </div>
-                <label className="toggle-switch">
-                  <input
-                    type="checkbox"
-                    checked={webSearchEnabled}
-                    onChange={(e) => setWebSearchEnabled(e.target.checked)}
-                    aria-label="Toggle web search"
-                  />
-                  <span className="toggle-slider" aria-hidden="true"></span>
-                </label>
-              </div>
-            </div>
+            {/* Web Search toggle moved to input area — see ChatInterface.jsx */}
           </div>
         )}
 

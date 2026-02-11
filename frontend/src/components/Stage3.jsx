@@ -6,23 +6,111 @@ import './Stage3.css';
  * using the evidence bundle from the skills module.
  */
 function linkifyCitations(text, citations) {
-  if (!citations || !citations.length || !text) return text;
+  if (!text) return text;
 
-  // Build lookup: "[FDA-L1]" → { url, title, source }
-  const lookup = {};
-  for (const c of citations) {
-    lookup[c.id] = c;
+  let result = text;
+
+  // 1. Replace explicit citation tags — [FDA-L1], [CT-2], [PM-3]
+  if (citations && citations.length) {
+    const lookup = {};
+    for (const c of citations) {
+      lookup[c.id] = c;
+    }
+
+    result = result.replace(/\[(FDA-[A-Z]\d+|CT-\d+|PM-\d+|EMA-\d+|WHO-\d+|UP-\d+|CB-\d+|SS-\d+|CR-\d+|EPMC-\d+|WEB-\d+)\]/g, (match, tag) => {
+      const full = `[${tag}]`;
+      const cite = lookup[full];
+      if (cite) {
+        return `[${tag}](${cite.url} "${cite.source}: ${cite.title}")`;
+      }
+      return match;
+    });
   }
 
-  // Replace citation tags with markdown links
-  return text.replace(/\[(FDA-[A-Z]\d+|CT-\d+|PM-\d+)\]/g, (match, tag) => {
-    const full = `[${tag}]`;
-    const cite = lookup[full];
-    if (cite) {
-      return `[${tag}](${cite.url} "${cite.source}: ${cite.title}")`;
+  // 2. Auto-linkify known reference sources mentioned in prose
+  //    "available at DailyMed" → clickable link to DailyMed
+  const knownSources = [
+    {
+      pattern: /(?:(?:FDA\s+label|prescribing\s+information|drug\s+label|label)\s+)?(?:available\s+(?:at|on|from|via)\s+)?(DailyMed)/gi,
+      url: 'https://dailymed.nlm.nih.gov/dailymed/',
+      label: 'DailyMed',
+    },
+    {
+      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(PubMed)/gi,
+      url: 'https://pubmed.ncbi.nlm.nih.gov/',
+      label: 'PubMed',
+    },
+    {
+      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(ClinicalTrials\.gov)/gi,
+      url: 'https://clinicaltrials.gov/',
+      label: 'ClinicalTrials.gov',
+    },
+    {
+      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(FDA\.gov)/gi,
+      url: 'https://www.fda.gov/',
+      label: 'FDA.gov',
+    },
+    {
+      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(DrugBank)/gi,
+      url: 'https://go.drugbank.com/',
+      label: 'DrugBank',
+    },
+    {
+      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(Semantic\s+Scholar)/gi,
+      url: 'https://www.semanticscholar.org/',
+      label: 'Semantic Scholar',
+    },
+    {
+      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(CrossRef)/gi,
+      url: 'https://www.crossref.org/',
+      label: 'CrossRef',
+    },
+    {
+      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(Europe\s+PMC)/gi,
+      url: 'https://europepmc.org/',
+      label: 'Europe PMC',
+    },
+  ];
+
+  for (const source of knownSources) {
+    result = result.replace(source.pattern, (match, name) => {
+      // Don't double-linkify if already inside a markdown link
+      return `[${match}](${source.url})`;
+    });
+  }
+
+  // 3. Auto-linkify drug-specific "FDA label available at DailyMed" patterns
+  //    e.g. "Sotorasib (Lumakras): FDA label available at DailyMed"
+  result = result.replace(
+    /(\w[\w\s]*?\([\w\s]+?\)):\s*FDA\s+label\s+available\s+at\s+\[([^\]]+)\]\(([^)]+)\)/gi,
+    (match, drug, linkText, url) => {
+      // Extract brand name from parentheses for DailyMed search
+      const brandMatch = drug.match(/\(([^)]+)\)/);
+      const brand = brandMatch ? brandMatch[1].trim() : drug.trim();
+      const dailyMedUrl = `https://dailymed.nlm.nih.gov/dailymed/search.cfm?labeltype=all&query=${encodeURIComponent(brand)}`;
+      return `${drug}: [FDA label — ${brand}](${dailyMedUrl})`;
     }
-    return match;
-  });
+  );
+
+  // 4. Catch bare "FDA label available at DailyMed" that wasn't caught above
+  //   by linkifying standalone drug+DailyMed patterns
+  result = result.replace(
+    /(\w[\w\s]*?\([\w\s]+?\)):\s*FDA\s+label\s+available\s+at\s+DailyMed/gi,
+    (match, drug) => {
+      const brandMatch = drug.match(/\(([^)]+)\)/);
+      const brand = brandMatch ? brandMatch[1].trim() : drug.trim();
+      const dailyMedUrl = `https://dailymed.nlm.nih.gov/dailymed/search.cfm?labeltype=all&query=${encodeURIComponent(brand)}`;
+      return `${drug}: [FDA label — ${brand}](${dailyMedUrl})`;
+    }
+  );
+
+  // 5. Auto-linkify bare URLs that aren't already in markdown links
+  result = result.replace(
+    /(?<!\]\()(?<!\()(?<!")(https?:\/\/[^\s)<>"]+)/g,
+    (url) => `[${url}](${url})`
+  );
+
+  return result;
 }
 
 export default function Stage3({ finalResponse, evidence }) {

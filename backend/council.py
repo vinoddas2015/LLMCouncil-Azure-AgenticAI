@@ -407,8 +407,14 @@ Your task as Chairman is to synthesize the above into a single, comprehensive, a
 3. Incorporate unique correct insights from lower-ranked responses; do not discard valuable information just because the source ranked lower.
 4. Flag any claims where reviewers disagreed on TP/FP classification — note the uncertainty explicitly.
 5. Structure your answer clearly with appropriate headings when the subject matter warrants it.
-6. When evidence citations are provided above, reference them inline using their tags (e.g. [FDA-L1], [CT-2], [PM-3]) and include a REFERENCES section at the end with clickable URLs.
-7. RICH SCIENTIFIC OUTPUT (the frontend renders full Markdown):
+6. When evidence citations are provided above, reference them inline using their tags (e.g. [FDA-L1], [CT-2], [PM-3], [SS-1], [CR-1], [EPMC-1], [WEB-1]) and include a REFERENCES section at the end with clickable URLs.
+7. SCIENTIFIC INTELLIGENCE FROM WEB SOURCES: When web-sourced evidence is provided (Semantic Scholar, CrossRef, Europe PMC, or Web Search results), actively wrangle and extract scientific intelligence from those sources:
+   - Cross-reference web-sourced findings with the council members' responses to validate or refute claims.
+   - Use citation counts and journal impact to weight the reliability of web evidence.
+   - Highlight any recent findings (last 2 years) from web sources that update or supersede older council member knowledge.
+   - Extract mechanistic insights, pharmacokinetic parameters, clinical endpoints, and safety signals from web abstracts and integrate them into the synthesis.
+   - When web evidence contradicts a council member's claim, clearly flag the discrepancy and explain which source is more authoritative.
+8. RICH SCIENTIFIC OUTPUT (the frontend renders full Markdown):
    - Use Markdown TABLES (pipe syntax) for comparative data such as drug properties, dosing, trial endpoints, adverse-event rates, or any structured comparison.
    - **MOLECULAR STRUCTURES — ALWAYS use SMILES code blocks.** The frontend natively renders SMILES as interactive 2D/3D molecular visualizations. NEVER use external image URLs (![image](url)) for chemical structures — those break. Instead ALWAYS write:
      ```smiles
@@ -419,7 +425,7 @@ Your task as Chairman is to synthesize the above into a single, comprehensive, a
    - Use subscript (<sub>x</sub>) and superscript (<sup>y</sup>) HTML tags for chemical formulas like H<sub>2</sub>O or IC<sub>50</sub>.
    - When quantitative data is involved, use LaTeX math notation: inline $K_d = 5.2 \\text{{ nM}}$ or display blocks $$AUC = \\int_0^T C(t)\\,dt$$ for pharmacokinetic equations.
    - For non-molecular images, you may include image links from public sources (e.g. RCSB PDB) when a figure would aid understanding: ![Figure caption](https://url).
-{f'8. Consider the context from the previous conversation.' if context else ''}
+{f'9. Consider the context from the previous conversation.' if context else ''}
 
 Provide a clear, well-reasoned final answer that represents the council's collective wisdom:"""
 

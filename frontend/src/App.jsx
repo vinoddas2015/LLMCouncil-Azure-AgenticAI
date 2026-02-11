@@ -416,6 +416,8 @@ function App() {
         conversation={currentConversation}
         onSendMessage={handleSendMessage}
         isLoading={isLoading}
+        preferences={preferences}
+        onUpdatePreferences={handleSavePreferences}
       />
       <PromptAtlas3D
         conversation={currentConversation}
