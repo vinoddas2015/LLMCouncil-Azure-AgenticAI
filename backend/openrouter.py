@@ -36,6 +36,10 @@ async def _raw_query_model(
         "messages": messages,
     }
 
+    # Enable multi-modal (text + image) output for Gemini models
+    if model.startswith("gemini"):
+        payload["modalities"] = ["text", "image"]
+
     if web_search_enabled:
         payload["plugins"] = ["web_search_google"]
 
@@ -54,8 +58,27 @@ async def _raw_query_model(
         # Extract token usage from API response
         usage = data.get("usage", {})
 
+        # Handle multi-modal responses (Gemini may return text + image parts)
+        raw_content = message.get("content")
+        if isinstance(raw_content, list):
+            # Multi-part response: assemble text and inline base64 images
+            parts = []
+            for part in raw_content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        parts.append(part.get("text", ""))
+                    elif part.get("type") == "image_url":
+                        url = part.get("image_url", {}).get("url", "")
+                        if url:
+                            parts.append(f"\n\n![Generated Image]({url})\n\n")
+                elif isinstance(part, str):
+                    parts.append(part)
+            content = "".join(parts)
+        else:
+            content = raw_content
+
         return {
-            "content": message.get("content"),
+            "content": content,
             "reasoning_details": message.get("reasoning_details"),
             "usage": {
                 "prompt_tokens": usage.get("prompt_tokens", 0),

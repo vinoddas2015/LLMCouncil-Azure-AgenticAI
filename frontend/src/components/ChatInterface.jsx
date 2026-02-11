@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
+import SciMarkdown from './SciMarkdown';
 import Stage1 from './Stage1';
 import Stage2 from './Stage2';
 import Stage3 from './Stage3';
@@ -31,11 +31,31 @@ export default function ChatInterface({
   const [enhancedData, setEnhancedData] = useState(null); // { original, enhanced }
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const userScrolledAwayRef = useRef(false);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const scrollToBottom = (force = false) => {
+    if (!messagesContainerRef.current) return;
+    // Only auto-scroll if user is near the bottom (within 200px) or forced
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    if (force || distanceFromBottom < 200) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   };
+
+  // Track whether user manually scrolled up
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      userScrolledAwayRef.current = (scrollHeight - scrollTop - clientHeight) > 200;
+    };
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
@@ -190,7 +210,7 @@ export default function ChatInterface({
 
   return (
     <div className="chat-interface" id="main-content" role="main">
-      <div className="messages-container">
+      <div className="messages-container" ref={messagesContainerRef}>
         {conversation.messages.length === 0 ? (
           <div className="empty-state">
             <h2>Start a conversation</h2>
@@ -204,7 +224,7 @@ export default function ChatInterface({
                   <div className="message-label">You</div>
                   <div className="message-content">
                     <div className="markdown-content">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      <SciMarkdown>{msg.content}</SciMarkdown>
                     </div>
                   </div>
                 </div>
@@ -244,7 +264,7 @@ export default function ChatInterface({
                       <span>Running Stage 3: Final synthesis...</span>
                     </div>
                   )}
-                  {msg.stage3 && <Stage3 finalResponse={msg.stage3} />}
+                  {msg.stage3 && <Stage3 finalResponse={msg.stage3} evidence={msg.evidence} />}
 
                   {/* Cost / Token Burndown */}
                   {msg.costSummary && <TokenBurndown costSummary={msg.costSummary} />}

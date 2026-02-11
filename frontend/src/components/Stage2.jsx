@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import SciMarkdown from './SciMarkdown';
 import GroundingScore from './GroundingScore';
 import './Stage2.css';
 
@@ -49,9 +49,9 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, grou
           {rankings[activeTab].model}
         </div>
         <div className="ranking-content markdown-content">
-          <ReactMarkdown>
+          <SciMarkdown>
             {deAnonymizeText(rankings[activeTab].ranking, labelToModel)}
-          </ReactMarkdown>
+          </SciMarkdown>
         </div>
 
         {rankings[activeTab].parsed_ranking &&

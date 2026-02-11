@@ -1,0 +1,533 @@
+/* ═══════════════════════════════════════════════════════════════════
+   LLM Prompts Atlas — Decision Tree Flow
+   Pharmaceutical / Life Sciences Enterprise Theme  v2.0
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Panel Container ─────────────────────────────────────────────── */
+.prompt-atlas-panel {
+  width: 480px;
+  min-width: 480px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #0a1628;
+  border-left: 1px solid rgba(20, 184, 166, 0.15);
+  position: relative;
+  overflow: hidden;
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              min-width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.3s ease;
+}
+
+.prompt-atlas-panel.collapsed {
+  width: 0;
+  min-width: 0;
+  opacity: 0;
+  pointer-events: none;
+  border-left: none;
+}
+
+/* ── Toggle Button ───────────────────────────────────────────────── */
+.atlas-toggle-btn {
+  position: fixed;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 8000;
+  width: 40px;
+  height: 80px;
+  border: 1px solid rgba(20, 184, 166, 0.3);
+  border-radius: 8px 0 0 8px;
+  background: linear-gradient(135deg, #0f2d2a 0%, #0a1628 100%);
+  color: #14b8a6;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.3s ease;
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.3);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 1px;
+  font-weight: 600;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.atlas-toggle-btn:hover {
+  background: linear-gradient(135deg, #134e4a 0%, #0f2338 100%);
+  border-color: rgba(20, 184, 166, 0.5);
+  box-shadow: -4px 0 20px rgba(20, 184, 166, 0.15);
+}
+
+.atlas-toggle-btn.panel-open {
+  right: 480px;
+  border-radius: 8px 0 0 8px;
+}
+
+.atlas-toggle-icon {
+  font-size: 18px;
+  writing-mode: horizontal-tb;
+}
+
+/* ── Header Bar ──────────────────────────────────────────────────── */
+.atlas-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: linear-gradient(180deg, #0f1f38 0%, #0a1628 100%);
+  border-bottom: 1px solid rgba(20, 184, 166, 0.12);
+  flex-shrink: 0;
+}
+
+.atlas-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.atlas-header-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #14b8a6, #0d9488);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgba(20, 184, 166, 0.3);
+}
+
+.atlas-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  letter-spacing: 0.3px;
+}
+
+.atlas-header-subtitle {
+  font-size: 10px;
+  color: #64748b;
+  margin-top: 1px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.atlas-close-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.atlas-close-btn:hover {
+  background: rgba(248, 113, 113, 0.15);
+  border-color: rgba(248, 113, 113, 0.3);
+  color: #f87171;
+}
+
+/* ── Tree Container ──────────────────────────────────────────────── */
+.atlas-tree-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 12px 24px;
+  scroll-behavior: smooth;
+}
+
+.atlas-tree-container::-webkit-scrollbar {
+  width: 5px;
+}
+
+.atlas-tree-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.atlas-tree-container::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 3px;
+}
+
+/* ── Empty State ─────────────────────────────────────────────────── */
+.atlas-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.atlas-empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+  animation: sway 3s ease-in-out infinite;
+}
+
+@keyframes sway {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(3deg); }
+}
+
+.atlas-empty-text {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.6;
+  max-width: 260px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Decision-Tree Branch & Node Styles
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Branch wrapper ──────────────────────────────────────────────── */
+.tree-branch {
+  position: relative;
+  animation: branchFadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation-delay: var(--branch-delay, 0s);
+}
+
+@keyframes branchFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Vertical connector line ─────────────────────────────────────── */
+.tree-connector {
+  width: 2px;
+  height: 18px;
+  margin: 0 auto;
+  border-left: 2px dashed rgba(100, 116, 139, 0.3);
+  transition: border-color 0.3s ease;
+}
+
+/* ── Node card ───────────────────────────────────────────────────── */
+.tree-node {
+  position: relative;
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--node-bg) 15%, #0a1628),
+    color-mix(in srgb, var(--node-bg) 8%, #0f1f38)
+  );
+  border: 1px solid color-mix(in srgb, var(--node-border) 40%, transparent);
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.tree-node:hover {
+  border-color: var(--node-border);
+  box-shadow: 0 4px 20px var(--node-glow),
+              0 0 1px var(--node-border);
+  transform: translateY(-1px);
+}
+
+.tree-node.expanded {
+  border-color: var(--node-border);
+  box-shadow: 0 6px 28px var(--node-glow),
+              0 0 2px var(--node-border);
+}
+
+/* Loading shimmer */
+.tree-node.loading {
+  overflow: hidden;
+}
+
+.tree-node.loading::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.04) 40%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 60%,
+    transparent 100%
+  );
+  animation: shimmer 1.8s ease-in-out infinite;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* Left accent stripe for each stage type */
+.tree-node.node-root     { border-left: 3px solid #14b8a6; }
+.tree-node.node-stage1   { border-left: 3px solid #3b82f6; }
+.tree-node.node-stage2   { border-left: 3px solid #a78bfa; }
+.tree-node.node-evidence  { border-left: 3px solid #f59e0b; }
+.tree-node.node-stage3   { border-left: 3px solid #34d399; }
+
+/* ── Node header row ─────────────────────────────────────────────── */
+.tree-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tree-node-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.tree-node-label {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-node-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--node-bg);
+  color: var(--node-text);
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.tree-node-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(100, 116, 139, 0.2);
+  border-top-color: var(--node-bg);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.tree-node-chevron {
+  font-size: 14px;
+  color: #64748b;
+  transition: transform 0.25s ease;
+  flex-shrink: 0;
+}
+
+.tree-node-chevron.open {
+  transform: rotate(180deg);
+  color: var(--node-bg);
+}
+
+/* ── Metrics row ─────────────────────────────────────────────────── */
+.tree-node-metrics {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(51, 65, 85, 0.2);
+  flex-wrap: wrap;
+}
+
+.tree-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px;
+  background: rgba(15, 23, 42, 0.5);
+  border-radius: 6px;
+  border: 1px solid rgba(51, 65, 85, 0.2);
+  min-width: 0;
+}
+
+.tree-metric-val {
+  font-size: 12px;
+  font-weight: 700;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-metric-label {
+  font-size: 8px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+/* ── Expandable detail dropdown ──────────────────────────────────── */
+.tree-node-detail {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(51, 65, 85, 0.25);
+  animation: detailSlide 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes detailSlide {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 600px;
+  }
+}
+
+.detail-text {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.65;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.detail-text::-webkit-scrollbar {
+  width: 3px;
+}
+
+.detail-text::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 2px;
+}
+
+.detail-text strong {
+  color: #cbd5e1;
+  font-weight: 600;
+}
+
+.evidence-link {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 10px;
+  color: #f59e0b;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(245, 158, 11, 0.4);
+  transition: color 0.2s;
+}
+
+.evidence-link:hover {
+  color: #fbbf24;
+  border-bottom-color: #fbbf24;
+}
+
+/* ── Children container ──────────────────────────────────────────── */
+.tree-children {
+  padding-left: 20px;
+  margin-left: 10px;
+  border-left: 1px solid rgba(51, 65, 85, 0.15);
+}
+
+/* Indent depth scaling */
+.depth-0 > .tree-children { padding-left: 16px; margin-left: 8px; }
+.depth-1 > .tree-children { padding-left: 14px; margin-left: 6px; }
+.depth-2 > .tree-children { padding-left: 12px; margin-left: 4px; }
+
+/* ── Footer ──────────────────────────────────────────────────────── */
+.atlas-footer {
+  padding: 6px 16px;
+  text-align: center;
+  font-size: 9px;
+  color: #334155;
+  border-top: 1px solid rgba(51, 65, 85, 0.15);
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Responsive Adjustments
+   ═══════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1400px) {
+  .prompt-atlas-panel {
+    width: 400px;
+    min-width: 400px;
+  }
+  .atlas-toggle-btn.panel-open {
+    right: 400px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .prompt-atlas-panel {
+    position: fixed;
+    right: 0;
+    top: 0;
+    z-index: 9500;
+    width: 440px;
+    min-width: 440px;
+    box-shadow: -8px 0 40px rgba(0, 0, 0, 0.5);
+  }
+  .prompt-atlas-panel.collapsed {
+    width: 0;
+    min-width: 0;
+  }
+  .atlas-toggle-btn.panel-open {
+    right: 440px;
+  }
+}
+
+@media (max-width: 768px) {
+  .prompt-atlas-panel {
+    width: 100vw;
+    min-width: 100vw;
+  }
+  .atlas-toggle-btn {
+    right: 8px;
+    width: 36px;
+    height: 60px;
+    font-size: 10px;
+  }
+  .atlas-toggle-btn.panel-open {
+    right: calc(100vw - 44px);
+  }
+  .tree-children {
+    padding-left: 10px;
+    margin-left: 4px;
+  }
+}
+
+/* ── Reduced Motion ──────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .tree-branch {
+    animation: none;
+  }
+  .tree-node-detail {
+    animation: none;
+  }
+  .tree-node-spinner {
+    animation: none;
+  }
+  .tree-node.loading::after {
+    animation: none;
+  }
+  .atlas-empty-icon {
+    animation: none;
+  }
+}

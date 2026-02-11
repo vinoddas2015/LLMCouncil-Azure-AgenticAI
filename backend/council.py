@@ -209,7 +209,7 @@ Note: This is a follow-up question in an ongoing conversation.
         for label, result in zip(labels, stage1_results)
     ])
 
-    ranking_prompt = f"""You are evaluating different responses to the following question:
+    ranking_prompt = f"""You are a pharmaceutical domain expert evaluating different responses to the following question:
 {context_note}
 Question: {user_query}
 
@@ -217,28 +217,55 @@ Here are the responses from different models (anonymized):
 
 {responses_text}
 
-Your task:
-1. First, evaluate each response individually. For each response, explain what it does well and what it does poorly.
-2. Then, at the very end of your response, provide a final ranking.
+═══════════════════════════════════════════════════════════
+PART 1 — RUBRIC EVALUATION (Verbalized Sampling)
+═══════════════════════════════════════════════════════════
+For EACH response, provide a score from 0 to 10 on each criterion below.
+After each score, give a brief justification (1-2 sentences).
+
+Criteria:
+  • Relevancy (0-10): How directly and completely the response addresses the original question
+  • Faithfulness (0-10): Factual accuracy, absence of hallucinations, grounded in evidence
+  • Context Recall (0-10): Coverage of key concepts, dimensions, and nuances raised across all responses
+  • Output Quality (0-10): Clarity, structure, depth, readability, and overall coherence
+  • Consensus (0-10): Would other domain experts broadly agree with the claims made?
+
+Format EXACTLY as follows for each response:
+
+RUBRIC Response X:
+  Relevancy: <score>/10 — <justification>
+  Faithfulness: <score>/10 — <justification>
+  Context Recall: <score>/10 — <justification>
+  Output Quality: <score>/10 — <justification>
+  Consensus: <score>/10 — <justification>
+
+═══════════════════════════════════════════════════════════
+PART 2 — CLAIM CLASSIFICATION (Pharma Safety)
+═══════════════════════════════════════════════════════════
+For EACH response, classify its major claims in pharmaceutical context:
+  TP (True Positive)  = Correct, verifiable claim relevant to the question
+  FP (False Positive) = Incorrect, misleading, or hallucinated claim
+  FN (False Negative) = Important information the response FAILED to mention
+
+Format EXACTLY as follows for each response:
+
+CLAIMS Response X:
+  TP: <count> — <brief summary of correct claims>
+  FP: <count> — <brief summary of incorrect/hallucinated claims, or "None detected">
+  FN: <count> — <brief summary of important omissions, or "None detected">
+
+═══════════════════════════════════════════════════════════
+PART 3 — FINAL RANKING
+═══════════════════════════════════════════════════════════
+Based on your rubric evaluation and claim analysis above, provide
+your final ranking from best to worst.
 
 IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
 - Start with the line "FINAL RANKING:" (all caps, with colon)
 - Then list the responses from best to worst as a numbered list
 - Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
-- Do not add any other text or explanations in the ranking section
 
-Example of the correct format for your ENTIRE response:
-
-Response A provides good detail on X but misses Y...
-Response B is accurate but lacks depth on Z...
-Response C offers the most comprehensive answer...
-
-FINAL RANKING:
-1. Response C
-2. Response A
-3. Response B
-
-Now provide your evaluation and ranking:"""
+Now provide your complete evaluation:"""
 
     messages = [{"role": "user", "content": ranking_prompt}]
 
@@ -256,10 +283,14 @@ Now provide your evaluation and ranking:"""
         if response is not None:
             full_text = response.get('content', '')
             parsed = parse_ranking_from_text(full_text)
+            rubric = parse_rubric_scores(full_text)
+            claims = parse_claim_counts(full_text)
             stage2_results.append({
                 "model": model,
                 "ranking": full_text,
                 "parsed_ranking": parsed,
+                "rubric_scores": rubric,
+                "claim_counts": claims,
                 "usage": response.get('usage'),
             })
         else:
@@ -294,6 +325,7 @@ async def stage3_synthesize_final(
     conversation_history: Optional[List[Dict[str, Any]]] = None,
     web_search_enabled: bool = False,
     session_id: Optional[str] = None,
+    evidence_context: str = "",
 ) -> Dict[str, Any]:
     """
     Stage 3: Chairman synthesizes final response.
@@ -337,21 +369,57 @@ Note: This is a follow-up question in an ongoing conversation. Consider the prev
         for result in stage2_results
     ])
 
-    chairman_prompt = f"""You are the Chairman of an LLM Council. Multiple AI models have provided responses to a user's question, and then ranked each other's responses.
+    # Build rubric summary for chairman visibility
+    rubric_lines = []
+    for r in stage2_results:
+        rubric = r.get("rubric_scores", {})
+        claims = r.get("claim_counts", {})
+        reviewer = r.get("model", "Reviewer")
+        if rubric:
+            for label, scores in rubric.items():
+                score_str = ", ".join(f"{k}: {v:.1f}" for k, v in scores.items())
+                rubric_lines.append(f"  {reviewer} → {label}: {score_str}")
+        if claims:
+            for label, c in claims.items():
+                rubric_lines.append(
+                    f"  {reviewer} → {label}: TP={c.get('tp',0)}, FP={c.get('fp',0)}, FN={c.get('fn',0)}"
+                )
+    rubric_section = "\n".join(rubric_lines) if rubric_lines else "  (No structured rubric data parsed)"
+
+    chairman_prompt = f"""You are the Chairman of an LLM Council operating in a pharmaceutical / life-sciences context where accuracy is paramount and missing critical information (FN) is more dangerous than including minor inaccuracies (FP).
 {context_note}
 Original Question: {user_query}
 
-STAGE 1 - Individual Responses:
+STAGE 1 — Individual Responses:
 {stage1_text}
 
-STAGE 2 - Peer Rankings:
+STAGE 2 — Peer Rankings:
 {stage2_text}
 
-Your task as Chairman is to synthesize all of this information into a single, comprehensive, accurate answer to the user's original question. Consider:
-- The individual responses and their insights
-- The peer rankings and what they reveal about response quality
-- Any patterns of agreement or disagreement
-{f'- The context from the previous conversation' if context else ''}
+STAGE 2 — Rubric Evaluation & Claim Analysis:
+{rubric_section}
+
+{evidence_context}
+
+Your task as Chairman is to synthesize the above into a single, comprehensive, accurate answer. Guidelines:
+1. Put patient-safety and factual accuracy FIRST — prefer responses with high Faithfulness scores and low FN counts.
+2. Weight reviewer consensus: if multiple reviewers agree a response is strong on Relevancy and Context Recall, lean on that response.
+3. Incorporate unique correct insights from lower-ranked responses; do not discard valuable information just because the source ranked lower.
+4. Flag any claims where reviewers disagreed on TP/FP classification — note the uncertainty explicitly.
+5. Structure your answer clearly with appropriate headings when the subject matter warrants it.
+6. When evidence citations are provided above, reference them inline using their tags (e.g. [FDA-L1], [CT-2], [PM-3]) and include a REFERENCES section at the end with clickable URLs.
+7. RICH SCIENTIFIC OUTPUT (the frontend renders full Markdown):
+   - Use Markdown TABLES (pipe syntax) for comparative data such as drug properties, dosing, trial endpoints, adverse-event rates, or any structured comparison.
+   - **MOLECULAR STRUCTURES — ALWAYS use SMILES code blocks.** The frontend natively renders SMILES as interactive 2D/3D molecular visualizations. NEVER use external image URLs (![image](url)) for chemical structures — those break. Instead ALWAYS write:
+     ```smiles
+     CC(=O)Oc1ccccc1C(=O)O
+     ```
+     Every time you mention a specific molecule, drug, or compound by name, ALSO include its SMILES in a ```smiles code block so the user gets an interactive 3D structure.
+   - Use ordered and unordered LISTS for step-by-step protocols, criteria, mechanisms of action, etc.
+   - Use subscript (<sub>x</sub>) and superscript (<sup>y</sup>) HTML tags for chemical formulas like H<sub>2</sub>O or IC<sub>50</sub>.
+   - When quantitative data is involved, use LaTeX math notation: inline $K_d = 5.2 \\text{{ nM}}$ or display blocks $$AUC = \\int_0^T C(t)\\,dt$$ for pharmacokinetic equations.
+   - For non-molecular images, you may include image links from public sources (e.g. RCSB PDB) when a figure would aid understanding: ![Figure caption](https://url).
+{f'8. Consider the context from the previous conversation.' if context else ''}
 
 Provide a clear, well-reasoned final answer that represents the council's collective wisdom:"""
 
@@ -421,6 +489,77 @@ Provide a clear, well-reasoned final answer that represents the council's collec
         "model": "error",
         "response": "Error: All chairman models and fallbacks failed. Unable to generate final synthesis."
     }
+
+
+def parse_rubric_scores(text: str) -> Dict[str, Dict[str, float]]:
+    """
+    Parse Verbalized Sampling rubric scores from Stage 2 output.
+
+    Looks for blocks like:
+        RUBRIC Response A:
+          Relevancy: 8/10 — justification...
+          Faithfulness: 7/10 — ...
+
+    Returns:
+        Dict mapping response label (e.g. "Response A") to a dict of
+        criteria scores normalised to 0–1.
+    """
+    import re
+    results: Dict[str, Dict[str, float]] = {}
+    criteria_ids = ["relevancy", "faithfulness", "context_recall", "output_quality", "consensus"]
+    criteria_patterns = {
+        "relevancy": r"Relevancy:\s*(\d+(?:\.\d+)?)\s*/\s*10",
+        "faithfulness": r"Faithfulness:\s*(\d+(?:\.\d+)?)\s*/\s*10",
+        "context_recall": r"Context\s*Recall:\s*(\d+(?:\.\d+)?)\s*/\s*10",
+        "output_quality": r"Output\s*Quality:\s*(\d+(?:\.\d+)?)\s*/\s*10",
+        "consensus": r"Consensus:\s*(\d+(?:\.\d+)?)\s*/\s*10",
+    }
+
+    # Split by RUBRIC Response X: blocks
+    blocks = re.split(r'RUBRIC\s+(Response\s+[A-Z]):', text, flags=re.IGNORECASE)
+    # blocks = ['before', 'Response A', 'block_text', 'Response B', 'block_text', ...]
+    for i in range(1, len(blocks) - 1, 2):
+        label = blocks[i].strip()
+        block = blocks[i + 1]
+        scores = {}
+        for cid, pattern in criteria_patterns.items():
+            m = re.search(pattern, block, re.IGNORECASE)
+            if m:
+                scores[cid] = min(1.0, float(m.group(1)) / 10.0)
+        if scores:
+            results[label] = scores
+
+    return results
+
+
+def parse_claim_counts(text: str) -> Dict[str, Dict[str, int]]:
+    """
+    Parse TP / FP / FN claim counts from Stage 2 output.
+
+    Looks for blocks like:
+        CLAIMS Response A:
+          TP: 5 — correct claims about...
+          FP: 1 — incorrectly stated that...
+          FN: 2 — missed important info about...
+
+    Returns:
+        Dict mapping response label to {"tp": int, "fp": int, "fn": int}.
+    """
+    import re
+    results: Dict[str, Dict[str, int]] = {}
+
+    blocks = re.split(r'CLAIMS\s+(Response\s+[A-Z]):', text, flags=re.IGNORECASE)
+    for i in range(1, len(blocks) - 1, 2):
+        label = blocks[i].strip()
+        block = blocks[i + 1]
+        counts = {"tp": 0, "fp": 0, "fn": 0}
+        for key in ("TP", "FP", "FN"):
+            m = re.search(rf'{key}:\s*(\d+)', block)
+            if m:
+                counts[key.lower()] = int(m.group(1))
+        results[label] = counts
+
+    return results
 
 
 def parse_ranking_from_text(ranking_text: str) -> List[str]:

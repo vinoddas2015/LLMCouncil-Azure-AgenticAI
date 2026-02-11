@@ -1,8 +1,14 @@
 /**
  * API client for the LLM Council backend.
+ *
+ * In development, Vite proxies /api/* to http://localhost:8001
+ * so all requests stay on the same origin — avoiding corporate
+ * proxy / Zscaler interception of cross-origin localhost calls.
+ *
+ * In production, set VITE_API_BASE to the real backend URL.
  */
 
-const API_BASE = 'http://localhost:8001';
+const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 export const api = {
   /**
@@ -138,53 +144,98 @@ export const api = {
    * @returns {Promise<void>}
    */
   async sendMessageStream(conversationId, content, onEvent, attachments = [], preferences = {}) {
-    const response = await fetch(
-      `${API_BASE}/api/conversations/${conversationId}/message/stream`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          content,
-          attachments: attachments.map(a => ({
-            name: a.name,
-            type: a.type,
-            size: a.size,
-            base64: a.base64,
-          })),
-          council_models: preferences.council_models || null,
-          chairman_model: preferences.chairman_model || null,
-          web_search_enabled: preferences.web_search_enabled || false,
-        }),
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    // Timeout safety — abort if no data for 180s (corporate proxies often kill at ~120s)
+    let lastActivity = Date.now();
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastActivity > 180_000) {
+        controller.abort();
+        clearInterval(watchdog);
       }
-    );
+    }, 10_000);
 
-    if (!response.ok) {
-      throw new Error('Failed to send message');
-    }
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/conversations/${conversationId}/message/stream`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Connection': 'keep-alive',
+          },
+          body: JSON.stringify({ 
+            content,
+            attachments: attachments.map(a => ({
+              name: a.name,
+              type: a.type,
+              size: a.size,
+              base64: a.base64,
+            })),
+            council_models: preferences.council_models || null,
+            chairman_model: preferences.chairman_model || null,
+            web_search_enabled: preferences.web_search_enabled || false,
+          }),
+          signal,
+        }
+      );
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
+      if (!response.ok) {
+        // Try to extract a meaningful message from proxy error pages
+        let detail = `HTTP ${response.status}`;
+        try {
+          const body = await response.text();
+          // Corporate proxies return HTML error pages — extract the useful part
+          const reasonMatch = body.match(/Reason:\s*([^<\n]+)/i);
+          if (reasonMatch) detail = reasonMatch[1].trim();
+          else if (body.length < 500) detail = body;
+        } catch { /* ignore */ }
+        throw new Error(`Failed to send message: ${detail}`);
+      }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n');
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          try {
-            const event = JSON.parse(data);
-            onEvent(event.type, event);
-          } catch (e) {
-            console.error('Failed to parse SSE event:', e);
+        lastActivity = Date.now();
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete lines from buffer
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // keep incomplete last line in buffer
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            try {
+              const event = JSON.parse(data);
+              onEvent(event.type, event);
+            } catch (e) {
+              console.error('Failed to parse SSE event:', e, 'Raw data:', data);
+            }
           }
         }
       }
+
+      // Process any remaining data in buffer
+      if (buffer.startsWith('data: ')) {
+        try {
+          const event = JSON.parse(buffer.slice(6));
+          onEvent(event.type, event);
+        } catch { /* ignore trailing partial data */ }
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        throw new Error('Connection timed out — the corporate proxy may have closed the connection. Please retry.');
+      }
+      throw err;
+    } finally {
+      clearInterval(watchdog);
     }
   },
 

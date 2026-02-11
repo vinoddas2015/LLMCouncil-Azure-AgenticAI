@@ -63,3 +63,29 @@
   transform: scale(1.1);
   box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
 }
+
+/* ── Atlas-open layout adjustment ──
+   When the 3D atlas panel is open, the chat interface shrinks
+   to make room for the 480 px right panel. */
+.app.atlas-open .chat-interface {
+  /* 280 px sidebar + 480 px atlas panel → chat fills the rest */
+  max-width: calc(100vw - 280px - 480px);
+}
+
+@media (max-width: 1400px) {
+  .app.atlas-open .chat-interface {
+    max-width: calc(100vw - 240px - 380px);
+  }
+}
+
+@media (max-width: 1100px) {
+  .app.atlas-open .chat-interface {
+    max-width: calc(100vw - 340px);
+  }
+}
+
+@media (max-width: 768px) {
+  .app.atlas-open .chat-interface {
+    max-width: 100vw;
+  }
+}

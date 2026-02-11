@@ -1,6 +1,21 @@
 import { useState } from 'react';
 import './GroundingScore.css';
 
+/** Small pharma metric bar with label, value, and formula tooltip. */
+function PharmaBar({ label, value, formula }) {
+  const pct = Math.round(value ?? 0);
+  const color = pct >= 80 ? 'var(--success)' : pct >= 60 ? 'var(--warning)' : 'var(--error)';
+  return (
+    <div className="pharma-bar-row" title={formula}>
+      <span className="pharma-bar-label">{label}</span>
+      <div className="pharma-bar-track">
+        <div className="pharma-bar-fill" style={{ width: `${pct}%`, background: color }} />
+      </div>
+      <span className="pharma-bar-value" style={{ color }}>{pct}%</span>
+    </div>
+  );
+}
+
 /**
  * Circular grounding-score bubble with per-criteria breakdown.
  * Inspired by compliance-evidence card UX (circular gauge + metric bars).
@@ -11,13 +26,16 @@ export default function GroundingScore({ groundingScores }) {
   if (!groundingScores) return null;
 
   const { overall_score, per_response, criteria_definitions, council_size, reviewers_count } = groundingScores;
-  const pct = Math.round(overall_score * 100);
+
+  // overall_score comes from backend already as 0–100 (e.g. 76.7)
+  const pct = Math.round(overall_score);
+  const pctFraction = overall_score / 100;   // 0–1 for SVG ring
 
   // SVG circle params
   const radius = 54;
   const stroke = 7;
   const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (overall_score * circumference);
+  const offset = circumference - (pctFraction * circumference);
 
   // Color tier
   const tierColor = pct >= 80 ? 'var(--success)' : pct >= 60 ? 'var(--warning)' : 'var(--error)';
@@ -73,16 +91,18 @@ export default function GroundingScore({ groundingScores }) {
           {criteria_definitions && (
             <div className="grounding-criteria">
               <h5>Rubric Criteria</h5>
-              {Object.entries(criteria_definitions).map(([key, def]) => {
-                // Average per-criteria score across all responses
+              {/* criteria_definitions is an ARRAY of {id, name, weight, description} */}
+              {(Array.isArray(criteria_definitions) ? criteria_definitions : []).map((def) => {
+                const criteriaId = def.id;   // e.g. "relevancy"
+                // Backend criteria values are already 0–100
                 const avgScore = per_response && per_response.length > 0
-                  ? per_response.reduce((sum, r) => sum + (r.criteria?.[key] ?? 0), 0) / per_response.length
+                  ? per_response.reduce((sum, r) => sum + (r.criteria?.[criteriaId] ?? 0), 0) / per_response.length
                   : 0;
-                const barPct = Math.round(avgScore * 100);
+                const barPct = Math.round(avgScore);
                 return (
-                  <div className="criteria-row" key={key}>
+                  <div className="criteria-row" key={criteriaId}>
                     <div className="criteria-label-row">
-                      <span className="criteria-name">{def.label}</span>
+                      <span className="criteria-name">{def.name}</span>
                       <span className="criteria-weight">{Math.round(def.weight * 100)}%</span>
                       <span className="criteria-value">{barPct}%</span>
                     </div>
@@ -104,7 +124,8 @@ export default function GroundingScore({ groundingScores }) {
             <div className="grounding-models">
               <h5>Per-Model Grounding</h5>
               {per_response.map((r, i) => {
-                const mPct = Math.round(r.grounding_score * 100);
+                // grounding_score is already 0–100 from backend
+                const mPct = Math.round(r.grounding_score);
                 const mColor = mPct >= 80 ? 'var(--success)' : mPct >= 60 ? 'var(--warning)' : 'var(--error)';
                 return (
                   <div className="model-grounding-row" key={i}>
@@ -114,6 +135,37 @@ export default function GroundingScore({ groundingScores }) {
                       <div className="model-grounding-bar-fill" style={{ width: `${mPct}%`, background: mColor }} />
                     </div>
                     <span className="model-grounding-pct" style={{ color: mColor }}>{mPct}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Pharma Safety Metrics */}
+          {per_response && per_response.some(r => r.pharma_metrics) && (
+            <div className="grounding-pharma">
+              <h5>Pharma Safety Metrics</h5>
+              <p className="pharma-explainer">
+                Correctness penalises missing critical info (FN) twice as hard as inaccuracies (FP).
+              </p>
+              {per_response.map((r, i) => {
+                const pm = r.pharma_metrics;
+                if (!pm) return null;
+                const shortName = (r.model || '').split('/')[1] || r.model;
+                return (
+                  <div className="pharma-model-block" key={i}>
+                    <span className="pharma-model-name">#{r.rank} {shortName}</span>
+                    <div className="pharma-metrics-grid">
+                      <PharmaBar label="Correctness" value={pm.correctness} formula="TP/(TP+2×FN+FP)" />
+                      <PharmaBar label="Precision" value={pm.precision} formula="TP/(TP+FP)" />
+                      <PharmaBar label="Recall" value={pm.recall} formula="TP/(TP+FN)" />
+                    </div>
+                    <span className="pharma-counts">
+                      TP {pm.tp} · FP {pm.fp} · FN {pm.fn}
+                      {r.verbalized_coverage != null && (
+                        <> · VS coverage {Math.round(r.verbalized_coverage * 100)}%</>
+                      )}
+                    </span>
                   </div>
                 );
               })}

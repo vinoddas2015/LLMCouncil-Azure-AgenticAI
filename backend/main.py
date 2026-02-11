@@ -23,6 +23,7 @@ from .resilience import (
     QuorumError,
 )
 from .grounding import compute_response_grounding_scores, get_rubric_criteria
+from .skills import run_evidence_skills, format_citations_for_prompt
 from .token_tracking import SessionCostTracker
 from .memory import get_memory_manager
 from .orchestrator import (
@@ -594,7 +595,44 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
     # Generate a unique session ID for kill switch tracking
     session_id = f"{conversation_id}:{uuid.uuid4().hex[:8]}"
 
+    # ── Keep-Alive wrapper ──────────────────────────────────────────
+    # Corporate proxies (Zscaler, Netskope) often kill idle SSE
+    # connections after ~60-120s.  We send SSE comment pings every
+    # 10s to keep the TCP socket alive during long model calls.
+
+    async def with_keepalive(inner_gen, interval=10):
+        """
+        Wrap an async generator so that a ': keepalive\\n\\n' SSE
+        comment is emitted whenever `interval` seconds elapse between
+        real data frames.
+
+        Uses asyncio.create_task so that the inner generator's
+        __anext__() is never cancelled — asyncio.wait_for would
+        cancel it on timeout, corrupting the generator state.
+        """
+        inner_iter = inner_gen.__aiter__()
+        pending_next = None          # the Task for __anext__()
+
+        while True:
+            if pending_next is None:
+                pending_next = asyncio.ensure_future(inner_iter.__anext__())
+
+            done, _ = await asyncio.wait({pending_next}, timeout=interval)
+
+            if done:
+                # The inner generator yielded a value (or raised)
+                task = pending_next
+                pending_next = None
+                try:
+                    yield task.result()          # may raise StopAsyncIteration
+                except StopAsyncIteration:
+                    break
+            else:
+                # Timeout — inner gen is still working; send keepalive
+                yield ": keepalive\n\n"
+
     async def event_generator():
+        nonlocal augmented_content
         # Register with kill switch
         kill_event = kill_switch.register_session(session_id)
         cost_tracker = SessionCostTracker()
@@ -649,7 +687,9 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
                 return
 
             # Stage 2: Collect rankings
+            # Also fire evidence retrieval in parallel with Stage 2
             yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
+            evidence_task = asyncio.create_task(run_evidence_skills(augmented_content))
             stage2_results, label_to_model = await stage2_collect_rankings(
                 augmented_content, stage1_results, user_council_models,
                 conversation_history, web_search_enabled, session_id=session_id,
@@ -662,6 +702,9 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             grounding_scores = compute_response_grounding_scores(
                 stage2_results, label_to_model, aggregate_rankings
             )
+            # Await evidence retrieval (should be done by now — ran during Stage 2)
+            evidence_bundle = await evidence_task
+            yield f"data: {json.dumps({'type': 'evidence_complete', 'data': evidence_bundle})}\n\n"
             yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'grounding_scores': grounding_scores}})}\n\n"
 
             # ── Post-Stage 2 Orchestrator Agent: grounding evaluation ──
@@ -677,10 +720,12 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
 
             # Stage 3: Synthesize final answer
             yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
+            evidence_text = format_citations_for_prompt(evidence_bundle)
             stage3_result = await stage3_synthesize_final(
                 augmented_content, stage1_results, stage2_results,
                 user_chairman_model, conversation_history, web_search_enabled,
                 session_id=session_id,
+                evidence_context=evidence_text,
             )
             # Record Stage 3 token usage
             cost_tracker.record("stage3", stage3_result.get("model", "unknown"), stage3_result.get("usage"))
@@ -692,12 +737,18 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
                 storage.update_conversation_title(conversation_id, title)
                 yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
 
-            # Save complete assistant message
+            # Save complete assistant message (including metadata for reload)
             storage.add_assistant_message(
                 conversation_id,
                 stage1_results,
                 stage2_results,
-                stage3_result
+                stage3_result,
+                metadata={
+                    "label_to_model": label_to_model,
+                    "aggregate_rankings": aggregate_rankings,
+                    "grounding_scores": grounding_scores,
+                    "evidence": evidence_bundle,
+                },
             )
 
             # Emit cost summary before completion
@@ -705,7 +756,8 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             yield f"data: {json.dumps({'type': 'cost_summary', 'data': cost_summary})}\n\n"
 
             # ── Post-Stage 3 Orchestrator Agent: learning decision ──
-            overall_grounding = grounding_scores.get("overall_score", 0)
+            # overall_score is 0–100 from grounding.py; orchestrator expects 0–1
+            overall_grounding = grounding_scores.get("overall_score", 0) / 100.0
             learning_gate = await post_stage3_agent(
                 conversation_id=conversation_id,
                 user_query=augmented_content,
@@ -734,11 +786,12 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             kill_switch.unregister_session(session_id)
 
     return StreamingResponse(
-        event_generator(),
+        with_keepalive(event_generator(), interval=10),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         }
     )
 

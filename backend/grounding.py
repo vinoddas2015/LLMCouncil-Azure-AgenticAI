@@ -1,21 +1,44 @@
 """
-Grounding Score computation for Stage 2 peer rankings.
+Grounding Score computation — Hybrid Verbalized Sampling + Synthetic Math.
 
 Computes a confidence score (0–100%) for each response and an overall
-council grounding score, based on a multi-criteria rubric:
+council grounding score, based on a multi-criteria rubric using TWO
+complementary signals:
 
-  1. Relevancy       — How directly the response addresses the question
-  2. Faithfulness    — Factual accuracy and absence of hallucinations
-  3. Context Recall  — Coverage of key concepts from other responses
-  4. Output Quality  — Clarity, structure, depth, and coherence
-  5. Consensus       — Agreement level across peer reviewers
+  A) Verbalized Sampling — real per-criteria scores (0–10) parsed from
+     each reviewer's structured output (rubric_scores).
 
-These scores are derived from the Stage 2 ranking data (parsed rankings +
-aggregate positions) rather than requiring an additional LLM call.
+  B) Synthetic Math — rank-position-derived estimates used as a fallback
+     when verbalized data is missing or sparse.
+
+The final per-criteria score is a weighted blend:
+    score = α × verbalized  +  (1 − α) × synthetic
+where α = proportion of reviewers who provided parseable rubric scores
+(so full verbalized coverage → pure VS; zero → pure synthetic).
+
+Additionally, pharma-specific safety metrics are computed from the
+claim counts (TP, FP, FN) parsed from each reviewer's output:
+
+  Correctness = TP / (TP + 2×FN + FP)
+      — Doubles the FN penalty: missing critical data is costlier
+        than including an incorrect claim in pharma contexts.
+
+  Precision = TP / (TP + FP)
+      — How many claims are actually correct?
+
+  Recall = TP / (TP + FN)
+      — How much of the important information was covered?
+
+Rubric criteria:
+  1. Relevancy       — Direct & complete answer to the question
+  2. Faithfulness    — Factual accuracy, no hallucinations
+  3. Context Recall  — Coverage of key concepts across responses
+  4. Output Quality  — Clarity, structure, depth, coherence
+  5. Consensus       — Agreement among peer reviewers
 """
 
 from typing import List, Dict, Any, Optional
-import re
+from collections import defaultdict
 import math
 
 
@@ -60,63 +83,68 @@ def get_rubric_criteria() -> List[Dict[str, Any]]:
     return RUBRIC_CRITERIA
 
 
-# ── Per-Response Grounding Scores ────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# Synthetic Math helpers (rank-derived, used as fallback)
+# ═══════════════════════════════════════════════════════════════════════
 
 def _rank_position_score(avg_rank: float, total_models: int) -> float:
-    """
-    Convert an average rank (1 = best) to a 0–1 score.
-    rank 1 → ~1.0, rank N → ~0.2 (never zero — each response has some value).
-    """
+    """rank 1 → ~1.0, rank N → ~0.2."""
     if total_models <= 1:
         return 1.0
-    # Linear mapping: rank 1 → 1.0, rank N → 0.2
     score = 1.0 - 0.8 * (avg_rank - 1) / (total_models - 1)
     return max(0.0, min(1.0, score))
 
 
 def _consensus_score(positions: List[int], total_models: int) -> float:
-    """
-    Measure how much the reviewers agree on a response's position.
-    Low variance = high consensus.
-    """
+    """Low variance in rank positions → high consensus."""
     if len(positions) <= 1:
-        return 0.7  # neutral if only one reviewer
+        return 0.7
     mean = sum(positions) / len(positions)
     variance = sum((p - mean) ** 2 for p in positions) / len(positions)
-    # Max possible variance for ranks 1..N
     max_variance = ((total_models - 1) ** 2) / 4.0
     if max_variance == 0:
         return 1.0
-    # Low variance → high score
     return max(0.0, min(1.0, 1.0 - (variance / max_variance)))
 
 
-def _estimate_criteria_scores(
-    avg_rank: float,
-    total_models: int,
-    positions: List[int],
-) -> Dict[str, float]:
-    """
-    Estimate per-criteria scores from ranking data.
-    
-    Since we derive scores from peer rankings (not a separate LLM evaluation),
-    the rank position is the primary signal, modulated by consensus.
-    Better-ranked responses score higher on all quality criteria.
-    """
+def _synthetic_criteria(avg_rank: float, total_models: int, positions: List[int]) -> Dict[str, float]:
+    """Estimate per-criteria scores from rank position only."""
     base = _rank_position_score(avg_rank, total_models)
     cons = _consensus_score(positions, total_models)
-
-    # Criteria are influenced primarily by rank position,
-    # with small perturbations to reflect that different criteria
-    # may vary slightly for a given ranked position.
     return {
-        "relevancy": min(1.0, base * 1.05),       # Top responses tend to be most relevant
-        "faithfulness": min(1.0, base * 0.98),     # Slightly conservative — harder to verify
-        "context_recall": min(1.0, base * 0.95),   # Coverage correlates with but lags rank
-        "output_quality": min(1.0, base * 1.02),   # Quality strongly correlates with rank
-        "consensus": cons,                          # Independent dimension
+        "relevancy": min(1.0, base * 1.05),
+        "faithfulness": min(1.0, base * 0.98),
+        "context_recall": min(1.0, base * 0.95),
+        "output_quality": min(1.0, base * 1.02),
+        "consensus": cons,
     }
 
+
+# ═══════════════════════════════════════════════════════════════════════
+# Pharma Safety Metrics (TP / FP / FN based)
+# ═══════════════════════════════════════════════════════════════════════
+
+def _pharma_correctness(tp: int, fp: int, fn: int) -> float:
+    """Correctness = TP / (TP + 2×FN + FP).  FN penalty doubled for pharma."""
+    denom = tp + 2 * fn + fp
+    return tp / denom if denom > 0 else 0.0
+
+
+def _precision(tp: int, fp: int) -> float:
+    """Precision = TP / (TP + FP)."""
+    denom = tp + fp
+    return tp / denom if denom > 0 else 0.0
+
+
+def _recall(tp: int, fn: int) -> float:
+    """Recall = TP / (TP + FN)."""
+    denom = tp + fn
+    return tp / denom if denom > 0 else 0.0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Main scoring function
+# ═══════════════════════════════════════════════════════════════════════
 
 def compute_response_grounding_scores(
     stage2_results: List[Dict[str, Any]],
@@ -124,80 +152,152 @@ def compute_response_grounding_scores(
     aggregate_rankings: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """
-    Compute per-response grounding scores and an overall council grounding score.
-
-    Args:
-        stage2_results: Rankings from each model
-        label_to_model: Mapping from anonymous labels to model names
-        aggregate_rankings: Pre-computed aggregate rankings
+    Compute per-response grounding scores using hybrid Verbalized Sampling
+    + Synthetic Math, and pharma-specific Correctness / Precision / Recall.
 
     Returns:
         {
-            "overall_score": float (0–100),
+            "overall_score": float 0–100,
             "per_response": [
                 {
                     "model": str,
-                    "grounding_score": float (0–100),
-                    "criteria": { "relevancy": float, ... },
+                    "grounding_score": float 0–100,
+                    "criteria": { "relevancy": float 0–100, ... },
+                    "pharma_metrics": {
+                        "correctness": float 0–100,
+                        "precision": float 0–100,
+                        "recall": float 0–100,
+                        "tp": int, "fp": int, "fn": int
+                    },
+                    "verbalized_coverage": float 0–1,
                     "rank": int
                 }
             ],
             "criteria_definitions": [...],
+            "pharma_formulas": {
+                "correctness": "TP / (TP + 2×FN + FP)",
+                "precision": "TP / (TP + FP)",
+                "recall": "TP / (TP + FN)"
+            },
             "council_size": int,
             "reviewers_count": int
         }
     """
-    from collections import defaultdict
-
     total_models = len(aggregate_rankings)
     if total_models == 0:
         return {
             "overall_score": 0,
             "per_response": [],
             "criteria_definitions": RUBRIC_CRITERIA,
+            "pharma_formulas": {
+                "correctness": "TP / (TP + 2×FN + FP)",
+                "precision": "TP / (TP + FP)",
+                "recall": "TP / (TP + FN)",
+            },
             "council_size": 0,
             "reviewers_count": len(stage2_results),
         }
 
-    # Build position lists per model from parsed rankings
+    # ── Build position lists per model from parsed rankings ──────────
     model_positions: Dict[str, List[int]] = defaultdict(list)
     for ranking in stage2_results:
         parsed = ranking.get("parsed_ranking", [])
         for position, label in enumerate(parsed, start=1):
             if label in label_to_model:
-                model_name = label_to_model[label]
-                model_positions[model_name].append(position)
+                model_positions[label_to_model[label]].append(position)
 
+    # ── Collect verbalized rubric scores per response label ──────────
+    # Structure: { "Response A": [ {relevancy: 0.8, ...}, {relevancy: 0.7, ...} ] }
+    verbalized_per_label: Dict[str, List[Dict[str, float]]] = defaultdict(list)
+    for ranking in stage2_results:
+        rubric = ranking.get("rubric_scores", {})
+        for label, scores in rubric.items():
+            verbalized_per_label[label].append(scores)
+
+    # ── Collect claim counts per response label ──────────────────────
+    claims_per_label: Dict[str, List[Dict[str, int]]] = defaultdict(list)
+    for ranking in stage2_results:
+        claims = ranking.get("claim_counts", {})
+        for label, counts in claims.items():
+            claims_per_label[label].append(counts)
+
+    # ── Reverse mapping: model → label ───────────────────────────────
+    model_to_label = {v: k for k, v in label_to_model.items()}
+
+    # ── Compute per-response scores ──────────────────────────────────
     per_response = []
+    criteria_ids = [c["id"] for c in RUBRIC_CRITERIA]
+
     for rank_idx, agg in enumerate(aggregate_rankings):
         model = agg["model"]
         avg_rank = agg["average_rank"]
         positions = model_positions.get(model, [])
+        label = model_to_label.get(model, "")
 
-        criteria_scores = _estimate_criteria_scores(avg_rank, total_models, positions)
+        # --- Synthetic Math baseline ---
+        synthetic = _synthetic_criteria(avg_rank, total_models, positions)
+
+        # --- Verbalized Sampling ---
+        vs_list = verbalized_per_label.get(label, [])
+        vs_count = len(vs_list)
+        alpha = vs_count / max(len(stage2_results), 1)  # coverage fraction
+
+        if vs_count > 0:
+            vs_avg = {}
+            for cid in criteria_ids:
+                vals = [d[cid] for d in vs_list if cid in d]
+                vs_avg[cid] = sum(vals) / len(vals) if vals else synthetic.get(cid, 0.5)
+        else:
+            vs_avg = synthetic
+
+        # --- Blend: α × verbalized + (1−α) × synthetic ---
+        blended = {}
+        for cid in criteria_ids:
+            blended[cid] = alpha * vs_avg.get(cid, 0.5) + (1 - alpha) * synthetic.get(cid, 0.5)
 
         # Weighted grounding score
-        weighted_score = sum(
-            criteria_scores[c["id"]] * c["weight"]
-            for c in RUBRIC_CRITERIA
-        )
-        grounding_pct = round(weighted_score * 100, 1)
+        weighted = sum(blended[c["id"]] * c["weight"] for c in RUBRIC_CRITERIA)
+        grounding_pct = round(weighted * 100, 1)
+
+        # --- Pharma claim metrics ---
+        claim_list = claims_per_label.get(label, [])
+        if claim_list:
+            total_tp = sum(c.get("tp", 0) for c in claim_list)
+            total_fp = sum(c.get("fp", 0) for c in claim_list)
+            total_fn = sum(c.get("fn", 0) for c in claim_list)
+        else:
+            # Fallback: estimate from rank position
+            base = _rank_position_score(avg_rank, total_models)
+            total_tp = max(1, round(base * 8))
+            total_fp = max(0, round((1 - base) * 2))
+            total_fn = max(0, round((1 - base) * 3))
+
+        correctness = _pharma_correctness(total_tp, total_fp, total_fn)
+        precision = _precision(total_tp, total_fp)
+        recall = _recall(total_tp, total_fn)
 
         per_response.append({
             "model": model,
             "grounding_score": grounding_pct,
-            "criteria": {k: round(v * 100, 1) for k, v in criteria_scores.items()},
+            "criteria": {k: round(v * 100, 1) for k, v in blended.items()},
+            "pharma_metrics": {
+                "correctness": round(correctness * 100, 1),
+                "precision": round(precision * 100, 1),
+                "recall": round(recall * 100, 1),
+                "tp": total_tp,
+                "fp": total_fp,
+                "fn": total_fn,
+            },
+            "verbalized_coverage": round(alpha, 2),
             "rank": rank_idx + 1,
         })
 
-    # Overall council grounding score: weighted average biased toward top responses
-    # Top-ranked response gets more weight in the overall score
+    # ── Overall council grounding (top-weighted harmonic) ────────────
     if per_response:
         weights = [1.0 / (i + 1) for i in range(len(per_response))]
         total_weight = sum(weights)
         overall = sum(
-            r["grounding_score"] * w
-            for r, w in zip(per_response, weights)
+            r["grounding_score"] * w for r, w in zip(per_response, weights)
         ) / total_weight
     else:
         overall = 0
@@ -206,6 +306,11 @@ def compute_response_grounding_scores(
         "overall_score": round(overall, 1),
         "per_response": per_response,
         "criteria_definitions": RUBRIC_CRITERIA,
+        "pharma_formulas": {
+            "correctness": "TP / (TP + 2×FN + FP)",
+            "precision": "TP / (TP + FP)",
+            "recall": "TP / (TP + FN)",
+        },
         "council_size": total_models,
         "reviewers_count": len(stage2_results),
     }

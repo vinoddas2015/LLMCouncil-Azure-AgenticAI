@@ -250,3 +250,83 @@
   min-width: 36px;
   text-align: right;
 }
+
+/* ── Pharma Safety Metrics ── */
+.grounding-pharma {
+  padding: 16px 20px;
+  border-top: 1px solid rgba(96, 165, 250, 0.12);
+}
+
+.grounding-pharma h5 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.pharma-explainer {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  margin: 0 0 12px;
+  line-height: 1.4;
+}
+
+.pharma-model-block {
+  margin-bottom: 14px;
+}
+
+.pharma-model-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.pharma-metrics-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pharma-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pharma-bar-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  min-width: 80px;
+}
+
+.pharma-bar-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.pharma-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease-out;
+}
+
+.pharma-bar-value {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: monospace;
+  min-width: 32px;
+  text-align: right;
+}
+
+.pharma-counts {
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  margin-top: 4px;
+  display: block;
+}

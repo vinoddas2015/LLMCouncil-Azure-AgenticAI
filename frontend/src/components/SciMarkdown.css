@@ -1,0 +1,505 @@
+/* ═══════════════════════════════════════════════════════════════════
+   SciMarkdown — Scientific Content Styles
+   Pharma enterprise theme — tables, SMILES, figures, code, math
+   ═══════════════════════════════════════════════════════════════════ */
+
+.sci-markdown {
+  line-height: 1.7;
+  color: #cbd5e1;
+  word-break: break-word;
+}
+
+/* ── Headings ────────────────────────────────────────────────────── */
+.sci-markdown h1,
+.sci-markdown h2,
+.sci-markdown h3,
+.sci-markdown h4 {
+  color: #e2e8f0;
+  margin: 1.2em 0 0.5em;
+  line-height: 1.3;
+}
+
+.sci-markdown h1 { font-size: 1.3em; }
+.sci-markdown h2 { font-size: 1.15em; }
+.sci-markdown h3 { font-size: 1.05em; }
+.sci-markdown h4 { font-size: 0.95em; color: #94a3b8; }
+
+/* ── Paragraphs & text ───────────────────────────────────────────── */
+.sci-markdown p {
+  margin: 0.6em 0;
+}
+
+.sci-markdown strong {
+  color: #f1f5f9;
+  font-weight: 600;
+}
+
+.sci-markdown em {
+  color: #a78bfa;
+}
+
+.sci-markdown del {
+  color: #64748b;
+  text-decoration: line-through;
+}
+
+.sci-markdown blockquote {
+  margin: 0.8em 0;
+  padding: 8px 14px;
+  border-left: 3px solid #14b8a6;
+  background: rgba(20, 184, 166, 0.06);
+  border-radius: 0 6px 6px 0;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.sci-markdown hr {
+  border: none;
+  border-top: 1px solid rgba(51, 65, 85, 0.3);
+  margin: 1.2em 0;
+}
+
+/* ── Links ───────────────────────────────────────────────────────── */
+.sci-markdown a {
+  color: #14b8a6;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(20, 184, 166, 0.3);
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.sci-markdown a:hover {
+  color: #2dd4bf;
+  border-bottom-color: #2dd4bf;
+}
+
+/* ── Lists ───────────────────────────────────────────────────────── */
+.sci-markdown ul,
+.sci-markdown ol {
+  margin: 0.6em 0;
+  padding-left: 1.6em;
+}
+
+.sci-markdown li {
+  margin: 0.3em 0;
+}
+
+.sci-markdown li::marker {
+  color: #14b8a6;
+}
+
+/* Task lists (GFM) */
+.sci-markdown ul.contains-task-list {
+  list-style: none;
+  padding-left: 0.4em;
+}
+
+.sci-markdown li.task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.sci-markdown li.task-list-item input[type='checkbox'] {
+  accent-color: #14b8a6;
+  margin-top: 5px;
+}
+
+/* ── Inline code ─────────────────────────────────────────────────── */
+.sci-markdown code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace;
+  font-size: 0.88em;
+  padding: 2px 6px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(51, 65, 85, 0.3);
+  border-radius: 4px;
+  color: #a78bfa;
+}
+
+/* ── Code blocks ─────────────────────────────────────────────────── */
+.sci-markdown .code-block {
+  margin: 0.8em 0;
+  padding: 14px 16px;
+  background: #0c1527;
+  border: 1px solid rgba(51, 65, 85, 0.3);
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.sci-markdown .code-block code {
+  padding: 0;
+  background: none;
+  border: none;
+  color: #e2e8f0;
+  font-size: inherit;
+}
+
+.sci-markdown .code-block::-webkit-scrollbar {
+  height: 4px;
+}
+
+.sci-markdown .code-block::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Tables (GFM)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.sci-table-wrapper {
+  margin: 0.8em 0;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid rgba(51, 65, 85, 0.3);
+  background: rgba(15, 23, 42, 0.3);
+}
+
+.sci-table-wrapper::-webkit-scrollbar {
+  height: 4px;
+}
+
+.sci-table-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 2px;
+}
+
+.sci-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.sci-table thead {
+  background: linear-gradient(180deg, rgba(20, 184, 166, 0.12) 0%, rgba(20, 184, 166, 0.06) 100%);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.sci-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #14b8a6;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  border-bottom: 2px solid rgba(20, 184, 166, 0.2);
+  white-space: nowrap;
+}
+
+.sci-table td {
+  padding: 7px 12px;
+  color: #cbd5e1;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.15);
+  white-space: normal;
+  max-width: 300px;
+}
+
+.sci-table tbody tr {
+  transition: background 0.15s;
+}
+
+.sci-table tbody tr:hover {
+  background: rgba(20, 184, 166, 0.04);
+}
+
+.sci-table tbody tr:nth-child(even) {
+  background: rgba(15, 23, 42, 0.3);
+}
+
+.sci-table tbody tr:nth-child(even):hover {
+  background: rgba(20, 184, 166, 0.06);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SMILES Molecular Structure Blocks
+   ═══════════════════════════════════════════════════════════════════ */
+
+.smiles-block {
+  margin: 1em 0;
+  border: 1px solid rgba(167, 139, 250, 0.2);
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.8) 0%, #0a1628 100%);
+}
+
+.smiles-block-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(167, 139, 250, 0.08);
+  border-bottom: 1px solid rgba(167, 139, 250, 0.12);
+}
+
+.smiles-block-icon {
+  font-size: 14px;
+}
+
+.smiles-block-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #a78bfa;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+/* ── 2D / 3D Toggle Buttons ──────────────────────────────────────── */
+.smiles-mode-toggle {
+  display: flex;
+  gap: 0;
+  margin-left: 12px;
+  border: 1px solid rgba(167, 139, 250, 0.2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.smiles-mode-btn {
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  border: none;
+  cursor: pointer;
+  color: #64748b;
+  background: rgba(15, 23, 42, 0.6);
+  transition: all 0.2s ease;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.smiles-mode-btn:hover {
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.1);
+}
+
+.smiles-mode-btn.active {
+  color: #e2e8f0;
+  background: rgba(167, 139, 250, 0.25);
+  box-shadow: inset 0 -2px 0 #a78bfa;
+}
+
+.smiles-mode-btn + .smiles-mode-btn {
+  border-left: 1px solid rgba(167, 139, 250, 0.15);
+}
+
+.smiles-block-raw {
+  margin-left: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: #64748b;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(51, 65, 85, 0.3);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.smiles-block-canvas,
+.smiles-2d-canvas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  padding: 12px;
+}
+
+.smiles-block-canvas svg.smiles-svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   3D Molecular Viewer (3Dmol.js / WebGL)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.mol3d-container {
+  position: relative;
+  min-height: 320px;
+}
+
+.mol3d-viewer {
+  border-radius: 0 0 10px 10px;
+  overflow: hidden;
+}
+
+.mol3d-viewer canvas {
+  border-radius: 0 0 10px 10px;
+}
+
+.mol3d-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 22, 40, 0.85);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.mol3d-error {
+  text-align: center;
+  font-size: 12px;
+  color: #f87171;
+  padding: 20px;
+}
+
+.mol3d-hint {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  color: rgba(148, 163, 184, 0.5);
+  background: rgba(10, 22, 40, 0.7);
+  padding: 3px 10px;
+  border-radius: 10px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.smiles-loading {
+  font-size: 11px;
+  color: #64748b;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.smiles-fallback {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  color: #a78bfa;
+  padding: 10px 14px;
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 6px;
+  border: 1px dashed rgba(167, 139, 250, 0.2);
+  word-break: break-all;
+}
+
+/* Inline SMILES (single backtick) */
+.smiles-inline {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.88em;
+  padding: 2px 8px;
+  background: rgba(167, 139, 250, 0.1);
+  border: 1px solid rgba(167, 139, 250, 0.2);
+  border-radius: 4px;
+  color: #c4b5fd;
+  cursor: help;
+  position: relative;
+}
+
+.smiles-inline::before {
+  content: '🧬 ';
+  font-size: 10px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Figures & Images
+   ═══════════════════════════════════════════════════════════════════ */
+
+.sci-figure {
+  margin: 1em 0;
+  text-align: center;
+}
+
+.sci-figure img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid rgba(51, 65, 85, 0.3);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.sci-figure img:hover {
+  transform: scale(1.01);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+
+.sci-figcaption {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #64748b;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+/* Broken molecule image fallback */
+.sci-figure-broken {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px dashed rgba(167, 139, 250, 0.25);
+  border-radius: 10px;
+  gap: 8px;
+}
+
+.sci-figure-broken-icon {
+  font-size: 28px;
+  opacity: 0.6;
+}
+
+.sci-figure-broken-text {
+  font-size: 12px;
+  color: #94a3b8;
+  text-align: center;
+  font-style: italic;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   KaTeX Math Overrides (dark theme)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.sci-markdown .katex {
+  color: #e2e8f0;
+  font-size: 1.05em;
+}
+
+.sci-markdown .katex-display {
+  margin: 0.8em 0;
+  padding: 12px 16px;
+  background: rgba(15, 23, 42, 0.4);
+  border-radius: 8px;
+  border: 1px solid rgba(51, 65, 85, 0.2);
+  overflow-x: auto;
+}
+
+.sci-markdown .katex-display::-webkit-scrollbar {
+  height: 3px;
+}
+
+.sci-markdown .katex-display::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Subscript / Superscript (common in chemistry)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.sci-markdown sub {
+  font-size: 0.8em;
+  color: #94a3b8;
+  vertical-align: sub;
+}
+
+.sci-markdown sup {
+  font-size: 0.8em;
+  color: #94a3b8;
+  vertical-align: super;
+}

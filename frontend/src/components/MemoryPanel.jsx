@@ -3,9 +3,9 @@ import { api } from '../api';
 import './MemoryPanel.css';
 
 const TIER_META = {
-  semantic: { label: 'Semantic', icon: '🧠', desc: 'Domain knowledge & facts' },
-  episodic: { label: 'Episodic', icon: '📝', desc: 'Past council decisions' },
-  procedural: { label: 'Procedural', icon: '⚙️', desc: 'Workflow patterns' },
+  semantic: { label: 'Semantic', icon: '🧠', desc: 'What the council knows — stored facts, definitions, and domain knowledge it can recall anytime' },
+  episodic: { label: 'Episodic', icon: '📝', desc: 'What the council remembers — specific past questions, answers, and decisions from earlier sessions' },
+  procedural: { label: 'Procedural', icon: '⚙️', desc: 'How the council works — learned patterns for ranking, synthesising, and resolving disagreements' },
 };
 
 export default function MemoryPanel({ isOpen, onClose }) {

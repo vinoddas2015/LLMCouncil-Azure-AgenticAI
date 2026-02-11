@@ -4,6 +4,7 @@ import ChatInterface from './components/ChatInterface';
 import Settings from './components/Settings';
 import KillSwitch from './components/KillSwitch';
 import MemoryPanel from './components/MemoryPanel';
+import PromptAtlas3D from './components/PromptAtlas3D';
 import { api } from './api';
 import './App.css';
 
@@ -36,6 +37,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
+  const [atlasOpen, setAtlasOpen] = useState(false);
   const [preferences, setPreferences] = useState(loadPreferences);
   const [activeSessionId, setActiveSessionId] = useState(null);
 
@@ -274,6 +276,15 @@ function App() {
             });
             break;
 
+          case 'evidence_complete':
+            setCurrentConversation((prev) => {
+              const messages = [...prev.messages];
+              const lastMsg = messages[messages.length - 1];
+              lastMsg.evidence = event.data;
+              return { ...prev, messages };
+            });
+            break;
+
           case 'memory_learning':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
@@ -331,11 +342,37 @@ function App() {
       , preferences);
     } catch (error) {
       console.error('Failed to send message:', error);
-      // Remove optimistic messages on error
-      setCurrentConversation((prev) => ({
-        ...prev,
-        messages: prev.messages.slice(0, -2),
-      }));
+
+      // Build a human-readable error message
+      const rawMsg = error?.message || String(error);
+      // Strip proxy boilerplate if present
+      const friendlyMsg = rawMsg.includes('firewall')
+        ? 'The corporate network proxy closed the connection. Please check your VPN and retry.'
+        : rawMsg.includes('timed out')
+        ? 'The request timed out — the LLM API may be slow. Please retry.'
+        : rawMsg.includes('ERR_CONNECTION')
+        ? 'Connection to the backend was lost. Please refresh and retry.'
+        : rawMsg;
+
+      // Instead of silently removing messages, show an error stage3
+      setCurrentConversation((prev) => {
+        if (!prev) return prev;
+        const messages = [...prev.messages];
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg && lastMsg.role === 'assistant') {
+          lastMsg.loading = { stage1: false, stage2: false, stage3: false };
+          if (!lastMsg.stage3) {
+            lastMsg.stage3 = {
+              model: 'system',
+              response: `⚠ **Connection Error**\n\n${friendlyMsg}\n\nYou can try sending your message again.`,
+            };
+          }
+        } else {
+          // Fallback: remove optimistic messages
+          return { ...prev, messages: prev.messages.slice(0, -2) };
+        }
+        return { ...prev, messages };
+      });
       setIsLoading(false);
     }
   };
@@ -364,7 +401,7 @@ function App() {
   };
 
   return (
-    <div className="app">
+    <div className={`app${atlasOpen ? ' atlas-open' : ''}`}>
       <a href="#main-content" className="skip-link">Skip to main content</a>
       <Sidebar
         conversations={conversations}
@@ -379,6 +416,11 @@ function App() {
         conversation={currentConversation}
         onSendMessage={handleSendMessage}
         isLoading={isLoading}
+      />
+      <PromptAtlas3D
+        conversation={currentConversation}
+        isOpen={atlasOpen}
+        onToggle={() => setAtlasOpen((v) => !v)}
       />
       {/* Kill Switch — always accessible to the end user */}
       <div className="kill-switch-fixed">
