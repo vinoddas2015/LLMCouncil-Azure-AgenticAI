@@ -24,7 +24,7 @@
 
 ## 1. System Overview
 
-`
+```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
 │                        LLM COUNCIL MGA — SYSTEM ARCHITECTURE                         │
 └─────────────────────────────────────────────────────────────────────────────────────┘
@@ -73,13 +73,13 @@
   │  │  data/convos/    │  │  Procedural      │  │  + Synthetic     │               │
   │  └──────────────────┘  └──────────────────┘  └──────────────────┘               │
   └──────────────────────────────────────────────────────────────────────────────────┘
-`
+```
 
 ---
 
 ## 2. Data Flow — 3-Stage Pipeline
 
-`
+```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
 │                         3-STAGE DELIBERATION PIPELINE                                 │
 └─────────────────────────────────────────────────────────────────────────────────────┘
@@ -161,11 +161,11 @@
   │  • < 0.50 → episodic record only                       │
   │  → SSE: memory_learning → cost_summary → complete       │
   └─────────────────────────────────────────────────────────┘
-`
+```
 
 ### API Request Flow
 
-`
+```
   POST /api/conversations/{id}/stream
   Body: { content, council_models, chairman_model, attachments }
 
@@ -177,13 +177,13 @@
      → memory_gate
      → stage3_start → stage3_complete
      → cost_summary → memory_learning → complete
-`
+```
 
 ---
 
 ## 3. Evidence Skills Pipeline
 
-The skills module (ackend/skills.py) retrieves real-time pharmaceutical evidence in **parallel with Stage 2**, injecting citations into the Stage 3 chairman prompt.
+The skills module (ackend/skills.py) retrieves real-time pharmaceutical evidence in **parallel with Stage 2**, injecting citations into the Stage 3 chairman prompt.
 
 ### Data Sources
 
@@ -195,7 +195,7 @@ The skills module (ackend/skills.py) retrieves real-time pharmaceutical evidenc
 
 ### Architecture
 
-`
+```
   User Query (pharma-related)
        │
        ├──► OpenFDA: drug label search ────────┐
@@ -219,7 +219,7 @@ The skills module (ackend/skills.py) retrieves real-time pharmaceutical evidenc
                                                 │
                                     Injected into Stage 3 chairman prompt
                                     as evidence_context parameter
-`
+```
 
 ### Citation Format
 
@@ -261,7 +261,7 @@ The SciMarkdown component provides unified rich rendering across all stages.
 
 ### Component Architecture
 
-`
+```
   <SciMarkdown content={text}>
        │
        ├── remarkGfm          (tables, task lists, autolinks)
@@ -280,11 +280,11 @@ The SciMarkdown component provides unified rich rendering across all stages.
            │                        molecule-name detection (20+ common drugs)
            │                        auto-renders as SmilesBlock if match found
            └── SciTable         → wraps <table> in scrollable container
-`
+```
 
 ### 3D Molecular Viewer Pipeline
 
-`
+```
   User sees SMILES block → clicks "3D" toggle
        │
        ▼
@@ -299,7 +299,7 @@ The SciMarkdown component provides unified rich rendering across all stages.
        │     Features: click-drag rotate, scroll zoom, auto-spin
        │
        └── 3D not available → fallback to 2D SDF → error message if both fail
-`
+```
 
 ### Broken Molecule Image Fallback
 
@@ -346,18 +346,18 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **API Layer** | ackend/main.py | FastAPI endpoints, CORS, SSE streaming, session management |
-| **Council Orchestrator** | ackend/council.py | 3-stage pipeline, Verbalized Sampling, RUBRIC+CLAIMS+RANKING, chairman prompt with 7+ guidelines |
-| **Evidence Skills** | ackend/skills.py | OpenFDA, ClinicalTrials.gov, PubMed retrieval, deduplication, citation formatting |
+| **API Layer** | ackend/main.py | FastAPI endpoints, CORS, SSE streaming, session management |
+| **Council Orchestrator** | ackend/council.py | 3-stage pipeline, Verbalized Sampling, RUBRIC+CLAIMS+RANKING, chairman prompt with 7+ guidelines |
+| **Evidence Skills** | ackend/skills.py | OpenFDA, ClinicalTrials.gov, PubMed retrieval, deduplication, citation formatting |
 | **LLM Client** | ackend/openrouter.py | Async httpx calls to Bayer myGenAssist API, Gemini multi-modal support (text + image), multi-part response assembly |
-| **Grounding** | ackend/grounding.py | 5-rubric hybrid Verbalized + Synthetic grounding score |
-| **Resilience** | ackend/resilience.py | Kill switch, circuit breaker, exponential backoff retry, fallback chains, quorum |
-| **Memory Manager** | ackend/memory.py | Semantic, Episodic, Procedural tiers + MemoryManager facade |
-| **Memory Storage** | ackend/memory_store.py | Cloud-agnostic storage abstraction (JSON, Redis, DynamoDB, CosmosDB) |
-| **Orchestrator** | ackend/orchestrator.py | 4 async stage-gate agents (pre-S1, post-S2, post-S3, user gate) |
-| **Token Tracking** | ackend/token_tracking.py | Per-model cost tracking, gateway vs direct pricing, SessionCostTracker |
-| **Storage** | ackend/storage.py | JSON-based conversation persistence with metadata |
-| **Config** | ackend/config.py | Model definitions, API settings, base URLs |
+| **Grounding** | ackend/grounding.py | 5-rubric hybrid Verbalized + Synthetic grounding score |
+| **Resilience** | ackend/resilience.py | Kill switch, circuit breaker, exponential backoff retry, fallback chains, quorum |
+| **Memory Manager** | ackend/memory.py | Semantic, Episodic, Procedural tiers + MemoryManager facade |
+| **Memory Storage** | ackend/memory_store.py | Cloud-agnostic storage abstraction (JSON, Redis, DynamoDB, CosmosDB) |
+| **Orchestrator** | ackend/orchestrator.py | 4 async stage-gate agents (pre-S1, post-S2, post-S3, user gate) |
+| **Token Tracking** | ackend/token_tracking.py | Per-model cost tracking, gateway vs direct pricing, SessionCostTracker |
+| **Storage** | ackend/storage.py | JSON-based conversation persistence with metadata |
+| **Config** | ackend/config.py | Model definitions, API settings, base URLs |
 
 ### Frontend Components
 
@@ -434,7 +434,7 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
 
 ### Resilience Points
 
-`
+```
   USER ──── KILL SWITCH (session or global halt) ─────────────────────┐
                                                                        │
   API Request                                                          │
@@ -462,17 +462,17 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
   ║    If failed → fallback chairman chain              ║  ◄── KILL    │
   ║    If ALL fail → EMERGENCY: use top Stage 1 response║               │
   ╚═════════════════════════════════════════════════════╝               │
-`
+```
 
 ### Circuit Breaker States
 
-`
+```
   CLOSED (normal) ──failure_count ≥ threshold──► OPEN (disabled)
        ▲                                              │
        │ success during half-open              recovery timeout
        │                                              │
        └──────────── HALF_OPEN (tentative) ◄──────────┘
-`
+```
 
 ### Fallback Chains
 
@@ -518,14 +518,14 @@ Used in all 3 stages with pharma-grade binary classification:
 
 ### Hybrid Score Computation
 
-`
+```
   For each response r ranked at position p out of N:
     base_score(r)      = (N - p) / (N - 1)
     consensus_score(r) = 1 - (σ_rank(r) / N)
     grounding_score(r) = Σ (base_score × criterion_weight) + consensus_bonus
 
   Overall = mean(grounding_score for all responses)
-`
+```
 
 ### Visual Representation
 
@@ -549,7 +549,7 @@ Used in all 3 stages with pharma-grade binary classification:
 
 ### Data Flow
 
-`
+```
   Stage 1 → record(model, usage) × N models
   Stage 2 → record(model, usage) × N models
   Stage 3 → record(chairman, usage) × 1
@@ -565,7 +565,7 @@ Used in all 3 stages with pharma-grade binary classification:
         per_model }     │ Gateway:     .0142 │
                         │ Saved:       .0095 │
                         └─────────────────────┘
-`
+```
 
 ---
 
@@ -590,7 +590,7 @@ Used in all 3 stages with pharma-grade binary classification:
 
 ### Learn / Unlearn Decision Tree
 
-`
+```
   Grounding Score
        │
   ┌────┼────────────┐
@@ -599,7 +599,7 @@ Used in all 3 stages with pharma-grade binary classification:
   │    │             │
   Auto  Pending     Episodic
   Learn (ask user)  Only
-`
+```
 
 ### Cloud-Agnostic Storage
 
@@ -626,7 +626,7 @@ Used in all 3 stages with pharma-grade binary classification:
 
 ### Quick Start
 
-`ash
+```bash
 # Terminal 1 — Backend
 cd LLMCouncilMGA
 .\myenv\Scripts\Activate.ps1   # Windows
@@ -638,17 +638,17 @@ cd LLMCouncilMGA/frontend
 npm run dev
 
 # Open http://localhost:5173
-`
+```
 
 ### Production Build
 
-`ash
+```bash
 # Build frontend
 cd frontend && npm run build   # → frontend/dist/
 
 # Run backend with multiple workers
 uvicorn backend.main:app --host 0.0.0.0 --port 8001 --workers 4
-`
+```
 
 ### Environment Variables
 

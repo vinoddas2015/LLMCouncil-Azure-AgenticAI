@@ -87,7 +87,7 @@ Pharma-grade evaluation in all 3 stages using binary classification metrics:
 
 ## Architecture
 
-`
+```
 ┌──────────────┐     SSE Stream      ┌──────────────────────────────────────────┐
 │              │◄────────────────────►│            FastAPI Backend               │
 │   React 19   │     REST API         │                                          │
@@ -108,7 +108,7 @@ Pharma-grade evaluation in all 3 stages using binary classification metrics:
                                       │  └─────────────────────────────────────┘ │
                                       │                  Port 8001               │
                                       └──────────────────────────────────────────┘
-`
+```
 
 **Full architecture document**: [ARCHITECTURE.md](ARCHITECTURE.md)
 
@@ -123,17 +123,17 @@ Pharma-grade evaluation in all 3 stages using binary classification metrics:
 
 ### 1. Clone & Configure
 
-`ash
+```bash
 git clone <repo-url>
 cd LLMCouncilMGA
 cp .env.example .env
 # Edit .env with your API key:
 #   MGA_API_KEY=mga-your-key-here
-`
+```
 
 ### 2. Backend Setup
 
-`ash
+```bash
 # Create virtual environment
 python -m venv myenv
 
@@ -148,15 +148,15 @@ pip install -r requirements.txt
 
 # Start backend
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8001 --reload
-`
+```
 
 ### 3. Frontend Setup
 
-`ash
+```bash
 cd frontend
 npm install
 npm run dev
-`
+```
 
 ### 4. Open Application
 
@@ -240,7 +240,7 @@ Events emitted during `POST /api/conversations/{id}/stream`:
 
 ### Build for Production
 
-`ash
+```bash
 # Build frontend static assets
 cd frontend
 npm run build
@@ -249,11 +249,11 @@ npm run build
 # Serve backend with production ASGI server
 cd ..
 uvicorn backend.main:app --host 0.0.0.0 --port 8001 --workers 4
-`
+```
 
 ### Docker (Example)
 
-`dockerfile
+```dockerfile
 FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt .
@@ -262,7 +262,7 @@ COPY backend/ ./backend/
 COPY frontend/dist/ ./frontend/dist/
 EXPOSE 8001
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "4"]
-`
+```
 
 ### Deployment Options
 
@@ -276,7 +276,7 @@ See [deploy/DEPLOY.md](deploy/DEPLOY.md) for detailed guides covering:
 
 ## Testing
 
-`ash
+```bash
 # Activate virtual environment
 .\myenv\Scripts\Activate.ps1
 
@@ -285,7 +285,7 @@ python -m pytest tests/test_memory_pipeline.py -v
 
 # Run with coverage
 python -m pytest tests/ -v --tb=short
-`
+```
 
 Test coverage includes: storage CRUD, semantic/episodic/procedural memory operations, MemoryManager facade, orchestrator agents, end-to-end pipeline simulation, and backend swap verification.
 
@@ -293,7 +293,7 @@ Test coverage includes: storage CRUD, semantic/episodic/procedural memory operat
 
 ## Project Structure
 
-`
+```
 LLMCouncilMGA/
 ├── backend/                        # FastAPI backend
 │   ├── main.py                     # App, routes, SSE streaming
@@ -337,7 +337,7 @@ LLMCouncilMGA/
 ├── pyproject.toml                  # Python project metadata
 ├── .env.example                    # Environment config template
 └── start.sh                        # Quick-start script
-`
+```
 
 ---
 
