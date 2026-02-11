@@ -668,4 +668,4 @@ See [deploy/DEPLOY.md](deploy/DEPLOY.md) for:
 
 ---
 
-*LLM Council MGA v2.0 — Bayer Pharmaceutical Division*
+*LLM Council MGA v2.0 — Ideated by Anna Bredlich · Master mind by Vinod Das*

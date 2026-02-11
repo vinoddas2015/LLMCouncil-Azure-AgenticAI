@@ -364,6 +364,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, branch naming, 
 ---
 
 <p align="center">
-  <em>Bayer Pharmaceutical Division — Digital Innovation Team</em><br />
+  <em>Ideated by Anna Bredlich · Master mind by Vinod Das</em><br />
   <strong>Science for a better life.</strong>
 </p>
