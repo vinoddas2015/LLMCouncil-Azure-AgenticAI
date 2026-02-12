@@ -43,7 +43,7 @@ SKILL_TIMEOUT = 12.0          # seconds per API call
 WEB_SKILL_TIMEOUT = 15.0      # slightly longer for web crawling
 MAX_CITATIONS_PER_SKILL = 5   # top-N per source
 MAX_TOTAL_CITATIONS = 12      # cap when web search is OFF
-MAX_TOTAL_CITATIONS_WEB = 20  # cap when web search is ON
+MAX_TOTAL_CITATIONS_WEB = 30  # cap when web search is ON (expanded for broader sources)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -875,6 +875,238 @@ async def _query_duckduckgo_science(query: str) -> List[Citation]:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# WEB SEARCH SKILL 12: arXiv (scientific preprints)
+# https://export.arxiv.org/api/query
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_arxiv(query: str) -> List[Citation]:
+    """Search arXiv for scientific preprints (physics, biology, CS, math)."""
+    citations: List[Citation] = []
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = "+AND+".join(f"all:{kw}" for kw in keywords[:4])
+    url = (
+        f"https://export.arxiv.org/api/query"
+        f"?search_query={search_term}"
+        f"&start=0&max_results={MAX_CITATIONS_PER_SKILL}"
+        f"&sortBy=relevance&sortOrder=descending"
+    )
+
+    async with httpx.AsyncClient(timeout=WEB_SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                logger.warning(f"[arXiv] HTTP {resp.status_code}")
+                return citations
+            text = resp.text
+            # Parse Atom XML entries
+            entries = re.findall(
+                r'<entry>(.*?)</entry>', text, re.DOTALL
+            )
+            for i, entry in enumerate(entries[:MAX_CITATIONS_PER_SKILL]):
+                title_m = re.search(r'<title>(.*?)</title>', entry, re.DOTALL)
+                title = re.sub(r'\s+', ' ', title_m.group(1).strip()) if title_m else "arXiv Paper"
+                link_m = re.search(r'<id>(.*?)</id>', entry)
+                paper_url = link_m.group(1).strip() if link_m else ""
+                summary_m = re.search(r'<summary>(.*?)</summary>', entry, re.DOTALL)
+                abstract = re.sub(r'\s+', ' ', summary_m.group(1).strip())[:150] if summary_m else ""
+                published_m = re.search(r'<published>(.*?)</published>', entry)
+                pub_date = published_m.group(1)[:10] if published_m else ""
+                authors = re.findall(r'<name>(.*?)</name>', entry)
+                first_author = authors[0] if authors else ""
+
+                snippet_parts = []
+                if first_author:
+                    snippet_parts.append(f"{first_author} et al.")
+                if pub_date:
+                    snippet_parts.append(f"({pub_date[:4]})")
+                if abstract:
+                    snippet_parts.append(f"— {abstract}")
+                snippet = " ".join(snippet_parts)[:200]
+
+                citations.append(Citation(
+                    id=f"AX-{i+1}",
+                    source="arXiv",
+                    title=title[:150],
+                    url=paper_url or f"https://arxiv.org/search/?query={'+'.join(keywords[:3])}",
+                    snippet=snippet,
+                    relevance=0.80 - i * 0.06,
+                    date=pub_date,
+                ))
+        except Exception as e:
+            logger.warning(f"[arXiv] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WEB SEARCH SKILL 13: Google Patents (via Lens.org)
+# https://api.lens.org — patent search
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_patents(query: str) -> List[Citation]:
+    """Search for relevant patents via Google Patents public interface."""
+    citations: List[Citation] = []
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = "+".join(keywords[:4])
+    url = f"https://patents.google.com/xhr/query?url=q%3D{search_term}&exp=&num={MAX_CITATIONS_PER_SKILL}"
+
+    # Fallback: scrape Google Patents HTML search results
+    html_url = f"https://patents.google.com/?q={search_term}&oq={search_term}"
+
+    async with httpx.AsyncClient(timeout=WEB_SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(
+                html_url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                follow_redirects=True,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"[Patents] HTTP {resp.status_code}")
+                return citations
+
+            html = resp.text
+            # Parse patent result links from HTML
+            patent_links = re.findall(
+                r'data-result="(\w+)"[^>]*>.*?class="[^"]*result-title[^"]*"[^>]*>([^<]+)',
+                html, re.DOTALL
+            )
+            if not patent_links:
+                # Alternative pattern
+                patent_links = re.findall(
+                    r'href="/patent/([A-Z0-9]+)"[^>]*>\s*<span[^>]*>([^<]+)',
+                    html, re.DOTALL
+                )
+
+            for i, (patent_id, title_raw) in enumerate(patent_links[:MAX_CITATIONS_PER_SKILL]):
+                title = re.sub(r'<[^>]+>', '', title_raw).strip()
+                patent_url = f"https://patents.google.com/patent/{patent_id}"
+
+                citations.append(Citation(
+                    id=f"PAT-{i+1}",
+                    source="Google Patents",
+                    title=title[:150] or f"Patent {patent_id}",
+                    url=patent_url,
+                    snippet=f"Patent {patent_id}: {title[:180]}",
+                    relevance=0.70 - i * 0.08,
+                ))
+        except Exception as e:
+            logger.warning(f"[Patents] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WEB SEARCH SKILL 14: Wikipedia / Wikidata
+# https://en.wikipedia.org/api/rest_v1/
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_wikipedia(query: str) -> List[Citation]:
+    """Search Wikipedia for general knowledge and entity context."""
+    citations: List[Citation] = []
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = " ".join(keywords[:5])
+    url = (
+        f"https://en.wikipedia.org/w/api.php"
+        f"?action=query&list=search&srsearch={search_term}"
+        f"&srlimit={MAX_CITATIONS_PER_SKILL}&format=json"
+        f"&srprop=snippet|titlesnippet|timestamp"
+    )
+
+    async with httpx.AsyncClient(timeout=SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                logger.warning(f"[Wikipedia] HTTP {resp.status_code}")
+                return citations
+            data = resp.json()
+            results = data.get("query", {}).get("search", [])
+            for i, article in enumerate(results[:MAX_CITATIONS_PER_SKILL]):
+                title = article.get("title", "Wikipedia Article")
+                snippet_html = article.get("snippet", "")
+                snippet = re.sub(r'<[^>]+>', '', snippet_html)[:200]
+                timestamp = article.get("timestamp", "")[:10]
+                page_url = f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}"
+
+                citations.append(Citation(
+                    id=f"WIKI-{i+1}",
+                    source="Wikipedia",
+                    title=title[:150],
+                    url=page_url,
+                    snippet=snippet,
+                    relevance=0.65 - i * 0.06,
+                    date=timestamp,
+                ))
+        except Exception as e:
+            logger.warning(f"[Wikipedia] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WEB SEARCH SKILL 15: ORCID (researcher profiles)
+# https://pub.orcid.org/v3.0/
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_orcid(query: str) -> List[Citation]:
+    """Search ORCID for researcher profiles related to the query."""
+    citations: List[Citation] = []
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = " ".join(keywords[:4])
+    url = (
+        f"https://pub.orcid.org/v3.0/expanded-search/"
+        f"?q={search_term}&start=0&rows={MAX_CITATIONS_PER_SKILL}"
+    )
+
+    async with httpx.AsyncClient(timeout=WEB_SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(
+                url,
+                headers={"Accept": "application/json"},
+            )
+            if resp.status_code != 200:
+                logger.warning(f"[ORCID] HTTP {resp.status_code}")
+                return citations
+            data = resp.json()
+            results = data.get("expanded-result", []) or []
+            for i, researcher in enumerate(results[:MAX_CITATIONS_PER_SKILL]):
+                orcid_id = researcher.get("orcid-id", "")
+                given = researcher.get("given-names", "")
+                family = researcher.get("family-names", "")
+                name = f"{given} {family}".strip() or orcid_id
+                institutions = researcher.get("institution-name", [])
+                inst_str = institutions[0] if institutions else ""
+
+                snippet = f"Researcher: {name}"
+                if inst_str:
+                    snippet += f" ({inst_str})"
+
+                citations.append(Citation(
+                    id=f"ORC-{i+1}",
+                    source="ORCID",
+                    title=f"{name} — ORCID Profile",
+                    url=f"https://orcid.org/{orcid_id}",
+                    snippet=snippet[:200],
+                    relevance=0.55 - i * 0.06,
+                ))
+        except Exception as e:
+            logger.warning(f"[ORCID] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Orchestrator — run all skills in parallel
 # ═══════════════════════════════════════════════════════════════════
 
@@ -918,11 +1150,15 @@ async def run_evidence_skills(
 
     # ── Web search skills (only when toggled ON) ───────────────────
     if web_search_enabled:
-        logger.info("[Skills] Web search ENABLED — adding Semantic Scholar, CrossRef, Europe PMC, DuckDuckGo")
+        logger.info("[Skills] Web search ENABLED — adding Semantic Scholar, CrossRef, Europe PMC, DuckDuckGo, arXiv, Patents, Wikipedia, ORCID")
         tasks["Semantic Scholar"] = asyncio.create_task(_query_semantic_scholar(user_query))
         tasks["CrossRef"]         = asyncio.create_task(_query_crossref(user_query))
         tasks["Europe PMC"]       = asyncio.create_task(_query_europe_pmc(user_query))
         tasks["DuckDuckGo Sci"]   = asyncio.create_task(_query_duckduckgo_science(user_query))
+        tasks["arXiv"]            = asyncio.create_task(_query_arxiv(user_query))
+        tasks["Google Patents"]   = asyncio.create_task(_query_patents(user_query))
+        tasks["Wikipedia"]        = asyncio.create_task(_query_wikipedia(user_query))
+        tasks["ORCID"]            = asyncio.create_task(_query_orcid(user_query))
 
     # Await all tasks and collect benchmarks
     results = {}
@@ -997,7 +1233,7 @@ def format_citations_for_prompt(evidence: Dict[str, Any]) -> str:
     lines.append(
         "CITATION INSTRUCTIONS: When referencing any fact from the above evidence, "
         "include the citation tag (e.g. [FDA-L1], [CT-2], [PM-3], [EMA-1], [WHO-1], [UP-1], [CB-1], "
-        "[SS-1], [CR-1], [EPMC-1], [WEB-1]) inline in your text. "
+        "[SS-1], [CR-1], [EPMC-1], [WEB-1], [AX-1], [PAT-1], [WIKI-1], [ORC-1]) inline in your text. "
         "At the end of your response, include a numbered REFERENCES section listing "
         "each citation you used with its full URL."
     )

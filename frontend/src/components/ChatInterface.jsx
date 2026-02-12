@@ -3,6 +3,7 @@ import SciMarkdown from './SciMarkdown';
 import Stage1 from './Stage1';
 import Stage2 from './Stage2';
 import Stage3 from './Stage3';
+import InfographicPanel from './InfographicPanel';
 import TokenBurndown from './TokenBurndown';
 import LearnUnlearn from './LearnUnlearn';
 import EnhancePrompt from './EnhancePrompt';
@@ -38,6 +39,9 @@ export default function ChatInterface({
   const [attachmentError, setAttachmentError] = useState(null);
   const [enhanceState, setEnhanceState] = useState(null); // null | 'loading' | 'ready'
   const [enhancedData, setEnhancedData] = useState(null); // { original, enhanced }
+
+  // Conversation blocked by prompt guard — disable all input
+  const isBlocked = !!(conversation?.blocked);
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -131,7 +135,7 @@ export default function ChatInterface({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if ((input.trim() || attachments.length > 0) && !isLoading && !enhanceState) {
+    if ((input.trim() || attachments.length > 0) && !isLoading && !enhanceState && !isBlocked) {
       const promptText = input.trim();
       const currentAttachments = [...attachments];
 
@@ -145,8 +149,18 @@ export default function ChatInterface({
 
         try {
           const result = await api.enhancePrompt(promptText);
-          setEnhancedData(result);
-          setEnhanceState('ready');
+          // If the enhanced prompt is essentially the same as the original, skip the card
+          const normalise = (s) => s.trim().toLowerCase().replace(/[?.!,;:]+$/g, '');
+          if (normalise(result.enhanced) === normalise(promptText)) {
+            // No meaningful change — send original directly
+            setEnhanceState(null);
+            setEnhancedData(null);
+            setPendingAttachments([]);
+            onSendMessage(promptText, currentAttachments);
+          } else {
+            setEnhancedData(result);
+            setEnhanceState('ready');
+          }
         } catch (error) {
           console.error('Failed to enhance prompt, sending original:', error);
           // If enhance fails, just send the original
@@ -334,6 +348,9 @@ export default function ChatInterface({
                   )}
                   {msg.stage3 && <Stage3 finalResponse={msg.stage3} evidence={msg.evidence} />}
 
+                  {/* Infographic Panel */}
+                  {msg.infographic && <InfographicPanel data={msg.infographic} />}
+
                   {/* Cost / Token Burndown */}
                   {msg.costSummary && <TokenBurndown costSummary={msg.costSummary} />}
 
@@ -392,7 +409,7 @@ export default function ChatInterface({
                   const prefix = `Regarding ${stage}: `;
                   setInput(prev => prev.startsWith(prefix) ? prev : prefix + prev);
                 }}
-                disabled={isLoading}
+                disabled={isLoading || isBlocked}
               >
                 {stage}
               </button>
@@ -413,7 +430,7 @@ export default function ChatInterface({
                       const prefix = `Regarding ${shortName}'s response: `;
                       setInput(prev => prev.startsWith(prefix) ? prev : prefix + prev);
                     }}
-                    disabled={isLoading}
+                    disabled={isLoading || isBlocked}
                     title={model}
                   >
                     {shortName}
@@ -468,7 +485,7 @@ export default function ChatInterface({
             type="button"
             className="attachment-button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isLoading}
+            disabled={isLoading || isBlocked}
             title="Attach files (PDF, PPTX, XLSX, DOCX, MD, images)"
           >
             📎
@@ -486,7 +503,7 @@ export default function ChatInterface({
                 });
               }
             }}
-            disabled={isLoading}
+            disabled={isLoading || isBlocked}
             title={preferences?.web_search_enabled ? 'Web Search: ON — click to disable' : 'Web Search: OFF — click to enable'}
           >
             🌐
@@ -494,29 +511,33 @@ export default function ChatInterface({
 
           <textarea
             className="message-input"
-            placeholder={conversation.messages.length > 0 
-              ? "Ask a follow-up question... (Shift+Enter for new line, Enter to send)" 
-              : "Ask your question... (Shift+Enter for new line, Enter to send)"}
+            placeholder={isBlocked
+              ? "This conversation has been closed. Please start a new conversation."
+              : conversation.messages.length > 0 
+                ? "Ask a follow-up question... (Shift+Enter for new line, Enter to send)" 
+                : "Ask your question... (Shift+Enter for new line, Enter to send)"}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            disabled={isLoading || !!enhanceState}
+            disabled={isLoading || !!enhanceState || isBlocked}
             rows={3}
           />
           <button
             type="submit"
             className="send-button"
-            disabled={(!input.trim() && attachments.length === 0) || isLoading || !!enhanceState}
+            disabled={(!input.trim() && attachments.length === 0) || isLoading || !!enhanceState || isBlocked}
           >
             {conversation.messages.length > 0 ? 'Follow Up' : 'Send'}
           </button>
         </div>
         
         <div className="input-hint">
-          {conversation.messages.length > 0 
-            ? "Continue the conversation with follow-up questions" 
-            : "Paste images or attach PDF, PPTX, XLSX, DOCX, MD files (max 10MB each)"}
+          {isBlocked
+            ? "🛡️ This conversation is closed — please start a new conversation"
+            : conversation.messages.length > 0 
+              ? "Continue the conversation with follow-up questions" 
+              : "Paste images or attach PDF, PPTX, XLSX, DOCX, MD files (max 10MB each)"}
         </div>
       </form>
     </div>

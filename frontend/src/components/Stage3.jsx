@@ -17,7 +17,7 @@ function linkifyCitations(text, citations) {
       lookup[c.id] = c;
     }
 
-    result = result.replace(/\[(FDA-[A-Z]\d+|CT-\d+|PM-\d+|EMA-\d+|WHO-\d+|UP-\d+|CB-\d+|SS-\d+|CR-\d+|EPMC-\d+|WEB-\d+)\]/g, (match, tag) => {
+    result = result.replace(/\[(FDA-[A-Z]\d+|CT-\d+|PM-\d+|EMA-\d+|WHO-\d+|UP-\d+|CB-\d+|SS-\d+|CR-\d+|EPMC-\d+|WEB-\d+|AX-\d+|PAT-\d+|WIKI-\d+|ORC-\d+)\]/g, (match, tag) => {
       const full = `[${tag}]`;
       const cite = lookup[full];
       if (cite) {

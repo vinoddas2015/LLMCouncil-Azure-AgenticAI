@@ -1,4 +1,4 @@
-"""JSON-based storage for conversations."""
+"""JSON-based storage for conversations — with optional encryption at rest."""
 
 import json
 import os
@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from .config import DATA_DIR
+from .security import encrypt_data, decrypt_data, is_encryption_enabled
 
 
 def ensure_data_dir():
@@ -37,10 +38,11 @@ def create_conversation(conversation_id: str) -> Dict[str, Any]:
         "messages": []
     }
 
-    # Save to file
+    # Save to file (with optional encryption at rest)
     path = get_conversation_path(conversation_id)
+    raw_json = json.dumps(conversation, indent=2)
     with open(path, 'w') as f:
-        json.dump(conversation, f, indent=2)
+        f.write(encrypt_data(raw_json))
 
     return conversation
 
@@ -61,7 +63,9 @@ def get_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
         return None
 
     with open(path, 'r') as f:
-        return json.load(f)
+        raw = f.read()
+    decrypted = decrypt_data(raw)
+    return json.loads(decrypted)
 
 
 def save_conversation(conversation: Dict[str, Any]):
@@ -74,8 +78,9 @@ def save_conversation(conversation: Dict[str, Any]):
     ensure_data_dir()
 
     path = get_conversation_path(conversation['id'])
+    raw_json = json.dumps(conversation, indent=2)
     with open(path, 'w') as f:
-        json.dump(conversation, f, indent=2)
+        f.write(encrypt_data(raw_json))
 
 
 def list_conversations() -> List[Dict[str, Any]]:
@@ -92,7 +97,8 @@ def list_conversations() -> List[Dict[str, Any]]:
         if filename.endswith('.json'):
             path = os.path.join(DATA_DIR, filename)
             with open(path, 'r') as f:
-                data = json.load(f)
+                raw = f.read()
+                data = json.loads(decrypt_data(raw))
                 # Return metadata only
                 conversations.append({
                     "id": data["id"],

@@ -1,7 +1,7 @@
 ﻿# LLM Council MGA — System Architecture
 
-> **Version 2.0** | Bayer Pharmaceutical Division — myGenAssist  
-> Last updated: February 10, 2026
+> **Version 3.0** | Bayer Pharmaceutical Division — myGenAssist  
+> Last updated: February 12, 2026
 
 ---
 
@@ -18,7 +18,10 @@
 9. [Grounding Score & Verbalized Sampling](#9-grounding-score--verbalized-sampling)
 10. [Cost & Token Tracking](#10-cost--token-tracking)
 11. [Memory Management Pipeline](#11-memory-management-pipeline)
-12. [Production Deployment](#12-production-deployment)
+12. [Security & Privacy](#12-security--privacy)
+13. [Infographics Pipeline](#13-infographics-pipeline)
+14. [Prompt Suitability Guard](#14-prompt-suitability-guard)
+15. [Production Deployment](#15-production-deployment)
 
 ---
 
@@ -44,7 +47,12 @@
   │  ┌────▼─────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
   │  │ Stage 1  │  │ Stage 2  │  │ Stage 3  │  │Grounding │  │ Token Burndown   │  │
   │  │Individual│  │PeerReview│  │ Chairman │  │  Score   │  │ Cost Dashboard   │  │
-  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘  │
+  │  └──────────┘  └──────────┘  └──┬───────┘  └──────────┘  └──────────────────┘  │
+  │                                  │                                               │
+  │                           ┌──────▼──────────┐                                    │
+  │                           │ InfographicPanel │  Visual summary: metrics,          │
+  │                           │ (collapsible)    │  comparison, steps, highlights     │
+  │                           └─────────────────┘                                    │
   └───────────────────────┬──────────────────────────────────────────────────────────┘
                           │ Vite Proxy /api/* → :8001
   ┌───────────────────────▼──────────────────────────────────────────────────────────┐
@@ -57,20 +65,27 @@
   │  ┌───▼───┐  ┌──▼──────┐  ┌───▼──────┐  ┌───▼────────┐ ┌──▼──────────────┐    │
   │  │Council│  │ Skills  │  │Resilience│  │Orchestrator│ │ Token Tracking  │    │
   │  │3-Stage│  │Evidence │  │Kill+CB+  │  │4 Stage-Gate│ │ Cost Calculator │    │
-  │  │       │  │OpenFDA  │  │Retry+    │  │  Agents    │ │                 │    │
-  │  │Verbal.│  │CT.gov   │  │Fallback  │  │            │ │ Gateway vs      │    │
-  │  │Samplng│  │PubMed   │  │Quorum    │  │            │ │ Direct Pricing  │    │
+  │  │       │  │15 APIs  │  │Retry+    │  │  Agents    │ │                 │    │
+  │  │Verbal.│  │7 core + │  │Fallback  │  │            │ │ Gateway vs      │    │
+  │  │Samplng│  │8 web    │  │Quorum    │  │            │ │ Direct Pricing  │    │
   │  └───┬───┘  └────┬────┘  └──────────┘  └────────────┘ └─────────────────┘    │
   │      │           │                                                              │
   │  ┌───▼───────────▼──────────────────────────────────────────┐                   │
   │  │  openrouter.py — Async httpx Client → myGenAssist API     │                   │
   │  │  https://chat.int.bayer.com/api/v2/chat/completions       │                   │
+  │  │  + PII Redaction (security.py) before external dispatch   │                   │
   │  └──────────────────────────────────────────────────────────┘                   │
   │                                                                                  │
   │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐               │
   │  │  Storage (JSON)  │  │  Memory 3-Tier   │  │  Grounding Score │               │
   │  │  Conversations   │  │  Semantic/Epi/   │  │  Hybrid Verbal.  │               │
-  │  │  data/convos/    │  │  Procedural      │  │  + Synthetic     │               │
+  │  │  + Encryption    │  │  Procedural      │  │  + Synthetic     │               │
+  │  └──────────────────┘  └──────────────────┘  └──────────────────┘               │
+  │                                                                                  │
+  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐               │
+  │  │  Security        │  │  Prompt Guard    │  │  Infographics    │               │
+  │  │  Fernet encrypt  │  │  Pre-stage gate  │  │  JSON extraction │               │
+  │  │  PII redaction   │  │  6 categories    │  │  + auto-extract  │               │
   │  └──────────────────┘  └──────────────────┘  └──────────────────┘               │
   └──────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -87,6 +102,15 @@
   USER QUERY
        │
        ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │  PRE-GATE: Prompt Suitability Guard                    │
+  │  • Regex checks: harmful, illegal, PII, injection      │
+  │  • On-topic / off-topic keyword banks                   │
+  │  • Ambiguous → LLM relevance check (Gemini Flash)       │
+  │  • Blocked → SSE: prompt_rejected (conversation sealed) │
+  └─────────────────────────┬───────────────────────────────┘
+                          │ (ALLOWED)
+                          ▼
   ┌─────────────────────────────────────────────────────────┐
   │  PRE-STAGE 1: Memory Recall Agent                       │
   │  • Recall semantic + procedural memories                │
@@ -147,12 +171,22 @@
   ║  • Memory context                                        ║
   ║                                                           ║
   ║  Chairman produces citation-grounded synthesis:           ║
-  ║  • [FDA-L1], [CT-2], [PM-3] tags → clickable links      ║
+  ║  • [FDA-L1], [CT-2], [PM-3], [AX-1], [PAT-1],           ║
+  ║    [WIKI-1], [ORC-1] tags → clickable links              ║
   ║  • Rich output: tables, SMILES blocks, LaTeX math        ║
-  ║  • 7+ guideline prompt framework                         ║
+  ║  • 10-guideline prompt framework                         ║
+  ║  • Infographic JSON block for visual summary             ║
   ║                                                           ║
   ║  → SSE: stage3_start → stage3_complete                    ║
   ╚═══════════════════════╤═══════════════════════════════════╝
+                          │
+  ┌───────────────────────▼───────────────────────────────┐
+  │  POST-STAGE 3: Infographic Extraction                   │
+  │  • Parse ```infographic JSON block from chairman         │
+  │  • Fallback: auto-extract metrics, highlights, steps    │
+  │  • Strip raw JSON from markdown response                │
+  │  → SSE: infographic_complete                            │
+  └───────────────────────┬───────────────────────────────┘
                           │
   ┌───────────────────────▼─────────────────────────────────┐
   │  POST-STAGE 3: Learning Agent                           │
@@ -170,12 +204,14 @@
   Body: { content, council_models, chairman_model, attachments }
 
   → SSE events emitted in order:
-     session_start → memory_recall
+     session_start → prompt_rejected (if blocked, terminates)
+     → memory_recall
      → stage1_start → stage1_response ×N → stage1_complete
      → stage2_start → stage2_ranking ×N → stage2_complete
      → evidence_complete (parallel with stage2)
      → memory_gate
      → stage3_start → stage3_complete
+     → infographic_complete (if data extracted)
      → cost_summary → memory_learning → complete
 ```
 
@@ -183,15 +219,34 @@
 
 ## 3. Evidence Skills Pipeline
 
-The skills module (ackend/skills.py) retrieves real-time pharmaceutical evidence in **parallel with Stage 2**, injecting citations into the Stage 3 chairman prompt.
+The skills module (backend/skills.py) retrieves real-time pharmaceutical evidence in **parallel with Stage 2**, injecting citations into the Stage 3 chairman prompt.
 
 ### Data Sources
 
-| Skill | API | Data Retrieved | Timeout |
-|-------|-----|----------------|---------|
-| **OpenFDA** | pi.fda.gov | Drug labels, adverse events, indications | 12s |
-| **ClinicalTrials.gov** | clinicaltrials.gov/api/v2 | Active trials (Phase I–IV), conditions, interventions | 12s |
-| **PubMed** | eutils.ncbi.nlm.nih.gov | Recent publications, abstracts, authors | 12s |
+**Core Skills (always active):**
+
+| # | Skill | API | Data Retrieved | Timeout |
+|---|-------|-----|----------------|---------|
+| 1 | **OpenFDA** | api.fda.gov | Drug labels, adverse events, indications | 12s |
+| 2 | **ClinicalTrials.gov** | clinicaltrials.gov/api/v2 | Active trials (Phase I–IV), conditions, interventions | 12s |
+| 3 | **PubMed** | eutils.ncbi.nlm.nih.gov | Recent publications, abstracts, authors | 12s |
+| 4 | **EMA** | ema.europa.eu | European Medicines Agency product info | 12s |
+| 5 | **WHO ATC/DDD** | who.int | Drug classification, ATC codes | 12s |
+| 6 | **UniProt** | uniprot.org | Protein / drug-target data (human) | 12s |
+| 7 | **ChEMBL** | ebi.ac.uk/chembl | Compound bioactivity & clinical phase | 12s |
+
+**Web Search Skills (active when web_search_enabled=true):**
+
+| # | Skill | API | Data Retrieved | Timeout |
+|---|-------|-----|----------------|---------|
+| 8 | **Semantic Scholar** | api.semanticscholar.org | AI-curated scientific papers + abstracts | 15s |
+| 9 | **CrossRef** | api.crossref.org | Journal article metadata & DOI links | 15s |
+| 10 | **Europe PMC** | ebi.ac.uk/europepmc | Full-text open access literature | 15s |
+| 11 | **DuckDuckGo Scientific** | duckduckgo.com | Web search filtered for .gov / .edu / journals | 15s |
+| 12 | **arXiv** | export.arxiv.org | Scientific preprints (physics, biology, CS) | 15s |
+| 13 | **Google Patents** | patents.google.com | Patent claims and invention descriptions | 15s |
+| 14 | **Wikipedia** | en.wikipedia.org | Encyclopaedic context and background | 12s |
+| 15 | **ORCID** | pub.orcid.org | Researcher profiles and publication records | 15s |
 
 ### Architecture
 
@@ -231,6 +286,18 @@ The chairman references evidence using tags that the frontend converts to clicka
 | [FDA-A2] | OpenFDA Adverse Event | Links to FDA report |
 | [CT-1] | ClinicalTrials.gov | Links to NCT page |
 | [PM-1] | PubMed | Links to article |
+| [EMA-1] | European Medicines Agency | Links to EMA page |
+| [WHO-1] | WHO ATC/DDD | Links to WHO classification |
+| [UP-1] | UniProt | Links to protein entry |
+| [CB-1] | ChEMBL | Links to compound page |
+| [SS-1] | Semantic Scholar | Links to paper |
+| [CR-1] | CrossRef / DOI | Links to journal article |
+| [EPMC-1] | Europe PMC | Links to full-text |
+| [WEB-1] | DuckDuckGo Scientific | Links to authoritative site |
+| [AX-1] | arXiv | Links to preprint |
+| [PAT-1] | Google Patents | Links to patent |
+| [WIKI-1] | Wikipedia | Links to article |
+| [ORC-1] | ORCID | Links to researcher profile |
 
 ### Frontend Rendering
 
@@ -331,11 +398,13 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
 | Capability | Description |
 |-----------|-------------|
 | **Consensus-Driven** | 4 models must agree through blind peer review |
-| **Citation-Grounded** | Real-time evidence from FDA, ClinicalTrials, PubMed |
+| **Citation-Grounded** | Real-time evidence from 15 APIs (FDA, ClinicalTrials, PubMed, arXiv, Patents, Wikipedia, ORCID, and more) |
+| **Infographics** | Auto-generated visual summaries: metrics, comparisons, process steps, highlights |
 | **Pharma Metrics** | Verbalized Sampling with Correctness/Precision/Recall |
 | **Scientific Output** | SMILES structures, LaTeX equations, GFM tables |
 | **Self-Healing** | Circuit breakers + fallback chains + quorum enforcement |
 | **Memory System** | 3-tier learn/unlearn with human-in-the-loop |
+| **Security** | Encryption at rest, PII redaction, prompt guard, TLS support |
 | **Enterprise Security** | All traffic through Bayer myGenAssist gateway |
 
 ---
@@ -346,29 +415,33 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **API Layer** | ackend/main.py | FastAPI endpoints, CORS, SSE streaming, session management |
-| **Council Orchestrator** | ackend/council.py | 3-stage pipeline, Verbalized Sampling, RUBRIC+CLAIMS+RANKING, chairman prompt with 7+ guidelines |
-| **Evidence Skills** | ackend/skills.py | OpenFDA, ClinicalTrials.gov, PubMed retrieval, deduplication, citation formatting |
-| **LLM Client** | ackend/openrouter.py | Async httpx calls to Bayer myGenAssist API, Gemini multi-modal support (text + image), multi-part response assembly |
-| **Grounding** | ackend/grounding.py | 5-rubric hybrid Verbalized + Synthetic grounding score |
-| **Resilience** | ackend/resilience.py | Kill switch, circuit breaker, exponential backoff retry, fallback chains, quorum |
-| **Memory Manager** | ackend/memory.py | Semantic, Episodic, Procedural tiers + MemoryManager facade |
-| **Memory Storage** | ackend/memory_store.py | Cloud-agnostic storage abstraction (JSON, Redis, DynamoDB, CosmosDB) |
-| **Orchestrator** | ackend/orchestrator.py | 4 async stage-gate agents (pre-S1, post-S2, post-S3, user gate) |
-| **Token Tracking** | ackend/token_tracking.py | Per-model cost tracking, gateway vs direct pricing, SessionCostTracker |
-| **Storage** | ackend/storage.py | JSON-based conversation persistence with metadata |
-| **Config** | ackend/config.py | Model definitions, API settings, base URLs |
+| **API Layer** | backend/main.py | FastAPI endpoints, CORS, SSE streaming, session management, prompt guard gate |
+| **Council Orchestrator** | backend/council.py | 3-stage pipeline, Verbalized Sampling, RUBRIC+CLAIMS+RANKING, chairman prompt with 10 guidelines (incl. infographic directive) |
+| **Evidence Skills** | backend/skills.py | 15 evidence APIs (7 core + 8 web-search), deduplication, citation formatting |
+| **LLM Client** | backend/openrouter.py | Async httpx calls to Bayer myGenAssist API, Gemini multi-modal support (text + image), PII redaction before dispatch |
+| **Grounding** | backend/grounding.py | 5-rubric hybrid Verbalized + Synthetic grounding score |
+| **Resilience** | backend/resilience.py | Kill switch, circuit breaker, exponential backoff retry, fallback chains, quorum |
+| **Memory Manager** | backend/memory.py | Semantic, Episodic, Procedural tiers + MemoryManager facade |
+| **Memory Storage** | backend/memory_store.py | Cloud-agnostic storage abstraction (JSON, Redis, DynamoDB, CosmosDB) |
+| **Orchestrator** | backend/orchestrator.py | 4 async stage-gate agents (pre-S1, post-S2, post-S3, user gate) |
+| **Token Tracking** | backend/token_tracking.py | Per-model cost tracking, gateway vs direct pricing, SessionCostTracker |
+| **Storage** | backend/storage.py | JSON-based conversation persistence with optional Fernet encryption at rest |
+| **Security** | backend/security.py | Fernet encryption at rest (AES-128-CBC), PII redaction (9 pattern types), security status reporting |
+| **Prompt Guard** | backend/prompt_guard.py | Pre-stage suitability gate: 6 rejection categories (off-topic, harmful, illegal, PII, injection, trivial) + LLM fallback |
+| **Infographics** | backend/infographics.py | Infographic JSON extraction from chairman responses, auto-extraction fallback, validation & cleaning |
+| **Config** | backend/config.py | Model definitions, API settings, base URLs |
 
 ### Frontend Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **App Shell** | App.jsx | Main state, SSE handler, evidence_complete event, layout |
+| **App Shell** | App.jsx | Main state, SSE handler (incl. infographic_complete, prompt_rejected events), layout |
 | **SciMarkdown** | SciMarkdown.jsx | Shared scientific renderer: 2D/3D SMILES (smiles-drawer + 3Dmol.js), KaTeX math, GFM tables, figures with broken-image molecule fallback |
-| **ChatInterface** | ChatInterface.jsx | Message display, input, file attachments |
+| **ChatInterface** | ChatInterface.jsx | Message display, input, file attachments, blocked conversation UX |
 | **Stage 1** | Stage1.jsx | Individual model responses with SciMarkdown |
 | **Stage 2** | Stage2.jsx | Peer ranking matrix, Verbalized Sampling metrics |
-| **Stage 3** | Stage3.jsx | Chairman synthesis, citation links, evidence panel |
+| **Stage 3** | Stage3.jsx | Chairman synthesis, citation links (15 tag types), evidence panel |
+| **InfographicPanel** | InfographicPanel.jsx | Visual summary: key metrics grid, comparison table, process steps flow, highlight cards (success/warning/info/danger) |
 | **GroundingScore** | GroundingScore.jsx | Circular SVG gauge + expandable criteria bars |
 | **TokenBurndown** | TokenBurndown.jsx | Cost/token dashboard, gateway savings display |
 | **PromptAtlas** | PromptAtlas3D.jsx | CSS decision tree flow visualization (no Three.js) |
@@ -408,6 +481,7 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
 | httpx 0.27+ | Async HTTP client for LLM + evidence APIs |
 | Pydantic 2.x | Request/response validation |
 | python-dotenv | Environment configuration |
+| cryptography 43+ | Fernet encryption at rest (AES-128-CBC) |
 
 ### Infrastructure
 
@@ -622,7 +696,164 @@ Used in all 3 stages with pharma-grade binary classification:
 
 ---
 
-## 12. Production Deployment
+## 12. Security & Privacy
+
+### Architecture
+
+```
+  User Prompt
+       │
+       ▼
+  ┌──────────────────────────┐
+  │ Prompt Guard (pre-gate)  │ ← Blocks before any LLM call
+  └────────────┬─────────────┘
+               │
+               ▼
+  ┌──────────────────────────┐
+  │ PII Redaction (outbound) │ ← Scrubs before external API
+  └────────────┬─────────────┘
+               │
+               ▼
+  ┌──────────────────────────┐
+  │ Encryption at Rest       │ ← Fernet AES-128-CBC
+  │ (conversation JSON)      │
+  └──────────────────────────┘
+```
+
+### Encryption at Rest
+
+| Feature | Detail |
+|---------|--------|
+| Algorithm | Fernet (AES-128-CBC + HMAC-SHA256) |
+| Library | `cryptography` 43+ |
+| Config | `ENCRYPTION_KEY` env var (base64-encoded 32-byte key) |
+| Migration | Graceful — unencrypted legacy files transparently read |
+
+### PII Redaction
+
+Runs **before** every outbound LLM API call (in `openrouter.py`):
+
+| Pattern | Replacement |
+|---------|-------------|
+| Email addresses | [EMAIL-REDACTED] |
+| Phone numbers | [PHONE-REDACTED] |
+| SSN (US) | [SSN-REDACTED] |
+| Medical Record Number | [MRN-REDACTED] |
+| Date of Birth | [DOB-REDACTED] |
+| Patient/subject names | [PATIENT-ID-REDACTED] |
+| Credit card numbers | [CC-REDACTED] |
+| IP addresses (v4) | [IP-REDACTED] |
+| Passport numbers | [PASSPORT-REDACTED] |
+
+---
+
+## 13. Infographics Pipeline
+
+### Architecture
+
+```
+  Stage 3 Chairman Response
+       │
+       ▼
+  ┌───────────────────────────────────┐
+  │  1. Parse ```infographic block   │
+  │     explicit JSON from chairman  │
+  └────────────────┬──────────────────┘
+                 │
+         found?  ├── YES → validate_and_clean()
+                 │
+                 └── NO → auto_extract()
+                          │
+                          ├─ _extract_metrics() → IC50, Phase, AUC, ...
+                          ├─ _extract_highlights() → bold text, key sentences
+                          └─ _extract_steps() → numbered lists, headings
+                                    │
+                                    ▼
+                          strip_infographic_block()
+                          (remove raw JSON from markdown)
+                                    │
+                                    ▼
+                          SSE: infographic_complete
+                          SSE: stage3_complete (cleaned)
+```
+
+### Infographic JSON Schema
+
+```json
+{
+  "title": "Short summary title",
+  "type": "summary",
+  "key_metrics": [
+    { "label": "IC50", "value": "5.2 nM", "icon": "💊" }
+  ],
+  "comparison": {
+    "headers": ["Category", "Drug A", "Drug B"],
+    "rows": [["Efficacy", "High", "Moderate"]]
+  },
+  "process_steps": [
+    { "step": 1, "title": "Absorption", "description": "Oral bioavailability ~80%" }
+  ],
+  "highlights": [
+    { "text": "FDA approved in 2024", "type": "success" }
+  ]
+}
+```
+
+### Frontend Rendering (InfographicPanel.jsx)
+
+| Section | Visual |
+|---------|--------|
+| Key Metrics | Grid of icon + value + label cards |
+| Comparison | Styled table with hover highlights |
+| Process Steps | Horizontal flow with numbered circles and arrow connectors |
+| Highlights | Color-coded cards: green (success), amber (warning), blue (info), red (danger) |
+
+### Validation Limits
+
+| Field | Max Items |
+|-------|-----------|
+| key_metrics | 6 |
+| comparison rows | 8 |
+| process_steps | 6 |
+| highlights | 4 |
+
+---
+
+## 14. Prompt Suitability Guard
+
+### Rejection Categories
+
+| Category | Trigger |
+|----------|---------|
+| **TRIVIAL** | Empty, too short (<5 chars), gibberish (>65% non-alpha) |
+| **HARMFUL_CONTENT** | Violence, hate speech, discrimination, explicit content |
+| **ILLEGAL_ACTIVITY** | Illicit drug synthesis, unregulated substance acquisition |
+| **PERSONAL_DATA** | SSN, patient names + medical context, MRN, DOB |
+| **PROMPT_INJECTION** | Jailbreak patterns, system prompt exfiltration, instruction override |
+| **OFF_TOPIC** | Sports, entertainment, cooking, travel, etc. (no pharma keywords) |
+
+### Detection Pipeline
+
+```
+  Prompt → Trivial check → Harmful regex → Illegal regex
+       → Injection regex → PII regex
+       → On-topic keyword bank (200+ terms)
+       → Off-topic keyword bank
+       → Ambiguous? → LLM relevance check (Gemini 2.5 Flash, 12s timeout)
+       → Verdict: ALLOWED or BLOCKED (category + polite message)
+```
+
+### Behaviour on Rejection
+
+1. Conversation marked as `blocked: true` (all follow-ups rejected)
+2. User message stored for audit trail
+3. SSE event `prompt_rejected` with category and message
+4. Frontend disables input, shows policy message
+5. User must start a **new conversation**
+
+---
+
+## 15. Production Deployment
 
 ### Quick Start
 
@@ -655,6 +886,10 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8001 --workers 4
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | MGA_API_KEY | Yes | — | Bayer myGenAssist API key |
+| ENCRYPTION_KEY | No | — | Fernet key for encryption at rest (base64-encoded 32-byte key) |
+| PII_REDACTION | No | true | Enable PII scrubbing before external LLM calls |
+| SSL_CERTFILE | No | — | TLS certificate file path (enables HTTPS) |
+| SSL_KEYFILE | No | — | TLS private key file path |
 | MEMORY_BACKEND | No | local | Storage backend |
 | REDIS_URL | If Redis | — | Redis connection URL |
 
@@ -668,4 +903,4 @@ See [deploy/DEPLOY.md](deploy/DEPLOY.md) for:
 
 ---
 
-*LLM Council MGA v2.0 — Ideated by Anna Bredlich · Master mind by Vinod Das*
+*LLM Council MGA v3.0 — Ideated by Anna Bredlich · Master mind by Vinod Das*

@@ -13,6 +13,7 @@ from .resilience import (
     health_monitor,
     KillSwitchError,
 )
+from .security import redact_pii
 
 logger = logging.getLogger("llm_council.openrouter")
 
@@ -31,9 +32,18 @@ async def _raw_query_model(
         "Content-Type": "application/json",
     }
 
+    # ── PII Redaction: scrub sensitive data before external dispatch ──
+    sanitized_messages = [
+        {
+            **msg,
+            "content": redact_pii(msg["content"]) if isinstance(msg.get("content"), str) else msg.get("content"),
+        }
+        for msg in messages
+    ]
+
     payload = {
         "model": model,
-        "messages": messages,
+        "messages": sanitized_messages,
     }
 
     # Enable multi-modal (text + image) output for Gemini models

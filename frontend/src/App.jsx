@@ -285,6 +285,15 @@ function App() {
             });
             break;
 
+          case 'infographic_complete':
+            setCurrentConversation((prev) => {
+              const messages = [...prev.messages];
+              const lastMsg = messages[messages.length - 1];
+              lastMsg.infographic = event.data;
+              return { ...prev, messages };
+            });
+            break;
+
           case 'memory_learning':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
@@ -332,6 +341,28 @@ function App() {
             console.error('Stream error:', event.message);
             setIsLoading(false);
             setActiveSessionId(null);
+            break;
+
+          case 'prompt_rejected':
+            // Prompt was blocked by the suitability guard
+            console.warn('Prompt rejected:', event.data?.category);
+            setIsLoading(false);
+            setActiveSessionId(null);
+            // Show the rejection as a system message in the assistant slot
+            setCurrentConversation((prev) => {
+              const messages = [...prev.messages];
+              const lastMsg = messages[messages.length - 1];
+              if (lastMsg && lastMsg.role === 'assistant') {
+                lastMsg.loading = { stage1: false, stage2: false, stage3: false };
+                lastMsg.stage3 = {
+                  model: 'system',
+                  response: `🛡️ **Prompt Review — ${event.data?.category?.replace(/_/g, ' ') || 'Policy Check'}**\n\n${event.data?.message || 'This query could not be processed.'}`,
+                };
+                lastMsg.rejected = true;
+              }
+              // Mark conversation as blocked in local state
+              return { ...prev, blocked: true, messages };
+            });
             break;
 
           default:

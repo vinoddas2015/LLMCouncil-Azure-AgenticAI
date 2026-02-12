@@ -24,7 +24,7 @@
 
 **LLM Council MGA** is an enterprise AI orchestration platform that consults a "council" of diverse Large Language Models to produce consensus-driven, high-confidence responses for pharmaceutical professionals. Every query passes through a **3-stage deliberation pipeline** — individual responses, anonymous peer review with **Verbalized Sampling** metrics, and chairman synthesis with **citation-grounded evidence** — producing answers that are more accurate, balanced, and verifiable than any single model alone.
 
-The platform integrates real-time evidence retrieval from **OpenFDA**, **ClinicalTrials.gov**, and **PubMed**, renders **scientific markdown** (2D/3D SMILES molecular structures, LaTeX math, GFM tables), supports **Gemini multi-modal output** (text + images), and includes built-in **self-healing resilience**, **grounding score evaluation**, **token/cost tracking**, and a **three-tier memory management system**.
+The platform integrates real-time evidence retrieval from **15 parallel skills** — 7 core APIs (OpenFDA, ClinicalTrials.gov, PubMed, EMA, WHO ATC, UniProt, ChEMBL) plus 8 web-search skills (Semantic Scholar, CrossRef, Europe PMC, DuckDuckGo Science, arXiv, Google Patents, Wikipedia, ORCID) — renders **scientific markdown** (2D/3D SMILES molecular structures, LaTeX math, GFM tables), generates **visual infographic summaries** (metric cards, comparisons, process flows, highlight takeaways), supports **Gemini multi-modal output** (text + images), and includes a **prompt suitability guard**, built-in **self-healing resilience**, **grounding score evaluation**, **token/cost tracking**, and a **three-tier memory management system**.
 
 ---
 
@@ -36,13 +36,28 @@ The platform integrates real-time evidence retrieval from **OpenFDA**, **Clinica
 |-------|-------------|
 | **Stage 1 — First Opinions** | Query sent to all council models independently; responses rendered with SciMarkdown |
 | **Stage 2 — Peer Review** | Each model anonymously ranks others using Verbalized Sampling (pharma-grade Correctness, Precision, Recall) |
-| **Stage 3 — Chairman Synthesis** | Chairman compiles citation-grounded final response with [FDA-L1], [CT-2], [PM-3] references |
+| **Stage 3 — Chairman Synthesis** | Chairman compiles citation-grounded final response with [FDA-L1], [CT-2], [PM-3], [SS-1], [CR-1], [EPMC-1], [AX-1], [PAT-1], [WIKI-1], [ORC-1] references, plus an auto-generated visual infographic summary |
+
+### Prompt Suitability Guard
+- **Pre-Stage Gate** — Every prompt is evaluated before council stages fire, filtering trivial, harmful, illegal, PII, injection, and off-topic queries
+- **6 Rejection Categories** — TRIVIAL, HARMFUL_CONTENT, ILLEGAL_ACTIVITY, PERSONAL_DATA, PROMPT_INJECTION, OFF_TOPIC
+- **Conversation Lock** — Rejected conversations are permanently blocked; users must start a new conversation
+- **Policy-Aligned Messages** — Polite rejection messages referencing Bayer's Responsible AI Policy
 
 ### Evidence & Citation System
-- **Real-Time Evidence Retrieval** — Parallel queries to OpenFDA (drug labels/adverse events), ClinicalTrials.gov (active trials), and PubMed (recent publications)
-- **Citation-Grounded Output** — Chairman references evidence as clickable [FDA-L1], [CT-2], [PM-3] tags linking to source URLs
+- **15 Parallel Evidence Skills** — 7 core APIs always fire: OpenFDA (drug labels/adverse events), ClinicalTrials.gov (active trials), PubMed (publications), EMA (European Medicines Agency), WHO ATC (drug classifications), UniProt (protein data), ChEMBL (bioactivity data)
+- **8 Web-Search Skills** (when Web Search enabled) — Semantic Scholar (academic papers, citation-weighted), CrossRef (DOI metadata), Europe PMC (open-access literature), DuckDuckGo Science (authoritative domain filter), arXiv (scientific preprints), Google Patents (patent search), Wikipedia (encyclopaedic context), ORCID (researcher profiles)
+- **Citation-Grounded Output** — Chairman references evidence as clickable [FDA-L1], [CT-2], [PM-3], [SS-1], [CR-1], [EPMC-1], [WEB-1], [AX-1], [PAT-1], [WIKI-1], [ORC-1] tags linking to source URLs
 - **Evidence Panel** — Collapsible sidebar showing all retrieved citations with source badges
 - **Benchmark Timing** — Per-skill execution time reported with evidence results
+
+### Infographics
+- **Auto-Generated Visual Summaries** — Every chairman response includes an interactive infographic panel
+- **Key Metric Cards** — IC<sub>50</sub>, Phase, Approval dates, Patient counts, p-values extracted automatically
+- **Comparison Tables** — Side-by-side drug/treatment comparisons rendered as styled data tables
+- **Process Flows** — Mechanism of action, clinical pathways, and synthesis pipelines as step diagrams
+- **Highlight Cards** — Key takeaways classified as success (green), warning (amber), info (blue), or danger (red)
+- **Collapsible Panel** — Click header to toggle; does not clutter the main response
 
 ### Scientific Markdown Rendering (SciMarkdown)
 - **2D SMILES Structures** — Molecular diagrams rendered via smiles-drawer (use ``smiles code blocks)
@@ -92,12 +107,13 @@ Pharma-grade evaluation in all 3 stages using binary classification metrics:
 │              │◄────────────────────►│            FastAPI Backend               │
 │   React 19   │     REST API         │                                          │
 │  + Vite 7.x  │────────────────────►│  ┌──────────┐  ┌──────────┐  ┌────────┐ │
-│              │                      │  │ Council   │  │ Evidence │  │ Memory │ │
-│  SciMarkdown │                      │  │ 3-Stage   │  │ Skills   │  │ 3-Tier │ │
-│  + KaTeX     │                      │  │ Pipeline  │  │ (3 APIs) │  │ System │ │
-│              │                      │  └─────┬────┘  └────┬─────┘  └───┬────┘ │
-│  Port 5173   │                      │        │            │            │       │
-└──────────────┘                      │  ┌─────▼────────────▼────────────▼─────┐ │
+│              │                      │  │ Prompt   │  │ Evidence │  │ Memory │ │
+│  SciMarkdown │                      │  │ Guard ──►│  │ Skills   │  │ 3-Tier │ │
+│  + KaTeX     │                      │  │ Council  │  │(7+4 Web) │  │ System │ │
+│              │                      │  │ 3-Stage  │  │          │  │        │ │
+│  Port 5173   │                      │  └─────┬────┘  └────┬─────┘  └───┬────┘ │
+└──────────────┘                      │        │            │            │       │
+                                      │  ┌─────▼────────────▼────────────▼─────┐ │
                                       │  │         Orchestrator + Resilience    │ │
                                       │  │  Kill Switch │ Circuit Breakers     │ │
                                       │  └──────────────────┬──────────────────┘ │
@@ -208,6 +224,7 @@ Events emitted during `POST /api/conversations/{id}/stream`:
 
 | Event | Stage | Payload Description |
 |-------|-------|---------------------|
+| `prompt_rejected` | Pre | Prompt blocked by guard — category + message |
 | `session_start` | Pre | Session ID + metadata |
 | `memory_recall` | Pre | Recalled memories + influence score |
 | `stage1_start` | S1 | Stage 1 initiated |
@@ -216,7 +233,8 @@ Events emitted during `POST /api/conversations/{id}/stream`:
 | `stage2_start` | S2 | Peer review initiated |
 | `stage2_ranking` | S2 | Per-model ranking data |
 | `stage2_complete` | S2 | Rankings + grounding score |
-| `evidence_complete` | S2→S3 | Citations from OpenFDA/ClinicalTrials/PubMed with timing |
+| `evidence_complete` | S2→S3 | Citations from 7 core + 8 web-search skills with timing |
+| `infographic_complete` | Post-S3 | Structured infographic data (metrics, comparison, steps, highlights) |
 | `memory_gate` | Post-S2 | Grounding vs historical evaluation |
 | `stage3_start` | S3 | Chairman synthesis initiated |
 | `stage3_complete` | S3 | Final citation-grounded response |
@@ -298,7 +316,9 @@ LLMCouncilMGA/
 ├── backend/                        # FastAPI backend
 │   ├── main.py                     # App, routes, SSE streaming
 │   ├── council.py                  # 3-stage council (Verbalized Sampling)
-│   ├── skills.py                   # Evidence retrieval (OpenFDA/CT.gov/PubMed)
+│   ├── prompt_guard.py              # Prompt suitability guard (6-category filter)
+│   ├── skills.py                   # Evidence retrieval (15 skills: 7 core + 8 web)
+│   ├── infographics.py             # Infographic extraction from chairman output
 │   ├── grounding.py                # Hybrid grounding score computation
 │   ├── openrouter.py               # Async LLM API client (httpx)
 │   ├── resilience.py               # Kill switch, circuit breaker, retries
@@ -318,6 +338,7 @@ LLMCouncilMGA/
 │           ├── Stage1.jsx          # Individual model responses
 │           ├── Stage2.jsx          # Peer ranking matrix
 │           ├── Stage3.jsx          # Chairman + citation links
+│           ├── InfographicPanel.jsx # Visual infographic summary
 │           ├── GroundingScore.jsx  # Circular confidence gauge
 │           ├── TokenBurndown.jsx   # Cost/token dashboard
 │           ├── PromptAtlas3D.jsx   # Decision tree flow viz
@@ -350,7 +371,7 @@ LLMCouncilMGA/
 | **Scientific Rendering** | react-markdown, remark-gfm, rehype-raw, remark-math, rehype-katex, smiles-drawer, 3Dmol.js | Latest |
 | **HTTP Client** | httpx (async) | 0.27+ |
 | **Streaming** | Server-Sent Events (SSE) | — |
-| **Evidence APIs** | OpenFDA, ClinicalTrials.gov, PubMed | Public REST |
+| **Evidence APIs** | OpenFDA, ClinicalTrials.gov, PubMed, arXiv, Google Patents, Wikipedia, ORCID | Public REST |
 | **Storage** | JSON files (pluggable: Redis, DynamoDB, CosmosDB) | — |
 | **Testing** | pytest, pytest-asyncio | 9.x, 1.x |
 | **LLM Gateway** | Bayer myGenAssist | Enterprise |

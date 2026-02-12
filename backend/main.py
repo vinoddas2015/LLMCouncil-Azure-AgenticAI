@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import uuid
 import json
+import os
 import asyncio
 import base64
 from datetime import datetime
@@ -26,12 +27,15 @@ from .grounding import compute_response_grounding_scores, get_rubric_criteria
 from .skills import run_evidence_skills, format_citations_for_prompt
 from .token_tracking import SessionCostTracker
 from .memory import get_memory_manager
+from .prompt_guard import evaluate_prompt
 from .orchestrator import (
     pre_stage1_agent,
     post_stage2_agent,
     post_stage3_agent,
     user_gate_agent,
 )
+from .security import get_security_status
+from .infographics import extract_infographic, strip_infographic_block
 
 
 def check_token_expiry():
@@ -206,20 +210,27 @@ async def enhance_prompt(request: EnhancePromptRequest):
     if not request.content.strip():
         raise HTTPException(status_code=400, detail="Prompt content is required")
 
-    enhance_system = """You are an expert prompt engineer working for a pharmaceutical research council. Your job is to take a user's question and enhance it into a more detailed, specific, and scientifically rigorous prompt that will elicit better responses from LLMs.
+    enhance_system = """You are an expert prompt engineer for a pharmaceutical research LLM council. Your job is to MODESTLY improve a user's prompt — not to inflate or fabricate.
 
-Guidelines:
-- Preserve the user's original intent completely
-- Add relevant scientific dimensions (efficacy, safety, mechanisms, biomarkers, clinical data, preclinical models)
-- Make the scope explicit (what comparisons, what endpoints, what contexts)
-- Use precise scientific terminology appropriate to the domain
-- Keep it as a single, well-structured question or request
-- Do NOT answer the question — only improve it
-- Return ONLY the improved prompt text, nothing else (no preamble, no explanation, no quotes)"""
+CRITICAL RULES:
+1. NEVER invent context that is not in the original prompt. If the user asks about something you do not recognise, do NOT assume it is a drug, protein, algorithm, or anything else — keep the question as-is and only add minor clarifying structure.
+2. Keep enhanced prompts PROPORTIONAL to the original length. A one-sentence question should become at most 2-3 sentences. Never turn a 5-word question into a paragraph.
+3. If the topic is clearly pharmaceutical/scientific, you may add relevant dimensions (mechanism of action, safety profile, clinical evidence, regulatory status) — but only dimensions that actually apply.
+4. If the topic is unknown, ambiguous, or not scientific, improve ONLY clarity and specificity. Do not force it into a scientific frame.
+5. PRESERVE the user's actual intent and wording. Do not replace their terminology with synonyms or generalisations.
+6. Do NOT add boilerplate phrases like "Provide a comprehensive scientific and technical elucidation" or "Elaborate on its utility across stages such as…". Write naturally.
+7. Do NOT answer the question — only improve the phrasing.
+8. Return ONLY the improved prompt text — no preamble, no explanation, no surrounding quotes.
+
+EXAMPLES:
+- Input: "What is metformin?" → "What is metformin, including its mechanism of action, primary indications, and key safety considerations?"
+- Input: "What is clawdbot?" → "What is clawdbot?"  (unknown term — return as-is or nearly as-is)
+- Input: "Compare SGLT2 inhibitors" → "Compare the major SGLT2 inhibitors (empagliflozin, dapagliflozin, canagliflozin) in terms of cardiovascular outcomes, renal benefits, and safety profiles based on recent clinical trial data."
+- Input: "Tell me a joke" → "Tell me a joke"  (off-topic — return as-is)"""
 
     messages = [
         {"role": "system", "content": enhance_system},
-        {"role": "user", "content": f"Enhance this prompt:\n\n{request.content}"}
+        {"role": "user", "content": f"Enhance this prompt (follow the critical rules strictly):\n\n{request.content}"}
     ]
 
     try:
@@ -466,9 +477,11 @@ async def get_kill_switch_status():
 async def get_system_health():
     """
     Full system health: kill switch state, circuit breaker per-model status,
-    and recent self-healing actions taken.
+    recent self-healing actions taken, and security configuration.
     """
-    return health_monitor.full_status()
+    status = health_monitor.full_status()
+    status["security"] = get_security_status()
+    return status
 
 
 @app.get("/api/health/circuits")
@@ -651,6 +664,26 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             if kill_switch.is_halted:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'System is in emergency halt mode. Please try again later.', 'code': 'GLOBAL_HALT'})}\n\n"
                 return
+
+            # ── Prompt Suitability Guard ─────────────────────────────
+            # Block unsuitable prompts before any stage is triggered.
+            # If conversation was already blocked, reject all follow-ups.
+            if conversation.get("blocked"):
+                yield f"data: {json.dumps({'type': 'prompt_rejected', 'data': {'category': 'CONVERSATION_BLOCKED', 'message': 'This conversation has been closed due to a policy violation. Please start a **new conversation** with a question related to pharmaceutical sciences, clinical research, or life-science topics.'}})}\n\n"
+                return
+
+            guard_verdict = await evaluate_prompt(request.content or "")
+            if not guard_verdict.allowed:
+                # Mark conversation as blocked so no follow-ups are accepted
+                conversation["blocked"] = True
+                conversation["blocked_reason"] = guard_verdict.category
+                storage.save_conversation(conversation)
+                # Store the user message so the rejection is visible in history
+                storage_content_early = request.content or ""
+                storage.add_user_message(conversation_id, storage_content_early)
+                yield f"data: {json.dumps({'type': 'prompt_rejected', 'data': {'category': guard_verdict.category, 'message': guard_verdict.message}})}\n\n"
+                return
+
             # Build user message content for storage (include attachment info)
             storage_content = request.content
             if request.attachments:
@@ -736,7 +769,19 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             )
             # Record Stage 3 token usage
             cost_tracker.record("stage3", stage3_result.get("model", "unknown"), stage3_result.get("usage"))
+
+            # Extract infographic data from the chairman's response
+            infographic_data = None
+            raw_response = stage3_result.get("response", "")
+            infographic_data = extract_infographic(raw_response)
+            # Strip the raw infographic JSON block from the displayed response
+            stage3_result["response"] = strip_infographic_block(raw_response)
+
             yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
+
+            # Emit infographic data as a separate event
+            if infographic_data:
+                yield f"data: {json.dumps({'type': 'infographic_complete', 'data': infographic_data})}\n\n"
 
             # Wait for title generation if it was started
             if title_task:
@@ -805,4 +850,17 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+
+    ssl_certfile = os.getenv("SSL_CERTFILE")
+    ssl_keyfile = os.getenv("SSL_KEYFILE")
+
+    uvicorn_kwargs = dict(host="0.0.0.0", port=8001)
+    if ssl_certfile and ssl_keyfile:
+        uvicorn_kwargs["ssl_certfile"] = ssl_certfile
+        uvicorn_kwargs["ssl_keyfile"] = ssl_keyfile
+        uvicorn_kwargs["ssl_version"] = 2  # TLS 1.3 (ssl.TLS_VERSION_TLSv1_3)
+        print("\n🔒 TLS ENABLED — serving over HTTPS")
+    else:
+        print("\n⚠️  No SSL_CERTFILE/SSL_KEYFILE — serving over plain HTTP (dev mode)")
+
+    uvicorn.run(app, **uvicorn_kwargs)
