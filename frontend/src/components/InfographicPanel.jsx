@@ -9,7 +9,8 @@
  *   - Highlight cards (success, warning, info, danger)
  */
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
+import ExportToolbar from './ExportToolbar';
 import './InfographicPanel.css';
 
 const HIGHLIGHT_STYLES = {
@@ -107,6 +108,7 @@ function HighlightCards({ highlights }) {
 
 export default function InfographicPanel({ data }) {
   const [collapsed, setCollapsed] = useState(false);
+  const bodyRef = useRef(null);
 
   if (!data) return null;
 
@@ -129,13 +131,22 @@ export default function InfographicPanel({ data }) {
           {data.title || 'Visual Summary'}
         </span>
         <span className="infographic-badge">Infographic</span>
+        <ExportToolbar targetRef={bodyRef} filenamePrefix="LLMCouncil_Infographic" />
         <span className={`infographic-toggle ${collapsed ? 'collapsed' : ''}`}>
           ▼
         </span>
       </div>
 
       {!collapsed && (
-        <div className="infographic-body">
+        <div className="infographic-body" ref={bodyRef}>
+          {/* Print-only title — visible only during A4 export capture */}
+          <div className="infographic-print-title">
+            {data.title || 'Visual Summary'}
+            <div className="infographic-print-subtitle">
+              LLM Council — Generated Infographic Report
+            </div>
+          </div>
+
           {/* Key Metrics Row */}
           {hasMetrics && (
             <div className="infographic-section">

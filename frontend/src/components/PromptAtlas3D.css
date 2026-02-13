@@ -460,6 +460,86 @@
   letter-spacing: 0.5px;
 }
 
+/* ── Export Region ───────────────────────────────────────────────── */
+.atlas-export-region {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Atlas Infographic Metric Rows (inside tree detail) ──────── */
+.atlas-infog-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.atlas-infog-metric-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(52, 211, 153, 0.06);
+  border: 1px solid rgba(52, 211, 153, 0.12);
+}
+
+.atlas-infog-metric-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.atlas-infog-metric-row strong {
+  color: #6ee7b7 !important;
+  font-weight: 700;
+}
+
+/* ── Export-region print adjustments ─────────────────────────── */
+.export-print-mode.atlas-export-region {
+  overflow: visible !important;
+  padding: 28px 24px !important;
+}
+
+.export-print-mode .atlas-tree-container {
+  overflow: visible !important;
+  max-height: none !important;
+}
+
+.export-print-mode .atlas-infog-metric-row {
+  background: #f0fdf4 !important;
+  border-color: #bbf7d0 !important;
+}
+
+.export-print-mode .atlas-infog-metric-row strong {
+  color: #047857 !important;
+}
+
+/* Print-only atlas title */
+.atlas-export-region .atlas-print-title {
+  display: none;
+}
+
+.export-print-mode .atlas-print-title {
+  display: block !important;
+  font-size: 20px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+  text-align: center;
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 2px solid #14b8a6;
+}
+
+.export-print-mode .atlas-print-subtitle {
+  display: block !important;
+  font-size: 11px !important;
+  color: #64748b !important;
+  text-align: center;
+  margin-top: 4px;
+  font-weight: 400;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    Responsive Adjustments
    ═══════════════════════════════════════════════════════════════════ */

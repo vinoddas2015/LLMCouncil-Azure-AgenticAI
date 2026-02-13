@@ -17,6 +17,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
+import ExportToolbar from './ExportToolbar';
 import './PromptAtlas3D.css';
 
 /* ── Stage colours ──────────────────────────────────────────────── */
@@ -335,6 +336,105 @@ function buildTree(conversation) {
     });
   }
 
+  // ── Infographic node ────────────────────────────────────────────
+  const infog = lastAssistant.infographic;
+  if (infog) {
+    const infogChildren = [];
+
+    // Key metrics as child nodes
+    if (infog.key_metrics?.length > 0) {
+      infogChildren.push({
+        id: 'infog-metrics',
+        type: 'stage3',
+        icon: '📈',
+        label: `${infog.key_metrics.length} Key Metrics`,
+        detail: (
+          <div className="detail-text atlas-infog-metrics">
+            {infog.key_metrics.map((m, i) => (
+              <div key={i} className="atlas-infog-metric-row">
+                <span className="atlas-infog-metric-icon">{m.icon || '📊'}</span>
+                <strong>{m.value}</strong> — {m.label}
+              </div>
+            ))}
+          </div>
+        ),
+        children: [],
+      });
+    }
+
+    // Comparison table summary
+    if (infog.comparison?.rows?.length > 0) {
+      infogChildren.push({
+        id: 'infog-comparison',
+        type: 'stage3',
+        icon: '📋',
+        label: `Comparison — ${infog.comparison.rows.length} rows`,
+        detail: (
+          <div className="detail-text">
+            <strong>Columns:</strong> {(infog.comparison.headers || []).join(' · ')}
+          </div>
+        ),
+        children: [],
+      });
+    }
+
+    // Process steps
+    if (infog.process_steps?.length > 0) {
+      infogChildren.push({
+        id: 'infog-steps',
+        type: 'stage3',
+        icon: '🔄',
+        label: `${infog.process_steps.length}-Step Process`,
+        detail: (
+          <div className="detail-text">
+            {infog.process_steps.map((s, i) => (
+              <div key={i} style={{ marginBottom: 4 }}>
+                <strong>Step {s.step}:</strong> {s.title}
+                {s.description && <> — {s.description}</>}
+              </div>
+            ))}
+          </div>
+        ),
+        children: [],
+      });
+    }
+
+    // Highlights count
+    if (infog.highlights?.length > 0) {
+      infogChildren.push({
+        id: 'infog-highlights',
+        type: 'stage3',
+        icon: '💡',
+        label: `${infog.highlights.length} Takeaways`,
+        detail: (
+          <div className="detail-text">
+            {infog.highlights.map((h, i) => (
+              <div key={i} style={{ marginBottom: 4 }}>
+                {h.type === 'success' ? '✅' : h.type === 'warning' ? '⚠️' : h.type === 'danger' ? '🔴' : 'ℹ️'}
+                {' '}{h.text}
+              </div>
+            ))}
+          </div>
+        ),
+        children: [],
+      });
+    }
+
+    root.children.push({
+      id: 'infographic-group',
+      type: 'stage3',
+      icon: '📊',
+      label: 'Infographic Summary',
+      badge: infog.title || 'Visual Data',
+      metrics: [
+        { value: infog.key_metrics?.length || 0, label: 'Metrics' },
+        { value: infog.highlights?.length || 0, label: 'Highlights' },
+        { value: infog.process_steps?.length || 0, label: 'Steps' },
+      ],
+      children: infogChildren,
+    });
+  }
+
   return root;
 }
 
@@ -346,6 +446,7 @@ function buildTree(conversation) {
 export default function PromptAtlas3D({ conversation, isOpen, onToggle }) {
   const [expandedId, setExpandedId] = useState(null);
   const panelRef = useRef(null);
+  const exportRef = useRef(null);
 
   const tree = buildTree(conversation);
 
@@ -383,11 +484,20 @@ export default function PromptAtlas3D({ conversation, isOpen, onToggle }) {
               <div className="atlas-header-subtitle">Decision Tree · Council Flow</div>
             </div>
           </div>
+          <ExportToolbar targetRef={exportRef} filenamePrefix="LLMCouncil_Atlas" />
           <button className="atlas-close-btn" onClick={onToggle} title="Close">×</button>
         </div>
 
-        {/* Decision Tree */}
-        <div className="atlas-tree-container" ref={panelRef}>
+        {/* Decision Tree — exportable region */}
+        <div className="atlas-export-region" ref={exportRef}>
+          {/* Print-only title — visible only during A4 export */}
+          <div className="atlas-print-title">
+            LLM Council — Prompt Atlas
+            <div className="atlas-print-subtitle">
+              Decision Tree Flow · Council Pipeline Report
+            </div>
+          </div>
+          <div className="atlas-tree-container" ref={panelRef}>
           {tree ? (
             <TreeNode
               node={tree}
@@ -404,10 +514,11 @@ export default function PromptAtlas3D({ conversation, isOpen, onToggle }) {
             </div>
           )}
         </div>
+        </div>{/* end atlas-export-region */}
 
         {/* Footer */}
         <div className="atlas-footer">
-          LLM Council Prompt Atlas v2.0 · Decision Tree Flow
+          LLM Council Prompt Atlas v3.0 · Decision Tree Flow · Export Ready
         </div>
       </div>
     </>

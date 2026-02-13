@@ -1,0 +1,250 @@
+/* ═══════════════════════════════════════════════════════════════════
+   ExportToolbar — Button-bar & A4 Print-Ready Capture Styles
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Button bar ──────────────────────────────────────────────────── */
+.export-toolbar {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.export-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.export-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.export-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.export-btn-png:hover:not(:disabled) {
+  border-color: rgba(96, 165, 250, 0.5);
+  color: #93c5fd;
+}
+
+.export-btn-jpg:hover:not(:disabled) {
+  border-color: rgba(52, 211, 153, 0.5);
+  color: #6ee7b7;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   A4 Print-Ready Mode
+   Applied temporarily during capture; forces white background,
+   dark text, explicit width, and removes transparency.
+   ═══════════════════════════════════════════════════════════════════ */
+.export-print-mode {
+  background: #ffffff !important;
+  color: #1e293b !important;
+  border-color: #e2e8f0 !important;
+  width: 794px !important;         /* 210 mm @96 dpi */
+  min-width: 794px !important;
+  max-width: 794px !important;
+  padding: 32px 28px !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* ── Generic children overrides for print ─────────────────────── */
+.export-print-mode * {
+  color: #1e293b !important;
+  border-color: #cbd5e1 !important;
+}
+
+.export-print-mode .section-label,
+.export-print-mode .tree-metric-label,
+.export-print-mode .atlas-header-subtitle {
+  color: #64748b !important;
+}
+
+/* — Metric cards — */
+.export-print-mode .infographic-metric-card,
+.export-print-mode .tree-metric {
+  background: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+}
+
+.export-print-mode .metric-value,
+.export-print-mode .tree-metric-val {
+  color: #0f172a !important;
+}
+
+.export-print-mode .metric-label {
+  color: #64748b !important;
+}
+
+/* — Comparison table — */
+.export-print-mode .comparison-table th {
+  background: #f0f4ff !important;
+  color: #1e40af !important;
+  border-bottom-color: #bfdbfe !important;
+}
+
+.export-print-mode .comparison-table td {
+  border-bottom-color: #e2e8f0 !important;
+}
+
+/* — Process steps — */
+.export-print-mode .step-number {
+  background: linear-gradient(135deg, #3b82f6, #6366f1) !important;
+  color: #ffffff !important;
+}
+
+.export-print-mode .step-content {
+  background: #f1f5f9 !important;
+  border-color: #e2e8f0 !important;
+}
+
+.export-print-mode .step-connector {
+  color: #3b82f6 !important;
+}
+
+/* — Highlight cards — */
+.export-print-mode .highlight-card.highlight-success {
+  background: rgba(22, 163, 74, 0.08) !important;
+  border-left-color: #16a34a !important;
+}
+.export-print-mode .highlight-card.highlight-warning {
+  background: rgba(234, 179, 8, 0.08) !important;
+  border-left-color: #eab308 !important;
+}
+.export-print-mode .highlight-card.highlight-info {
+  background: rgba(37, 99, 235, 0.08) !important;
+  border-left-color: #2563eb !important;
+}
+.export-print-mode .highlight-card.highlight-danger {
+  background: rgba(220, 38, 38, 0.08) !important;
+  border-left-color: #dc2626 !important;
+}
+
+/* — Badge — */
+.export-print-mode .infographic-badge {
+  background: #dbeafe !important;
+  color: #1d4ed8 !important;
+}
+
+/* — Tree nodes (PromptAtlas) — */
+.export-print-mode .tree-node {
+  background: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06) !important;
+}
+
+.export-print-mode .tree-node.node-root   { border-left-color: #0d9488 !important; }
+.export-print-mode .tree-node.node-stage1 { border-left-color: #2563eb !important; }
+.export-print-mode .tree-node.node-stage2 { border-left-color: #7c3aed !important; }
+.export-print-mode .tree-node.node-evidence { border-left-color: #d97706 !important; }
+.export-print-mode .tree-node.node-stage3 { border-left-color: #059669 !important; }
+
+.export-print-mode .tree-connector {
+  border-left-color: #94a3b8 !important;
+}
+
+.export-print-mode .tree-node-badge {
+  background: #e2e8f0 !important;
+  color: #334155 !important;
+}
+
+.export-print-mode .tree-children {
+  border-left-color: #cbd5e1 !important;
+}
+
+/* — Atlas-specific overrides — */
+.export-print-mode .atlas-header {
+  background: #f0f4ff !important;
+  border-bottom-color: #bfdbfe !important;
+}
+
+.export-print-mode .atlas-header-icon {
+  background: linear-gradient(135deg, #0d9488, #14b8a6) !important;
+  color: #ffffff !important;
+}
+
+.export-print-mode .atlas-header h2 {
+  color: #0f172a !important;
+}
+
+.export-print-mode .atlas-footer {
+  border-top-color: #e2e8f0 !important;
+  color: #94a3b8 !important;
+}
+
+/* — Infographic header — */
+.export-print-mode .infographic-header {
+  background: #f0f4ff !important;
+  border-bottom: 1px solid #dbeafe !important;
+}
+
+.export-print-mode .infographic-title {
+  color: #0f172a !important;
+}
+
+/* — Print watermark — */
+.export-print-mode::after {
+  content: 'LLM Council · Generated Report';
+  display: block;
+  text-align: center;
+  padding: 16px 0 8px;
+  font-size: 10px;
+  color: #94a3b8 !important;
+  letter-spacing: 0.5px;
+  border-top: 1px solid #e2e8f0;
+  margin-top: 24px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Browser Print Media Query — native Ctrl+P
+   ═══════════════════════════════════════════════════════════════════ */
+@media print {
+  @page {
+    size: A4;
+    margin: 15mm 12mm;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #1e293b !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .infographic-panel,
+  .prompt-atlas-panel {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    background: #ffffff !important;
+    border: 1px solid #e2e8f0 !important;
+    width: 100% !important;
+  }
+
+  .export-toolbar,
+  .atlas-toggle-btn,
+  .atlas-close-btn,
+  .infographic-toggle {
+    display: none !important;
+  }
+}
