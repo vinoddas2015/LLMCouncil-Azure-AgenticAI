@@ -1,4 +1,4 @@
-﻿# LLM Council MGA
+# LLM Council MGA
 
 <p align="center">
   <img src="Logo_Bayer.jpg" alt="Bayer" width="120" />
@@ -148,6 +148,8 @@ cp .env.example .env
 ```
 
 ### 2. Backend Setup
+
+`requirements.txt` is the canonical Python dependency file for this repository.
 
 ```bash
 # Create virtual environment
@@ -355,7 +357,6 @@ LLMCouncilMGA/
 ├── ARCHITECTURE.md                 # Full system architecture
 ├── CONTRIBUTING.md                 # Contribution guidelines
 ├── requirements.txt                # Python dependencies
-├── pyproject.toml                  # Python project metadata
 ├── .env.example                    # Environment config template
 └── start.sh                        # Quick-start script
 ```

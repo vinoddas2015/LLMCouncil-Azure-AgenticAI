@@ -1,0 +1,54 @@
+name: NONPROD deployment
+permissions:
+  contents: 'read'
+  id-token: 'write'
+on:
+
+  workflow_dispatch:
+env:
+  APP_NAME: llmcouncil
+  FARGATE_STACK_NAME: SC-795575357752-pp-j3xspba5muwl4
+  AWS_ROLE_TO_ASSUME: arn:aws:iam::795575357752:role/llmcouncil-github-role-nonprod
+jobs:
+  DeployApi:
+    runs-on: [external-k8s-v2]
+    timeout-minutes: 15
+    steps:
+      - name: Git Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install AWS CLI
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -qq awscliv2.zip
+          sudo ./aws/install --update
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@master
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-east-1
+      - name: Get environments from AWS
+        run: |
+          echo "AWS_ACCOUNT=`aws sts get-caller-identity | jq .Account | sed 's/"//g'`" >> $GITHUB_ENV
+          NPM_TOKEN=$(aws secretsmanager get-secret-value --secret-id llmcouncil-nonprod --query SecretString --output text | jq -r '.["npmToken"]')
+          echo "::add-mask::$NPM_TOKEN"
+          echo "NPM_TOKEN=$NPM_TOKEN" >> $GITHUB_ENV
+      - name: Configure npm
+        run: |
+          npm config set //artifactory.bayer.com/artifactory/api/npm/npm-platforms-engineering/:_auth $NPM_TOKEN
+          npm config set registry https://registry.npmjs.org
+          npm config set @monsantoit:registry https://artifactory.bayer.com/artifactory/api/npm/npm-platforms-engineering/
+          npm config set @bayerit:registry https://artifactory.bayer.com/artifactory/api/npm/npm-platforms-engineering/
+      - name: Install fg-deploy
+        run: |
+          npm i -g @bayerit/fg-deploy@latest
+      - name: Deploy Api
+        run: |
+          fg-deploy -m scripts/fg-config/fg-$ENVIRONMENT.js
+
