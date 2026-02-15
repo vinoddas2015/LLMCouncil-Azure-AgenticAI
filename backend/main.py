@@ -189,6 +189,12 @@ async def root():
     return {"status": "ok", "service": "LLM Council API"}
 
 
+@app.get("/health")
+async def health():
+    """Lightweight infra health check endpoint for ALB/ECS."""
+    return {"status": "ok"}
+
+
 @app.get("/api/models")
 async def get_available_models():
     """Get list of available models with their metadata."""
