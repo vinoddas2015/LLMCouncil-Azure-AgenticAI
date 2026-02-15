@@ -34,7 +34,11 @@ COUNCIL_MODELS = DEFAULT_COUNCIL_MODELS
 CHAIRMAN_MODEL = DEFAULT_CHAIRMAN_MODEL
 
 # Bayer Internal API endpoint
-OPENROUTER_API_URL = "https://chat.int.bayer.com/api/v2/chat/completions"
+# Prefer runtime env var (ECS secret injection), then fallback to default.
+OPENROUTER_API_URL = os.getenv(
+    "OPENROUTER_API_URL",
+    os.getenv("API_BASE_URL", "https://chat.int.bayer.com/api/v2/chat/completions"),
+)
 
 # Data directory for conversation storage
 DATA_DIR = "data/conversations"

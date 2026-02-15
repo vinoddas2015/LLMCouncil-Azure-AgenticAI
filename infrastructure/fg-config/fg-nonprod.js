@@ -1,20 +1,29 @@
+const appName = `${process.env.APP_NAME}-${process.env.ENVIRONMENT}`;
+const region = "us-east-1";
+const accountId = process.env.AWS_ACCOUNT;
+
 module.exports = {
-    name: `${process.env.APP_NAME}-${process.env.ENVIRONMENT}`,
-    fargateParameters: {
-      cpu: '1024',
-      memory: '3GB',
-      instanceCount: 1,
-      healthCheckPath: '/health',
-      taskRoleName: 'LLMCouncilExecutionRole'
+  name: appName,
+  fargateParameters: {
+    cpu: "1024",
+    memory: "3GB",
+    instanceCount: 1,
+    healthCheckPath: "/health",
+    healthCheckGracePeriod: 60,
+    timeoutInSeconds: 1200,
+    port: 80,
+    taskRoleName: "LLMCouncilExecutionRole",
+  },
+  aws: {
+    accountId,
+    fargateStackName: process.env.FARGATE_STACK_NAME,
+    region,
+  },
+  docker: {
+    ecrLifecyclePolicyFile: "infrastructure/fg-config/ecr-lifecycle-policy.json",
+    buildArgs: {
+      OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+      API_BASE_URL: process.env.API_BASE_URL,
     },
-    aws: {
-      accountId: process.env.AWS_ACCOUNT,
-      fargateStackName: process.env.FARGATE_STACK_NAME,
-      region: 'us-east-1',
-    },
-    docker: {
-      ecrLifecyclePolicyFile: 'infrastructure/fg-config/ecr-lifecycle-policy.json',
-      buildArgs: {
-      }
-    },
-  };
+  },
+};
