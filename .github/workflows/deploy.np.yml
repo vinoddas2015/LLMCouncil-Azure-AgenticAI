@@ -9,6 +9,7 @@ env:
   APP_NAME: llmcouncil
   FARGATE_STACK_NAME: SC-795575357752-pp-j3xspba5muwl4
   AWS_ROLE_TO_ASSUME: arn:aws:iam::795575357752:role/llmcouncil-github-role-nonprod
+  ENVIRONMENT: nonprod
 jobs:
   DeployApi:
     runs-on: [external-k8s-v2]
@@ -50,5 +51,5 @@ jobs:
           npm i -g @bayerit/fg-deploy@latest
       - name: Deploy Api
         run: |
-          fg-deploy -m scripts/fg-config/fg-$ENVIRONMENT.js
+          fg-deploy -m infrastructure/fg-config/fg-$ENVIRONMENT.js
 

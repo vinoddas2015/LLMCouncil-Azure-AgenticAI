@@ -13,7 +13,7 @@ module.exports = {
       region: 'us-east-1',
     },
     docker: {
-      ecrLifecyclePolicyFile: 'scripts/fg-config/ecr-lifecycle-policy.json',
+      ecrLifecyclePolicyFile: 'infrastructure/fg-config/ecr-lifecycle-policy.json',
       buildArgs: {
       }
     },
