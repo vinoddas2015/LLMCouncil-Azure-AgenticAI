@@ -89,17 +89,11 @@ check_token_expiry()
 
 app = FastAPI(title="LLM Council API")
 
-# Enable CORS for local development (allow multiple Vite ports)
+# Enable CORS for all origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5174", 
-        "http://localhost:5175",
-        "http://localhost:5176",
-        "http://localhost:3000",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
