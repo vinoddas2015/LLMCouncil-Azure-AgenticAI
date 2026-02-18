@@ -400,4 +400,19 @@ export const api = {
     if (!response.ok) throw new Error('Failed to delete memory');
     return response.json();
   },
+
+  /**
+   * Run on-demand agent team analysis for an existing conversation.
+   */
+  async analyzeAgents(conversationId) {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/analyze-agents`,
+      { method: 'POST' }
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'Agent analysis failed');
+    }
+    return response.json();
+  },
 };

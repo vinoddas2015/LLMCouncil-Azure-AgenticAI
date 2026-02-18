@@ -94,11 +94,11 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
   if (!isOpen) return null;
 
   return (
-    <div className="settings-overlay" onClick={onClose}>
+    <div className="settings-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-title" onClick={onClose}>
       <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
-          <h2>⚙️ Council Settings</h2>
-          <button className="close-btn" onClick={onClose}>×</button>
+          <h2 id="settings-title">⚙️ Council Settings</h2>
+          <button className="close-btn" onClick={onClose} aria-label="Close settings">×</button>
         </div>
 
         {loading ? (

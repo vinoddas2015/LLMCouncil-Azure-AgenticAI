@@ -19,13 +19,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# User Configuration
-USER_ID = 211  # Your Bayer user ID
-CWID = "EOVBK"  # Your CWID
+# Machine Configuration
+USER_ID = None  # Set via BAYER_USER_ID env var (or update once known)
+CWID = os.getenv("BAYER_CWID", "MXHSX")  # Machine CWID
 
 # API Configuration
 BAYER_API_BASE = "https://chat.int.bayer.com/api/v2"
-TOKEN_ENDPOINT = f"{BAYER_API_BASE}/tokens/{USER_ID}"
+# Resolve USER_ID from env if not hardcoded
+if USER_ID is None:
+    _uid = os.getenv("BAYER_USER_ID")
+    USER_ID = int(_uid) if _uid else None
+
+TOKEN_ENDPOINT = f"{BAYER_API_BASE}/tokens/{USER_ID}" if USER_ID else None
 
 # Get current JWT from .env (used to authenticate token creation)
 CURRENT_JWT = os.getenv("OPENROUTER_API_KEY")

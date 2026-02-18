@@ -170,3 +170,15 @@
   border-color: rgba(20, 184, 166, 0.2);
   border-top-color: #14b8a6;
 }
+
+/* ── Light-theme: EnhancePrompt loading ────────────────────────── */
+[data-theme="light"] .enhance-loading {
+  background: linear-gradient(135deg, #ecfdf5 0%, #eff6ff 100%);
+  border-color: rgba(5, 150, 105, 0.2);
+  color: #065f46;
+}
+
+[data-theme="light"] .enhance-loading .spinner {
+  border-color: rgba(5, 150, 105, 0.2);
+  border-top-color: #059669;
+}

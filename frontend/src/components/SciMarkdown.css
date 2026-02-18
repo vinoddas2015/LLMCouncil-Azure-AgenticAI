@@ -503,3 +503,238 @@
   color: #94a3b8;
   vertical-align: super;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   ☀  LIGHT-THEME OVERRIDES — APCA-compliant for Day mode
+   Body Lc ≥ 90 · Headings Lc ≥ 75 · Sub-text Lc ≥ 60
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Body text ───────────────────────────────────────────────────── */
+[data-theme="light"] .sci-markdown {
+  color: #1e293b;
+}
+
+/* ── Headings ────────────────────────────────────────────────────── */
+[data-theme="light"] .sci-markdown h1,
+[data-theme="light"] .sci-markdown h2,
+[data-theme="light"] .sci-markdown h3 {
+  color: #0f172a;
+}
+
+[data-theme="light"] .sci-markdown h4 {
+  color: #475569;
+}
+
+/* ── Paragraphs & text ───────────────────────────────────────────── */
+[data-theme="light"] .sci-markdown strong {
+  color: #0f172a;
+}
+
+[data-theme="light"] .sci-markdown em {
+  color: #7c3aed;
+}
+
+[data-theme="light"] .sci-markdown del {
+  color: #94a3b8;
+}
+
+[data-theme="light"] .sci-markdown blockquote {
+  border-left-color: #0d9488;
+  background: rgba(13, 148, 136, 0.05);
+  color: #475569;
+}
+
+[data-theme="light"] .sci-markdown hr {
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+/* ── Links ───────────────────────────────────────────────────────── */
+[data-theme="light"] .sci-markdown a {
+  color: #0d9488;
+  border-bottom-color: rgba(13, 148, 136, 0.3);
+}
+
+[data-theme="light"] .sci-markdown a:hover {
+  color: #0f766e;
+  border-bottom-color: #0f766e;
+}
+
+/* ── Lists ───────────────────────────────────────────────────────── */
+[data-theme="light"] .sci-markdown li::marker {
+  color: #0d9488;
+}
+
+[data-theme="light"] .sci-markdown li.task-list-item input[type='checkbox'] {
+  accent-color: #0d9488;
+}
+
+/* ── Inline code ─────────────────────────────────────────────────── */
+[data-theme="light"] .sci-markdown code {
+  background: #f1f5f9;
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #6d28d9;
+}
+
+/* ── Code blocks ─────────────────────────────────────────────────── */
+[data-theme="light"] .sci-markdown .code-block {
+  background: #f8fafc;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .sci-markdown .code-block code {
+  color: #334155;
+}
+
+[data-theme="light"] .sci-markdown .code-block::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* ── Tables ───────────────────────────────────────────────────────── */
+[data-theme="light"] .sci-table-wrapper {
+  background: rgba(0, 0, 0, 0.015);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .sci-table-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .sci-table thead {
+  background: linear-gradient(180deg, rgba(13, 148, 136, 0.08) 0%, rgba(13, 148, 136, 0.03) 100%);
+}
+
+[data-theme="light"] .sci-table th {
+  color: #0d9488;
+  border-bottom-color: rgba(13, 148, 136, 0.2);
+}
+
+[data-theme="light"] .sci-table td {
+  color: #334155;
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .sci-table tbody tr:hover {
+  background: rgba(13, 148, 136, 0.04);
+}
+
+[data-theme="light"] .sci-table tbody tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .sci-table tbody tr:nth-child(even):hover {
+  background: rgba(13, 148, 136, 0.05);
+}
+
+/* ── SMILES Molecular Structure Blocks ────────────────────────────── */
+[data-theme="light"] .smiles-block {
+  border-color: rgba(109, 40, 217, 0.15);
+  background: linear-gradient(135deg, #faf5ff 0%, #f5f3ff 100%);
+}
+
+[data-theme="light"] .smiles-block-header {
+  background: rgba(109, 40, 217, 0.05);
+  border-bottom-color: rgba(109, 40, 217, 0.1);
+}
+
+[data-theme="light"] .smiles-block-label {
+  color: #6d28d9;
+}
+
+[data-theme="light"] .smiles-mode-toggle {
+  border-color: rgba(109, 40, 217, 0.15);
+}
+
+[data-theme="light"] .smiles-mode-btn {
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+[data-theme="light"] .smiles-mode-btn:hover {
+  color: #6d28d9;
+  background: rgba(109, 40, 217, 0.08);
+}
+
+[data-theme="light"] .smiles-mode-btn.active {
+  color: #0f172a;
+  background: rgba(109, 40, 217, 0.1);
+  box-shadow: inset 0 -2px 0 #7c3aed;
+}
+
+[data-theme="light"] .smiles-mode-btn + .smiles-mode-btn {
+  border-left-color: rgba(109, 40, 217, 0.12);
+}
+
+[data-theme="light"] .smiles-block-raw {
+  color: #64748b;
+  background: #f1f5f9;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .smiles-fallback {
+  color: #6d28d9;
+  background: #f5f3ff;
+  border-color: rgba(109, 40, 217, 0.2);
+}
+
+[data-theme="light"] .smiles-inline {
+  background: rgba(109, 40, 217, 0.06);
+  border-color: rgba(109, 40, 217, 0.15);
+  color: #6d28d9;
+}
+
+/* ── 3D Molecular Viewer ──────────────────────────────────────────── */
+[data-theme="light"] .mol3d-overlay {
+  background: rgba(248, 250, 252, 0.85);
+}
+
+[data-theme="light"] .mol3d-error {
+  color: #dc2626;
+}
+
+[data-theme="light"] .mol3d-hint {
+  color: rgba(71, 85, 105, 0.7);
+  background: rgba(248, 250, 252, 0.85);
+}
+
+/* ── Figures & Images ─────────────────────────────────────────────── */
+[data-theme="light"] .sci-figure img {
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .sci-figure img:hover {
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .sci-figcaption {
+  color: #64748b;
+}
+
+[data-theme="light"] .sci-figure-broken {
+  background: rgba(241, 245, 249, 0.8);
+  border-color: rgba(109, 40, 217, 0.2);
+}
+
+[data-theme="light"] .sci-figure-broken-text {
+  color: #64748b;
+}
+
+/* ── KaTeX Math ───────────────────────────────────────────────────── */
+[data-theme="light"] .sci-markdown .katex {
+  color: #1e293b;
+}
+
+[data-theme="light"] .sci-markdown .katex-display {
+  background: rgba(241, 245, 249, 0.6);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .sci-markdown .katex-display::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* ── Subscript / Superscript ──────────────────────────────────────── */
+[data-theme="light"] .sci-markdown sub,
+[data-theme="light"] .sci-markdown sup {
+  color: #64748b;
+}

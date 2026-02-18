@@ -125,3 +125,9 @@
   font-weight: 600;
   color: var(--text-secondary);
 }
+
+/* ── Light-theme: LearnUnlearn overrides ────────────────────────── */
+[data-theme="light"] .lu-badge.episodic {
+  color: #7c3aed;
+  background: rgba(124, 58, 237, 0.1);
+}

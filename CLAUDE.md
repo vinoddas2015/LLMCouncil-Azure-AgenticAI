@@ -44,10 +44,51 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - Assistant messages contain: `{role, stage1, stage2, stage3}`
 - Note: metadata (label_to_model, aggregate_rankings) is NOT persisted to storage, only returned via API
 
+**`grounding.py`** — Bias-Free Grounding Score Engine + RAGAS Alignment
+- Hybrid Verbalized Sampling + Synthetic Math scoring
+- Pharma-specific safety metrics: Correctness, Precision, Recall, F1 from TP/FP/FN confusion matrix
+- **RAGAS metric alignment** (verified against RAGAS v0.2 framework):
+  - Precision = RAGAS Faithfulness (supported claims / total claims)
+  - Recall = RAGAS Context Recall (attributable sentences / total sentences)
+  - F1 = RAGAS Factual Correctness (balanced F1 score)
+- **Bias-free design** (5 fixes applied):
+  1. Self-reviews excluded from peer metrics — `_canonicalise_model()` strips fallback suffixes, then skips reviewer == response author
+  2. TP/FP/FN averaged per peer reviewer (not raw-summed) for equal distribution
+  3. No rank-position fallback — missing claims → zero metrics, not fabricated numbers
+  4. Synthetic criteria use uniform multipliers (all 1.0, no dimension-specific bias)
+  5. Overall council grounding uses equal weighting (simple average, not rank-weighted harmonic)
+- **Context Awareness (Catastrophic Forgetting Detection)**:
+  - Self-review data collected separately in `self_claims_per_label` (NOT discarded)
+  - Self-reviews excluded from peer metrics but repurposed for self-consistency measurement
+  - A model that marks its own claims as FP or fails to detect them (FN) during anonymized self-review exhibits catastrophic forgetting
+  - Score: `self_TP / (self_TP + self_FP + self_FN)` — severity: Strong ≥80%, Moderate ≥60%, Weak <60%
+- `compute_response_grounding_scores()` returns `peer_reviews` count per response for transparency
+- Formulas:
+  - Correctness = TP/(TP+2×FN+FP) — pharma-weighted (penalises missed safety info)
+  - F1 (RAGAS) = TP/(TP+0.5×(FP+FN)) — balanced Factual Correctness
+  - Precision = TP/(TP+FP)
+  - Recall = TP/(TP+FN)
+  - Context Awareness = self_TP/(self_TP+self_FP+self_FN)
+
 **`main.py`**
 - FastAPI app with CORS enabled for localhost:5173 and localhost:3000
 - POST `/api/conversations/{id}/message` returns metadata in addition to stages
 - Metadata includes: label_to_model mapping and aggregate_rankings
+- SSE pipeline includes `agent_team_complete` event after cost_summary
+
+**`agents.py`** — Agent Team (Post-Pipeline Intelligence)
+- 7 specialised async agents that analyse council output in parallel:
+  - 🔬 Research Analyst — topic coverage, data density, evidence breadth
+  - 🛡️ Fact Checker — grounding validation, hallucination detection (TP/FP/FN)
+  - ⚠️ Risk Assessor — safety signals, regulatory compliance flags
+  - 🔍 Pattern Scout — consensus detection, recurring themes, rubric trends
+  - 💡 Insight Synthesizer — cross-model analysis, novel connections, evidence gaps
+  - 📊 Quality Auditor — rubric scores, completeness, cost efficiency
+  - 🔗 Citation Supervisor — validates REFERENCES section, enriches plain-text refs with PubMed links, detects orphan tags & DOIs
+- `enrich_stage3_citations()` — utility called in SSE pipeline BEFORE `stage3_complete` emission; auto-wraps italic article titles in PubMed search links, linkifies DOIs/PMIDs, and handles bare URLs
+- `run_agent_team()` orchestrates all agents via `asyncio.gather` (non-fatal)
+- Each agent returns `{agent_id, role, icon, summary, confidence, signals[], metadata, timestamp}`
+- Each signal: `{kind, severity, title, detail, evidence?}` — severity: success/info/warning/critical
 
 ### Frontend Structure (`frontend/src/`)
 
@@ -76,11 +117,35 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - Final synthesized answer from chairman
 - Green-tinted background (#f0fff0) to highlight conclusion
 
+**ThemeContext.jsx**
+- React context providing `theme` ('dark'|'light'), `toggleTheme()`, `setTheme()`
+- Persists to `localStorage` key `llm-council-theme`
+- Respects `prefers-color-scheme` OS setting when no stored preference
+- Sets `data-theme` attribute on `<html>` element and `color-scheme` CSS property
+
+**ThemeToggle.jsx**
+- Accessible Day/Night toggle with `role="switch"`, `aria-checked`, descriptive `aria-label`
+- Animated sun/moon track with thumb that slides between positions
+- Keyboard-operable (Enter/Space); reduced-motion and forced-colors safe
+- Rendered in the Sidebar header-actions area
+
+**PromptAtlas3D.jsx** — Intelligence Dashboard + Decision Tree
+- Tabbed panel: "Agent Signals" (default) + "Decision Tree" views
+- Agent Team Dashboard: ConfidenceRing (SVG), AgentCard (expandable), SignalBadge components
+- Decision Tree: stage-by-stage flow (user → S1 → S2 → evidence → S3)
+- Data flow fix: falls back to `metadata.evidence` when loaded from storage
+- WCAG 3.0: `role="complementary"` landmark, `role="tablist/tab"`, `role="button"` + Enter/Space on all cards/nodes, `role="list/listitem"` on signals, `aria-expanded`, `aria-controls`, `aria-label`, min 24×24 targets
+
 **Styling (`*.css`)**
-- Light mode theme (not dark mode)
-- Primary color: #4a90e2 (blue)
+- WCAG 3.0 dual-theme system (Night=dark, Day=light) via CSS custom properties
+- Dark theme: `--bg-primary: #111827`, `--text-primary: #f2f3f5` (APCA Lc 93.5)
+- Light theme: `--bg-primary: #f8fafc`, `--text-primary: #0f172a` (APCA Lc 94.7)
+- `[data-theme="light"]` selector overrides all colour tokens in `index.css`
 - Global markdown styling in `index.css` with `.markdown-content` class
 - 12px padding on all markdown content to prevent cluttered appearance
+- Focus ring: 3px solid `--border-focus` via `:focus-visible`
+- `prefers-reduced-motion: reduce` disables all animations
+- `forced-colors: active` for Windows High Contrast mode
 
 ## Key Design Decisions
 
@@ -136,11 +201,31 @@ Models are hardcoded in `backend/config.py`. Chairman can be same or different f
 3. **Ranking Parse Failures**: If models don't follow format, fallback regex extracts any "Response X" patterns in order
 4. **Missing Metadata**: Metadata is ephemeral (not persisted), only available in API responses
 
+## Accessibility Testing
+
+The frontend includes 89 automated WCAG 3.0 accessibility tests using Vitest + Testing Library:
+
+```bash
+cd frontend && npm test       # Run all 89 tests
+npm run test:a11y              # Verbose output
+npm run test:watch             # Watch mode
+```
+
+Reusable test utilities in `src/__tests__/a11y-utils.js`:
+- `calcAPCA(textHex, bgHex)` — APCA contrast computation
+- `assertAccessibleNames(container)` — verify all interactive elements have names
+- `assertImageAlts(container)` — verify all images have alt text
+- `assertHeadingOrder(container)` — verify heading hierarchy
+- `getLandmarks(container)` — collect ARIA landmark roles
+
 ## Future Enhancement Ideas
 
-- Configurable council/chairman via UI instead of config file
-- Streaming responses instead of batch loading
-- Export conversations to markdown/PDF
+- Configurable council/chairman via UI instead of config file ✅ (done)
+- Streaming responses instead of batch loading ✅ (done)
+- Export conversations to markdown/PDF ✅ (done)
+- WCAG 3.0 accessibility + Day/Night mode ✅ (done)
+- RAGAS-aligned grounding metrics (F1, Precision=Faithfulness, Recall=Context Recall) ✅ (done)
+- Context Awareness / Catastrophic Forgetting detection via self-review ✅ (done)
 - Model performance analytics over time
 - Custom ranking criteria (not just accuracy/insight)
 - Support for reasoning models (o1, etc.) with special handling

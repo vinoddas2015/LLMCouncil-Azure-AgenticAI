@@ -346,10 +346,10 @@ export default function ChatInterface({
                       <span>Running Stage 3: Final synthesis...</span>
                     </div>
                   )}
-                  {msg.stage3 && <Stage3 finalResponse={msg.stage3} evidence={msg.evidence} />}
+                  {msg.stage3 && <Stage3 finalResponse={msg.stage3} evidence={msg.evidence || msg.metadata?.evidence} />}
 
                   {/* Infographic Panel */}
-                  {msg.infographic && <InfographicPanel data={msg.infographic} />}
+                  {(msg.infographic || msg.metadata?.infographic) && <InfographicPanel data={msg.infographic || msg.metadata?.infographic} />}
 
                   {/* Cost / Token Burndown */}
                   {msg.costSummary && <TokenBurndown costSummary={msg.costSummary} />}

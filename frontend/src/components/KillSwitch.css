@@ -196,3 +196,13 @@
 .confirm-halt-btn:hover {
   background: #b91c1c;
 }
+
+/* ── Light-theme: KillSwitch overrides ──────────────────────────── */
+[data-theme="light"] .cancel-btn {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+[data-theme="light"] .cancel-btn:hover {
+  background: #cbd5e1;
+}

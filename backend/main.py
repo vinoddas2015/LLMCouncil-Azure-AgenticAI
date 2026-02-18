@@ -1,5 +1,6 @@
 """FastAPI backend for LLM Council."""
 
+import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -11,6 +12,8 @@ import os
 import asyncio
 import base64
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from . import storage
 from .council import run_full_council, generate_conversation_title, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings
@@ -34,6 +37,7 @@ from .orchestrator import (
     post_stage3_agent,
     user_gate_agent,
 )
+from .agents import run_agent_team, enrich_stage3_citations
 from .security import get_security_status
 from .infographics import extract_infographic, strip_infographic_block
 
@@ -411,6 +415,72 @@ async def delete_conversation(conversation_id: str):
     return {"status": "deleted"}
 
 
+@app.post("/api/conversations/{conversation_id}/analyze-agents")
+async def analyze_agents(conversation_id: str):
+    """Run agent team analysis on-demand for an existing conversation.
+
+    Useful for conversations that were created before agent-team
+    persistence was added, or when the original analysis failed.
+    """
+    conv = storage.get_conversation(conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Find the last assistant message
+    msgs = conv.get("messages", [])
+    last_assistant = None
+    for msg in reversed(msgs):
+        if msg.get("role") == "assistant":
+            last_assistant = msg
+            break
+
+    if not last_assistant:
+        raise HTTPException(status_code=400, detail="No assistant message found")
+
+    stage1 = last_assistant.get("stage1", [])
+    stage2 = last_assistant.get("stage2", [])
+    stage3 = last_assistant.get("stage3", {})
+    meta = last_assistant.get("metadata", {})
+
+    if not stage1 or not stage3:
+        raise HTTPException(status_code=400, detail="Incomplete conversation data")
+
+    # Find the user query
+    last_user = None
+    for msg in reversed(msgs):
+        if msg.get("role") == "user":
+            last_user = msg
+            break
+
+    user_query = last_user.get("content", "") if last_user else ""
+
+    # Run agent team
+    try:
+        result = await run_agent_team(
+            user_query=user_query,
+            stage1_results=stage1,
+            stage2_results=stage2,
+            stage3_result=stage3,
+            aggregate_rankings=meta.get("aggregate_rankings", []),
+            grounding_scores=meta.get("grounding_scores", {}),
+            evidence_bundle=meta.get("evidence"),
+            cost_summary=None,
+        )
+    except Exception as e:
+        logger.error(f"On-demand agent analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Persist to storage
+    try:
+        storage.update_last_message_metadata(
+            conversation_id, {"agent_team": result}
+        )
+    except Exception as e:
+        logger.warning(f"Failed to persist on-demand agent_team: {e}")
+
+    return result
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Kill Switch & Health Monitoring API
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -777,6 +847,11 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             # Strip the raw infographic JSON block from the displayed response
             stage3_result["response"] = strip_infographic_block(raw_response)
 
+            # ── Citation Supervisor: enrich references with clickable links ──
+            stage3_result["response"] = enrich_stage3_citations(
+                stage3_result["response"]
+            )
+
             yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
 
             # Emit infographic data as a separate event
@@ -800,12 +875,36 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
                     "aggregate_rankings": aggregate_rankings,
                     "grounding_scores": grounding_scores,
                     "evidence": evidence_bundle,
+                    "infographic": infographic_data,
                 },
             )
 
             # Emit cost summary before completion
             cost_summary = cost_tracker.compute_summary()
             yield f"data: {json.dumps({'type': 'cost_summary', 'data': cost_summary})}\n\n"
+
+            # ── Agent Team Analysis ── run all 6 agents in parallel ──
+            try:
+                agent_team_result = await run_agent_team(
+                    user_query=augmented_content,
+                    stage1_results=stage1_results,
+                    stage2_results=stage2_results,
+                    stage3_result=stage3_result,
+                    aggregate_rankings=aggregate_rankings,
+                    grounding_scores=grounding_scores,
+                    evidence_bundle=evidence_bundle,
+                    cost_summary=cost_summary,
+                )
+                yield f"data: {json.dumps({'type': 'agent_team_complete', 'data': agent_team_result})}\n\n"
+                # Persist agent team data so reloaded conversations retain it
+                try:
+                    storage.update_last_message_metadata(
+                        conversation_id, {"agent_team": agent_team_result}
+                    )
+                except Exception:
+                    logger.debug("Failed to persist agent_team metadata")
+            except Exception as e:
+                logger.warning(f"[AgentTeam] Non-fatal error: {e}")
 
             # ── Post-Stage 3 Orchestrator Agent: learning decision ──
             # overall_score is 0–100 from grounding.py; orchestrator expects 0–1

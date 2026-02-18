@@ -299,7 +299,7 @@
 .pharma-bar-label {
   font-size: 11px;
   color: var(--text-secondary);
-  min-width: 80px;
+  min-width: 90px;
 }
 
 .pharma-bar-track {
@@ -329,4 +329,70 @@
   color: var(--text-muted, #888);
   margin-top: 4px;
   display: block;
+}
+
+/* ── Light-theme: GroundingScore overrides ──────────────────────── */
+[data-theme="light"] .pharma-bar-track {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* ── Context Awareness (Catastrophic Forgetting) ───────────────── */
+
+.grounding-context-awareness {
+  margin-top: 16px;
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  padding-top: 12px;
+}
+
+.grounding-context-awareness h5 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 4px;
+}
+
+.ca-subtitle {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+}
+
+.ca-model-block {
+  margin-bottom: 12px;
+}
+
+.ca-header-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.ca-score {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: monospace;
+}
+
+.ca-bar-track {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 2px;
+}
+
+.ca-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease-out;
+}
+
+[data-theme="light"] .ca-bar-track {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .grounding-context-awareness {
+  border-top-color: rgba(0, 0, 0, 0.08);
 }

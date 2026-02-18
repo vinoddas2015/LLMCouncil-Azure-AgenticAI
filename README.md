@@ -75,6 +75,18 @@ Pharma-grade evaluation in all 3 stages using binary classification metrics:
 - **Precision** = TP / (TP + FP) — accuracy of stated claims  
 - **Recall** = TP / (TP + FN) — completeness of coverage
 
+### Accessibility & Theming (WCAG 3.0)
+- **WCAG 3.0 (Silver) Compliance** — Colour palette verified with APCA (Advanced Perceptual Contrast Algorithm): Lc ≥ 90 body text, Lc ≥ 75 large text, Lc ≥ 60 sub-text, Lc ≥ 45 non-text UI/focus rings
+- **Day / Night Mode Toggle** — Accessible `role="switch"` toggle in the sidebar, persisted to `localStorage`, respects `prefers-color-scheme` OS setting
+- **Dual Theme System** — Full dark (Night) and light (Day) CSS custom property palettes with smooth transitions
+- **CVD-Safe Palette** — Colour choices distinguishable under protanopia, deuteranopia, and tritanopia
+- **Keyboard Navigation** — All interactive elements operable via keyboard; visible `:focus-visible` rings; skip-to-content link
+- **ARIA Landmarks** — `<nav>`, `<main>`, `<aside>`, `role="region"` for emergency controls; `role="dialog"` for modals; `role="listbox"`/`role="option"` for conversation list
+- **Reduced Motion** — `prefers-reduced-motion: reduce` disables all animations
+- **High Contrast** — `forced-colors: active` media query for Windows High Contrast mode
+- **Minimum Target Size** — 24 × 24 CSS px minimum on all interactive elements (WCAG 2.5.8)
+- **89 Automated Accessibility Tests** — Reusable Vitest suite covering APCA contrast, CSS variable completeness, ARIA semantics, landmark structure, heading hierarchy, keyboard interaction
+
 ### Enterprise Capabilities
 - **Self-Healing Resilience** — Circuit breakers, exponential backoff retries, fallback chains, quorum enforcement, global kill switch
 - **Grounding Score** — 5-rubric evaluation (Relevancy 25%, Faithfulness 25%, Output Quality 20%, Context Recall 15%, Consensus 15%) with hybrid Verbalized + Synthetic scoring
@@ -296,6 +308,7 @@ See [deploy/DEPLOY.md](deploy/DEPLOY.md) for detailed guides covering:
 
 ## Testing
 
+### Backend Tests
 ```bash
 # Activate virtual environment
 .\myenv\Scripts\Activate.ps1
@@ -307,7 +320,30 @@ python -m pytest tests/test_memory_pipeline.py -v
 python -m pytest tests/ -v --tb=short
 ```
 
-Test coverage includes: storage CRUD, semantic/episodic/procedural memory operations, MemoryManager facade, orchestrator agents, end-to-end pipeline simulation, and backend swap verification.
+Backend test coverage: storage CRUD, semantic/episodic/procedural memory operations, MemoryManager facade, orchestrator agents, end-to-end pipeline simulation, and backend swap verification.
+
+### Frontend Accessibility Tests (WCAG 3.0)
+```bash
+cd frontend
+
+# Run all 89 accessibility tests
+npm test
+
+# Verbose output
+npm run test:a11y
+
+# Watch mode during development
+npm run test:watch
+```
+
+| Test Suite | Tests | Coverage |
+|---|---|---|
+| `wcag3-contrast.test.js` | 17 | APCA contrast verification for both Night & Day palettes |
+| `theme-vars.test.js` | 37 | CSS variable completeness, reduced-motion, forced-colors, focus-visible |
+| `theme-toggle.test.jsx` | 10 | ARIA switch role, keyboard ops, localStorage persistence |
+| `app-a11y.test.jsx` | 9 | Landmarks, skip-nav, accessible names, image alts, heading order |
+| `sidebar-a11y.test.jsx` | 10 | Listbox/option, keyboard nav, menu semantics, empty state |
+| `settings-a11y.test.jsx` | 6 | Dialog role, aria-modal, labelledby, close button |
 
 ---
 
@@ -349,7 +385,18 @@ LLMCouncilMGA/
 │           ├── KillSwitch.jsx      # Emergency stop button
 │           ├── EnhancePrompt.jsx   # Prompt enhancement UI
 │           ├── Settings.jsx        # Model configuration
-│           └── Sidebar.jsx         # Conversation list
+│           ├── Sidebar.jsx         # Conversation list
+│           ├── ThemeToggle.jsx     # Day/Night mode toggle (WCAG 3.0)
+│           └── ThemeToggle.css     # Toggle animation & a11y styles
+│       ├── ThemeContext.jsx        # Theme provider (localStorage + OS pref)
+│       └── __tests__/              # 89 WCAG 3.0 accessibility tests
+│           ├── a11y-utils.js       # Reusable APCA, ARIA, landmark helpers
+│           ├── wcag3-contrast.test.js
+│           ├── theme-vars.test.js
+│           ├── theme-toggle.test.jsx
+│           ├── app-a11y.test.jsx
+│           ├── sidebar-a11y.test.jsx
+│           └── settings-a11y.test.jsx
 ├── tests/                          # Test suite
 │   └── test_memory_pipeline.py     # 42 memory pipeline tests
 ├── deploy/                         # Deployment guides
@@ -374,7 +421,8 @@ LLMCouncilMGA/
 | **Streaming** | Server-Sent Events (SSE) | — |
 | **Evidence APIs** | OpenFDA, ClinicalTrials.gov, PubMed, arXiv, Google Patents, Wikipedia, ORCID | Public REST |
 | **Storage** | JSON files (pluggable: Redis, DynamoDB, CosmosDB) | — |
-| **Testing** | pytest, pytest-asyncio | 9.x, 1.x |
+| **Testing (Backend)** | pytest, pytest-asyncio | 9.x, 1.x |
+| **Testing (Frontend)** | Vitest, @testing-library/react, @testing-library/jest-dom, @testing-library/user-event | Latest |
 | **LLM Gateway** | Bayer myGenAssist | Enterprise |
 
 ---

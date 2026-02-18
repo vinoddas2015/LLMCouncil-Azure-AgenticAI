@@ -4,6 +4,13 @@ import './Stage3.css';
 /**
  * Convert citation tags like [FDA-L1] in markdown to clickable links
  * using the evidence bundle from the skills module.
+ *
+ * Multi-tier linkification:
+ *   1. Explicit citation tags: [FDA-L1], [CT-2], [PM-3]
+ *   2. Identifier-based: PubChem CID, DrugBank DB, NCT, PMID, DOI, ChEMBL, UniProt
+ *   3. Known source names: PubMed, DailyMed, ClinicalTrials.gov, etc.
+ *   4. Drug + DailyMed patterns
+ *   5. Bare URLs
  */
 function linkifyCitations(text, citations) {
   if (!text) return text;
@@ -27,48 +34,123 @@ function linkifyCitations(text, citations) {
     });
   }
 
-  // 2. Auto-linkify known reference sources mentioned in prose
-  //    "available at DailyMed" → clickable link to DailyMed
+  // 2. Identifier-based auto-linkification (scientific databases)
+  //    These fire even when the LLM writes prose references instead of tags
+
+  // PubChem CID → https://pubchem.ncbi.nlm.nih.gov/compound/{CID}
+  result = result.replace(
+    /(?<!\[)(?<!\()PubChem\s+CID\s+(\d+)/gi,
+    (match, cid) => `[PubChem CID ${cid}](https://pubchem.ncbi.nlm.nih.gov/compound/${cid})`
+  );
+
+  // DrugBank DB → https://go.drugbank.com/drugs/{ID}
+  result = result.replace(
+    /(?<!\[)(?<!\()DrugBank\s+(DB\d+)/gi,
+    (match, id) => `[DrugBank ${id}](https://go.drugbank.com/drugs/${id})`
+  );
+
+  // NCT numbers → https://clinicaltrials.gov/study/{NCT}
+  result = result.replace(
+    /(?<!\[)(?<!\()\b(NCT\d{6,})\b/g,
+    (match, nct) => `[${nct}](https://clinicaltrials.gov/study/${nct})`
+  );
+
+  // PMID → https://pubmed.ncbi.nlm.nih.gov/{PMID}
+  result = result.replace(
+    /(?<!\[)(?<!\()PMID[:\s]+(\d+)/gi,
+    (match, pmid) => `[PMID ${pmid}](https://pubmed.ncbi.nlm.nih.gov/${pmid}/)`
+  );
+
+  // DOI → https://doi.org/{DOI}
+  result = result.replace(
+    /(?<!\[)(?<!\()(?<!")doi[:\s]+(10\.\d{4,}\/[^\s,;)]+)/gi,
+    (match, doi) => `[doi:${doi}](https://doi.org/${doi})`
+  );
+
+  // ChEMBL compound → https://www.ebi.ac.uk/chembl/compound_report_card/{ID}
+  result = result.replace(
+    /(?<!\[)(?<!\()\b(CHEMBL\d+)\b/gi,
+    (match, id) => `[${id}](https://www.ebi.ac.uk/chembl/compound_report_card/${id}/)`
+  );
+
+  // UniProt → https://www.uniprot.org/uniprot/{ID}
+  result = result.replace(
+    /(?<!\[)(?<!\()UniProt[:\s]+([A-Z][A-Z0-9]{4,9})\b/g,
+    (match, id) => `[UniProt ${id}](https://www.uniprot.org/uniprot/${id})`
+  );
+
+  // CAS number (link to Common Chemistry)
+  result = result.replace(
+    /(?<!\[)(?<!\()CAS[:\s#]+(\d{2,7}-\d{2}-\d)/g,
+    (match, cas) => `[CAS ${cas}](https://commonchemistry.cas.org/detail?cas_rn=${cas})`
+  );
+
+  // FDA label / prescribing information → DailyMed search
+  result = result.replace(
+    /(?<!\[)(?<!\()FDA\s+(?:Nubeqa|[\w]+)®?\s*(?:prescribing\s+information|label)/gi,
+    (match) => {
+      const drugMatch = match.match(/FDA\s+([\w]+)®?/i);
+      const drug = drugMatch ? drugMatch[1] : '';
+      return `[${match}](https://dailymed.nlm.nih.gov/dailymed/search.cfm?labeltype=all&query=${encodeURIComponent(drug)})`;
+    }
+  );
+
+  // 3. Auto-linkify known reference sources mentioned in prose
   const knownSources = [
     {
-      pattern: /(?:(?:FDA\s+label|prescribing\s+information|drug\s+label|label)\s+)?(?:available\s+(?:at|on|from|via)\s+)?(DailyMed)/gi,
+      pattern: /(?<!\[)(?<!\()((?:FDA\s+label|prescribing\s+information|drug\s+label|label)\s+)?(?:available\s+(?:at|on|from|via)\s+)?(DailyMed)/gi,
       url: 'https://dailymed.nlm.nih.gov/dailymed/',
       label: 'DailyMed',
     },
     {
-      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(PubMed)/gi,
+      pattern: /(?<!\[)(?<!\()(?:available\s+(?:at|on|from|via)\s+|(?:see|from|via|on)\s+)?(PubMed)(?!\s+CID)/gi,
       url: 'https://pubmed.ncbi.nlm.nih.gov/',
       label: 'PubMed',
     },
     {
-      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(ClinicalTrials\.gov)/gi,
+      pattern: /(?<!\[)(?<!\()(?:available\s+(?:at|on|from|via)\s+|(?:see|from|via|on)\s+)?(ClinicalTrials\.gov)/gi,
       url: 'https://clinicaltrials.gov/',
       label: 'ClinicalTrials.gov',
     },
     {
-      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(FDA\.gov)/gi,
+      pattern: /(?<!\[)(?<!\()(?:available\s+(?:at|on|from|via)\s+|(?:see|from|via|on)\s+)?(FDA\.gov)/gi,
       url: 'https://www.fda.gov/',
       label: 'FDA.gov',
     },
     {
-      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(DrugBank)/gi,
+      pattern: /(?<!\[)(?<!\()(?:available\s+(?:at|on|from|via)\s+|(?:see|from|via|on)\s+)?(DrugBank)(?!\s+DB)/gi,
       url: 'https://go.drugbank.com/',
       label: 'DrugBank',
     },
     {
-      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(Semantic\s+Scholar)/gi,
+      pattern: /(?<!\[)(?<!\()(?:available\s+(?:at|on|from|via)\s+|(?:see|from|via|on)\s+)?(Semantic\s+Scholar)/gi,
       url: 'https://www.semanticscholar.org/',
       label: 'Semantic Scholar',
     },
     {
-      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(CrossRef)/gi,
+      pattern: /(?<!\[)(?<!\()(?:available\s+(?:at|on|from|via)\s+|(?:see|from|via|on)\s+)?(CrossRef)/gi,
       url: 'https://www.crossref.org/',
       label: 'CrossRef',
     },
     {
-      pattern: /(?:available\s+(?:at|on|from|via)\s+)?(Europe\s+PMC)/gi,
+      pattern: /(?<!\[)(?<!\()(?:available\s+(?:at|on|from|via)\s+|(?:see|from|via|on)\s+)?(Europe\s+PMC)/gi,
       url: 'https://europepmc.org/',
       label: 'Europe PMC',
+    },
+    {
+      pattern: /(?<!\[)(?<!\()(?:available\s+(?:at|on|from|via)\s+|(?:see|from|via|on)\s+)?(PubChem)(?!\s+CID)/gi,
+      url: 'https://pubchem.ncbi.nlm.nih.gov/',
+      label: 'PubChem',
+    },
+    {
+      pattern: /(?<!\[)(?<!\()(?:available\s+(?:at|on|from|via)\s+|(?:see|from|via|on)\s+)?(EMA|European\s+Medicines\s+Agency)/gi,
+      url: 'https://www.ema.europa.eu/',
+      label: 'EMA',
+    },
+    {
+      pattern: /(?<!\[)(?<!\()(?:available\s+(?:at|on|from|via)\s+|(?:see|from|via|on)\s+)?(WHO)/gi,
+      url: 'https://www.who.int/',
+      label: 'WHO',
     },
   ];
 
@@ -108,6 +190,20 @@ function linkifyCitations(text, citations) {
   result = result.replace(
     /(?<!\]\()(?<!\()(?<!")(https?:\/\/[^\s)<>"]+)/g,
     (url) => `[${url}](${url})`
+  );
+
+  // 6. Safety-net: linkify italic article titles in numbered reference lists
+  //    Catches entries like: "1. **Trial:** Author et al. *Article Title.* Journal. 2024"
+  //    Only fires when the backend enrichment hasn't already created a link.
+  result = result.replace(
+    /^(\s*\d+\.\s+.+?)(?<!\*)\*(?!\*)([^*\n]{15,})\*(?!\*)(\.?\s*)/gm,
+    (match, prefix, title, suffix) => {
+      // Skip if already linkified (markdown link around the title)
+      if (/\]\(https?:/.test(match)) return match;
+      const clean = title.replace(/\.$/, '').trim();
+      const url = `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(clean)}`;
+      return `${prefix}[*${title}*](${url})${suffix}`;
+    }
   );
 
   return result;

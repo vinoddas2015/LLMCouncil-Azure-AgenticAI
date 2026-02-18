@@ -459,7 +459,47 @@ Your task as Chairman is to synthesize the above into a single, comprehensive, a
    - process_steps: Only include if the answer describes a mechanism, pathway, protocol, or pipeline.
    - highlights: Always include 2-4 key takeaways from the answer.
    - Keep values concise (under 30 chars each).
-{f'10. Consider the context from the previous conversation.' if context else ''}
+10. VALUE PROPOSITION MODE: If the user's question asks for a value proposition, competitive positioning, messaging framework, or brand strategy for a pharmaceutical product, structure your answer using the following template:
+   - **TITLE**: Product name and therapeutic area (e.g. "Acoramidis — ATTR Cardiomyopathy Value Proposition")
+   - **CHALLENGE**: Describe the current unmet medical need, disease burden, limitations of existing treatments, and why patients/HCPs need a new solution. Use evidence from council members and citations.
+   - **SOLUTION**: Articulate the product's mechanism of action, clinical differentiation, key efficacy data (trial names, endpoints, hazard ratios), and what makes it unique vs. standard of care.
+   - **OUTCOME**: Present measurable clinical benefits (survival, hospitalization reduction, QoL), safety profile, and the transformative impact for patients and healthcare systems.
+   After the full VP text, generate the infographic JSON using type "value_proposition" instead of "summary":
+   ```infographic
+   {{
+     "title": "Product Name — Value Proposition",
+     "type": "value_proposition",
+     "sections": [
+       {{
+         "section_type": "challenge",
+         "title": "The Challenge",
+         "content": "2-3 sentence summary of the unmet need",
+         "bullets": ["Key challenge point 1", "Key challenge point 2", "Key challenge point 3"]
+       }},
+       {{
+         "section_type": "solution",
+         "title": "The Solution",
+         "content": "2-3 sentence summary of the product approach",
+         "bullets": ["Differentiation point 1", "Efficacy data point", "Mechanism of action"]
+       }},
+       {{
+         "section_type": "outcome",
+         "title": "The Outcome",
+         "content": "2-3 sentence summary of clinical impact",
+         "bullets": ["Clinical benefit 1", "Safety profile", "Patient impact"]
+       }}
+     ],
+     "key_metrics": [
+       {{"label": "Metric", "value": "Value", "icon": "emoji"}},
+       ...max 6 metrics
+     ],
+     "highlights": [
+       {{"text": "Key takeaway", "type": "success|warning|info|danger"}},
+       ...max 4 highlights
+     ]
+   }}
+   ```
+{f'11. Consider the context from the previous conversation.' if context else ''}
 
 Provide a clear, well-reasoned final answer that represents the council's collective wisdom:"""
 

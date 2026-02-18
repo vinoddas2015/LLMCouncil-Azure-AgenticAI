@@ -1,16 +1,41 @@
-# React + Vite
+# LLM Council MGA — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + Vite 7 frontend for the LLM Council multi-model deliberation platform.
 
-Currently, two official plugins are available:
+## Quick Start
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+```bash
+npm install
+npm run dev          # http://localhost:5173
+```
 
-## React Compiler
+## Architecture
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **ThemeContext.jsx** — Day/Night mode provider (`localStorage` + `prefers-color-scheme`)
+- **App.jsx** — Main shell, SSE handler, ARIA landmarks (`<nav>`, `<main>`, `<aside>`)
+- **components/** — 18 UI components with per-component CSS
+- **__tests__/** — 89 WCAG 3.0 accessibility tests (reusable via `a11y-utils.js`)
 
-## Expanding the ESLint configuration
+## Accessibility (WCAG 3.0)
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Contrast verified with the **APCA** algorithm (Lc ≥ 90 body text, ≥ 75 large text, ≥ 45 non-text). Full dual-theme system (Day/Night), keyboard navigation, ARIA landmarks, dialog/listbox/menu patterns, skip-to-content, reduced motion, high contrast mode, CVD-safe palette, and 24×24 px minimum target sizes.
+
+## Testing
+
+```bash
+npm test             # Run all 89 a11y tests
+npm run test:a11y    # Verbose reporter
+npm run test:watch   # Watch mode
+```
+
+## Scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm run dev` | Start Vite dev server (port 5173) |
+| `npm run build` | Production build → `dist/` |
+| `npm run preview` | Preview production build |
+| `npm run lint` | ESLint |
+| `npm test` | Vitest — run all tests |
+| `npm run test:a11y` | Vitest — verbose accessibility tests |
+| `npm run test:watch` | Vitest — watch mode |

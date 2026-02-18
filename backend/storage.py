@@ -170,6 +170,32 @@ def add_assistant_message(
     save_conversation(conversation)
 
 
+def update_last_message_metadata(
+    conversation_id: str,
+    extra_metadata: Dict[str, Any],
+):
+    """
+    Merge *extra_metadata* into the last assistant message's metadata.
+
+    Used to append late-arriving data (e.g. agent_team results) that
+    become available after the initial save.
+    """
+    conversation = get_conversation(conversation_id)
+    if conversation is None:
+        return
+
+    msgs = conversation.get("messages", [])
+    # Walk backwards to find the latest assistant message
+    for msg in reversed(msgs):
+        if msg.get("role") == "assistant":
+            if msg.get("metadata") is None:
+                msg["metadata"] = {}
+            msg["metadata"].update(extra_metadata)
+            break
+
+    save_conversation(conversation)
+
+
 def update_conversation_title(conversation_id: str, title: str):
     """
     Update the title of a conversation.

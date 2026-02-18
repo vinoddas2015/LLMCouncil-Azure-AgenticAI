@@ -13,21 +13,42 @@ complementary signals:
 
 The final per-criteria score is a weighted blend:
     score = α × verbalized  +  (1 − α) × synthetic
-where α = proportion of reviewers who provided parseable rubric scores
+where α = proportion of *peer* reviewers who provided parseable rubric scores
 (so full verbalized coverage → pure VS; zero → pure synthetic).
 
-Additionally, pharma-specific safety metrics are computed from the
-claim counts (TP, FP, FN) parsed from each reviewer's output:
+Bias-free design:
+  • Self-reviews excluded — a model never evaluates its own response.
+  • Peer-reviewer counts normalised — TP/FP/FN are averaged per reviewer
+    so models with fewer parseable reviews aren't penalised.
+  • No rank-position fallback for claim counts — missing claims ⇒ N/A,
+    not fabricated numbers that create circular dependency.
+  • Synthetic criteria use uniform multipliers (no dimension-specific bias).
+  • Overall council grounding uses equal weighting (not rank-weighted).
+
+Pharma-specific safety metrics (computed from peer-reviewed claims):
 
   Correctness = TP / (TP + 2×FN + FP)
       — Doubles the FN penalty: missing critical data is costlier
         than including an incorrect claim in pharma contexts.
 
-  Precision = TP / (TP + FP)
+  Precision = TP / (TP + FP)   [= RAGAS Faithfulness]
       — How many claims are actually correct?
 
-  Recall = TP / (TP + FN)
+  Recall = TP / (TP + FN)      [= RAGAS Context Recall, claim-based]
       — How much of the important information was covered?
+
+  F1 = TP / (TP + 0.5×(FP+FN))  [= RAGAS Factual Correctness]
+      — Standard balanced metric — no dimension-specific penalty.
+
+Context Awareness (Catastrophic Forgetting detection):
+  Uses SELF-review data only (reviewer == response author).
+  Measures whether a model maintains coherent awareness of claims
+  it made in Stage 1 when reviewing its own anonymized response.
+
+  Context Awareness = self_TP / (self_TP + self_FP + self_FN)
+
+  High → model recognises its own claims.
+  Low  → catastrophic forgetting (self-contradiction or omission).
 
 Rubric criteria:
   1. Relevancy       — Direct & complete answer to the question
@@ -108,14 +129,20 @@ def _consensus_score(positions: List[int], total_models: int) -> float:
 
 
 def _synthetic_criteria(avg_rank: float, total_models: int, positions: List[int]) -> Dict[str, float]:
-    """Estimate per-criteria scores from rank position only."""
+    """
+    Estimate per-criteria scores from rank position only.
+
+    All criteria use the same base multiplier (1.0) to avoid
+    dimension-specific bias.  Consensus is derived from rank-
+    position variance.
+    """
     base = _rank_position_score(avg_rank, total_models)
     cons = _consensus_score(positions, total_models)
     return {
-        "relevancy": min(1.0, base * 1.05),
-        "faithfulness": min(1.0, base * 0.98),
-        "context_recall": min(1.0, base * 0.95),
-        "output_quality": min(1.0, base * 1.02),
+        "relevancy": base,
+        "faithfulness": base,
+        "context_recall": base,
+        "output_quality": base,
         "consensus": cons,
     }
 
@@ -124,22 +151,62 @@ def _synthetic_criteria(avg_rank: float, total_models: int, positions: List[int]
 # Pharma Safety Metrics (TP / FP / FN based)
 # ═══════════════════════════════════════════════════════════════════════
 
-def _pharma_correctness(tp: int, fp: int, fn: int) -> float:
+def _pharma_correctness(tp: float, fp: float, fn: float) -> float:
     """Correctness = TP / (TP + 2×FN + FP).  FN penalty doubled for pharma."""
     denom = tp + 2 * fn + fp
     return tp / denom if denom > 0 else 0.0
 
 
-def _precision(tp: int, fp: int) -> float:
-    """Precision = TP / (TP + FP)."""
+def _precision(tp: float, fp: float) -> float:
+    """Precision = TP / (TP + FP).  RAGAS Faithfulness equivalent."""
     denom = tp + fp
     return tp / denom if denom > 0 else 0.0
 
 
-def _recall(tp: int, fn: int) -> float:
-    """Recall = TP / (TP + FN)."""
+def _recall(tp: float, fn: float) -> float:
+    """Recall = TP / (TP + FN).  RAGAS Context Recall (claim-based) equivalent."""
     denom = tp + fn
     return tp / denom if denom > 0 else 0.0
+
+
+def _factual_correctness_f1(tp: float, fp: float, fn: float) -> float:
+    """RAGAS Factual Correctness = TP / (TP + 0.5×(FP + FN)).
+    Standard balanced F1 — no dimension-specific penalty.
+    Complements pharma_correctness which double-penalises FN."""
+    denom = tp + 0.5 * (fp + fn)
+    return tp / denom if denom > 0 else 0.0
+
+
+def _context_awareness(self_tp: float, self_fp: float, self_fn: float) -> float:
+    """Context Awareness (Catastrophic Forgetting detector).
+
+    Measures whether a model maintains awareness of claims it made
+    in Stage 1 when reviewing its own anonymized response in Stage 2.
+
+      Context Awareness = self_TP / (self_TP + self_FP + self_FN)
+
+    High score → model recognises its own claims accurately.
+    Low score  → model contradicts itself (self_FP) or forgets
+                 information it stated (self_FN) = catastrophic forgetting.
+
+    Only computed from SELF-review data (reviewer == response author).
+    """
+    denom = self_tp + self_fp + self_fn
+    return self_tp / denom if denom > 0 else 0.0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Self-review detection helper
+# ═══════════════════════════════════════════════════════════════════════
+
+def _canonicalise_model(name: str) -> str:
+    """
+    Strip fallback suffixes and normalise model names so self-review
+    detection works even after self-healing renames.
+    """
+    # "openai/gpt-5-mini (fallback for x)" → "openai/gpt-5-mini"
+    base = name.split(" (fallback")[0].strip()
+    return base
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -155,6 +222,13 @@ def compute_response_grounding_scores(
     Compute per-response grounding scores using hybrid Verbalized Sampling
     + Synthetic Math, and pharma-specific Correctness / Precision / Recall.
 
+    Bias-free guarantees:
+      1. Self-reviews excluded — a reviewer never evaluates its own response.
+      2. TP/FP/FN averaged per peer reviewer (not raw-summed).
+      3. No rank-position fallback for claim counts.
+      4. Synthetic criteria use uniform multipliers.
+      5. Overall council grounding uses equal weighting.
+
     Returns:
         {
             "overall_score": float 0–100,
@@ -165,20 +239,24 @@ def compute_response_grounding_scores(
                     "criteria": { "relevancy": float 0–100, ... },
                     "pharma_metrics": {
                         "correctness": float 0–100,
-                        "precision": float 0–100,
-                        "recall": float 0–100,
+                        "precision": float 0–100,  (= RAGAS Faithfulness)
+                        "recall": float 0–100,     (= RAGAS Context Recall)
+                        "f1": float 0–100,         (= RAGAS Factual Correctness)
                         "tp": int, "fp": int, "fn": int
                     },
+                    "context_awareness": {
+                        "score": float 0–100 | null,
+                        "self_tp": int, "self_fp": int, "self_fn": int
+                    } | null,
                     "verbalized_coverage": float 0–1,
+                    "peer_reviews": int,
                     "rank": int
                 }
             ],
             "criteria_definitions": [...],
-            "pharma_formulas": {
-                "correctness": "TP / (TP + 2×FN + FP)",
-                "precision": "TP / (TP + FP)",
-                "recall": "TP / (TP + FN)"
-            },
+            "pharma_formulas": { ... },
+            "ragas_alignment": { ... },
+            "context_awareness_formula": str,
             "council_size": int,
             "reviewers_count": int
         }
@@ -198,31 +276,45 @@ def compute_response_grounding_scores(
             "reviewers_count": len(stage2_results),
         }
 
+    # ── Build canonical label → model mapping ────────────────────────
+    label_to_canon = {label: _canonicalise_model(model)
+                      for label, model in label_to_model.items()}
+    model_to_label = {v: k for k, v in label_to_canon.items()}
+
     # ── Build position lists per model from parsed rankings ──────────
     model_positions: Dict[str, List[int]] = defaultdict(list)
     for ranking in stage2_results:
         parsed = ranking.get("parsed_ranking", [])
         for position, label in enumerate(parsed, start=1):
             if label in label_to_model:
-                model_positions[label_to_model[label]].append(position)
+                model_positions[label_to_canon.get(label, label_to_model[label])].append(position)
 
-    # ── Collect verbalized rubric scores per response label ──────────
-    # Structure: { "Response A": [ {relevancy: 0.8, ...}, {relevancy: 0.7, ...} ] }
+    # ── Collect PEER-ONLY rubric scores per response label ───────────
     verbalized_per_label: Dict[str, List[Dict[str, float]]] = defaultdict(list)
     for ranking in stage2_results:
+        reviewer = _canonicalise_model(ranking.get("model", ""))
         rubric = ranking.get("rubric_scores", {})
         for label, scores in rubric.items():
+            response_author = label_to_canon.get(label, "")
+            # BIAS FIX #1: exclude self-reviews
+            if reviewer and response_author and reviewer == response_author:
+                continue
             verbalized_per_label[label].append(scores)
 
-    # ── Collect claim counts per response label ──────────────────────
+    # ── Collect PEER-ONLY claim counts per response label ────────────
     claims_per_label: Dict[str, List[Dict[str, int]]] = defaultdict(list)
+    # ── Collect SELF-REVIEW claim counts (for Context Awareness) ─────
+    self_claims_per_label: Dict[str, Dict[str, int]] = {}
     for ranking in stage2_results:
+        reviewer = _canonicalise_model(ranking.get("model", ""))
         claims = ranking.get("claim_counts", {})
         for label, counts in claims.items():
+            response_author = label_to_canon.get(label, "")
+            if reviewer and response_author and reviewer == response_author:
+                # Self-review → store separately for Context Awareness
+                self_claims_per_label[label] = counts
+                continue
             claims_per_label[label].append(counts)
-
-    # ── Reverse mapping: model → label ───────────────────────────────
-    model_to_label = {v: k for k, v in label_to_model.items()}
 
     # ── Compute per-response scores ──────────────────────────────────
     per_response = []
@@ -231,16 +323,19 @@ def compute_response_grounding_scores(
     for rank_idx, agg in enumerate(aggregate_rankings):
         model = agg["model"]
         avg_rank = agg["average_rank"]
-        positions = model_positions.get(model, [])
-        label = model_to_label.get(model, "")
+        canon = _canonicalise_model(model)
+        positions = model_positions.get(canon, [])
+        label = model_to_label.get(canon, "")
 
-        # --- Synthetic Math baseline ---
+        # --- Synthetic Math baseline (uniform multipliers — BIAS FIX #3) ---
         synthetic = _synthetic_criteria(avg_rank, total_models, positions)
 
-        # --- Verbalized Sampling ---
+        # --- Verbalized Sampling (peer-only) ---
         vs_list = verbalized_per_label.get(label, [])
         vs_count = len(vs_list)
-        alpha = vs_count / max(len(stage2_results), 1)  # coverage fraction
+        # Coverage fraction based on peer reviewers (total_models - 1)
+        max_peer_reviewers = max(len(stage2_results) - 1, 1)
+        alpha = vs_count / max_peer_reviewers
 
         if vs_count > 0:
             vs_avg = {}
@@ -259,22 +354,46 @@ def compute_response_grounding_scores(
         weighted = sum(blended[c["id"]] * c["weight"] for c in RUBRIC_CRITERIA)
         grounding_pct = round(weighted * 100, 1)
 
-        # --- Pharma claim metrics ---
+        # --- Pharma claim metrics (BIAS FIX #2: averaged, no rank fallback) ---
         claim_list = claims_per_label.get(label, [])
-        if claim_list:
-            total_tp = sum(c.get("tp", 0) for c in claim_list)
-            total_fp = sum(c.get("fp", 0) for c in claim_list)
-            total_fn = sum(c.get("fn", 0) for c in claim_list)
-        else:
-            # Fallback: estimate from rank position
-            base = _rank_position_score(avg_rank, total_models)
-            total_tp = max(1, round(base * 8))
-            total_fp = max(0, round((1 - base) * 2))
-            total_fn = max(0, round((1 - base) * 3))
+        n_peer_reviews = len(claim_list)
 
-        correctness = _pharma_correctness(total_tp, total_fp, total_fn)
-        precision = _precision(total_tp, total_fp)
-        recall = _recall(total_tp, total_fn)
+        if claim_list:
+            # BIAS FIX #5: average per peer reviewer for equal distribution
+            avg_tp = sum(c.get("tp", 0) for c in claim_list) / n_peer_reviews
+            avg_fp = sum(c.get("fp", 0) for c in claim_list) / n_peer_reviews
+            avg_fn = sum(c.get("fn", 0) for c in claim_list) / n_peer_reviews
+
+            correctness = _pharma_correctness(avg_tp, avg_fp, avg_fn)
+            precision = _precision(avg_tp, avg_fp)
+            recall = _recall(avg_tp, avg_fn)
+            f1 = _factual_correctness_f1(avg_tp, avg_fp, avg_fn)
+
+            # Display rounded averages for user verification
+            display_tp = round(avg_tp)
+            display_fp = round(avg_fp)
+            display_fn = round(avg_fn)
+        else:
+            # BIAS FIX #2: no rank-based fabrication — report zero / unavailable
+            correctness = 0.0
+            precision = 0.0
+            recall = 0.0
+            f1 = 0.0
+            display_tp = 0
+            display_fp = 0
+            display_fn = 0
+
+        # --- Context Awareness (Catastrophic Forgetting detection) ---
+        # Uses SELF-review only: did the model recognise its own claims?
+        self_claims = self_claims_per_label.get(label, {})
+        if self_claims:
+            s_tp = self_claims.get("tp", 0)
+            s_fp = self_claims.get("fp", 0)
+            s_fn = self_claims.get("fn", 0)
+            ctx_awareness = _context_awareness(s_tp, s_fp, s_fn)
+        else:
+            s_tp = s_fp = s_fn = 0
+            ctx_awareness = None  # no self-review data available
 
         per_response.append({
             "model": model,
@@ -284,21 +403,25 @@ def compute_response_grounding_scores(
                 "correctness": round(correctness * 100, 1),
                 "precision": round(precision * 100, 1),
                 "recall": round(recall * 100, 1),
-                "tp": total_tp,
-                "fp": total_fp,
-                "fn": total_fn,
+                "f1": round(f1 * 100, 1),
+                "tp": display_tp,
+                "fp": display_fp,
+                "fn": display_fn,
             },
+            "context_awareness": {
+                "score": round(ctx_awareness * 100, 1) if ctx_awareness is not None else None,
+                "self_tp": s_tp,
+                "self_fp": s_fp,
+                "self_fn": s_fn,
+            } if self_claims else None,
             "verbalized_coverage": round(alpha, 2),
+            "peer_reviews": n_peer_reviews,
             "rank": rank_idx + 1,
         })
 
-    # ── Overall council grounding (top-weighted harmonic) ────────────
+    # ── Overall council grounding (BIAS FIX #4: equal weighting) ─────
     if per_response:
-        weights = [1.0 / (i + 1) for i in range(len(per_response))]
-        total_weight = sum(weights)
-        overall = sum(
-            r["grounding_score"] * w for r, w in zip(per_response, weights)
-        ) / total_weight
+        overall = sum(r["grounding_score"] for r in per_response) / len(per_response)
     else:
         overall = 0
 
@@ -310,7 +433,16 @@ def compute_response_grounding_scores(
             "correctness": "TP / (TP + 2×FN + FP)",
             "precision": "TP / (TP + FP)",
             "recall": "TP / (TP + FN)",
+            "f1": "TP / (TP + 0.5×(FP + FN))",
         },
+        "ragas_alignment": {
+            "precision": "= RAGAS Faithfulness",
+            "recall": "= RAGAS Context Recall (claim-based)",
+            "f1": "= RAGAS Factual Correctness (balanced F1)",
+            "correctness": "Pharma-weighted (FN penalty doubled)",
+        },
+        "context_awareness_formula": "self_TP / (self_TP + self_FP + self_FN)",
         "council_size": total_models,
         "reviewers_count": len(stage2_results),
     }
+

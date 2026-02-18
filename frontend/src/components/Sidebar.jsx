@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import ThemeToggle from './ThemeToggle';
 import './Sidebar.css';
 
 export default function Sidebar({
@@ -34,30 +35,36 @@ export default function Sidebar({
   }, []);
 
   return (
-    <div className="sidebar">
+    <div className="sidebar" role="navigation" aria-label="Conversations">
       <div className="sidebar-header">
         <div className="logo-container">
-          <img src="/Logo_Bayer.jpg" alt="Bayer" className="bayer-logo" />
+          <img src="/Logo_Bayer.jpg" alt="Bayer Logo" className="bayer-logo" />
           <h1>LLM Council</h1>
         </div>
         <div className="header-actions">
+          <ThemeToggle />
           <button 
             className="settings-btn" 
             onClick={onOpenSettings}
             title="Council Settings"
+            aria-label="Open council settings"
           >
             ⚙️
           </button>
         </div>
       </div>
 
-      <button className="new-conversation-btn" onClick={onNewConversation}>
+      <button
+        className="new-conversation-btn"
+        onClick={onNewConversation}
+        aria-label="Start a new conversation"
+      >
         + New Conversation
       </button>
 
-      <div className="conversation-list">
+      <div className="conversation-list" role="listbox" aria-label="Conversation history">
         {conversations.length === 0 ? (
-          <div className="no-conversations">No conversations yet</div>
+          <div className="no-conversations" role="status">No conversations yet</div>
         ) : (
           conversations.map((conv) => (
             <div
@@ -65,7 +72,16 @@ export default function Sidebar({
               className={`conversation-item ${
                 conv.id === currentConversationId ? 'active' : ''
               }`}
+              role="option"
+              aria-selected={conv.id === currentConversationId}
+              tabIndex={0}
               onClick={() => onSelectConversation(conv.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelectConversation(conv.id);
+                }
+              }}
               onContextMenu={(e) => handleContextMenu(e, conv.id)}
             >
               <div className="conversation-title">
@@ -76,6 +92,9 @@ export default function Sidebar({
               </div>
               <button 
                 className="conv-menu-btn"
+                aria-label={`Actions for ${conv.title || 'conversation'}`}
+                aria-expanded={showMenu === conv.id}
+                aria-haspopup="menu"
                 onClick={(e) => {
                   e.stopPropagation();
                   setShowMenu(showMenu === conv.id ? null : conv.id);
@@ -84,12 +103,13 @@ export default function Sidebar({
                 ⋮
               </button>
               {showMenu === conv.id && (
-                <div className="conv-menu" onClick={(e) => e.stopPropagation()}>
-                  <button onClick={() => handleMenuAction('export', conv.id)}>
+                <div className="conv-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                  <button role="menuitem" onClick={() => handleMenuAction('export', conv.id)}>
                     📥 Export
                   </button>
                   <button 
                     className="delete-action"
+                    role="menuitem"
                     onClick={() => handleMenuAction('delete', conv.id)}
                   >
                     🗑️ Delete

@@ -33,7 +33,12 @@ Thank you for your interest in contributing to the LLM Council MGA platform.
 
 5. **Run tests**
    ```bash
+   # Backend tests
    python -m pytest tests/ -v
+
+   # Frontend accessibility tests (WCAG 3.0)
+   cd frontend
+   npm test
    ```
 
 ## Development Workflow
@@ -57,7 +62,8 @@ test: add orchestrator agent edge case tests
 1. Create a feature branch from `main`
 2. Make your changes with appropriate tests
 3. Ensure all tests pass: `python -m pytest tests/ -v`
-4. Ensure the frontend builds: `cd frontend && npm run build`
+4. Ensure frontend accessibility tests pass: `cd frontend && npm test`
+5. Ensure the frontend builds: `cd frontend && npm run build`
 5. Update `ARCHITECTURE.md` if you change system behavior
 6. Open a PR with a clear description of changes
 
@@ -79,7 +85,9 @@ LLMCouncilMGA/
 │   └── token_tracking.py   # Token/cost burndown tracking
 ├── frontend/               # React + Vite frontend
 │   └── src/
-│       ├── components/     # UI components
+│       ├── components/     # UI components (incl. ThemeToggle)
+│       ├── ThemeContext.jsx # Day/Night theme provider
+│       ├── __tests__/      # 89 WCAG 3.0 accessibility tests
 │       └── api.js          # Backend API client
 ├── tests/                  # Test suite
 ├── deploy/                 # Cloud deployment guides
@@ -98,8 +106,9 @@ LLMCouncilMGA/
 
 - **Python**: Type hints on all public functions, docstrings on classes/modules
 - **JavaScript/React**: Functional components with hooks, prop destructuring
-- **CSS**: Follow existing dark-theme variables (`--bg-primary`, `--accent-primary`, etc.)
-- **Testing**: Every new backend feature needs corresponding tests
+- **CSS**: Use CSS custom properties (`--bg-primary`, `--accent-primary`, etc.) — all colours must work in BOTH Day and Light themes; verify APCA Lc ≥ 45 for non-text and Lc ≥ 75 for text
+- **Accessibility**: Follow WCAG 3.0 — ARIA roles, keyboard operability, accessible names, focus indicators
+- **Testing**: Every new backend feature needs corresponding tests; new UI components need accessibility tests in `frontend/src/__tests__/`
 
 ## Questions / Suggestions?
 

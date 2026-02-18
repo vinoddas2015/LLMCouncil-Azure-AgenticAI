@@ -146,7 +146,7 @@ export default function GroundingScore({ groundingScores }) {
             <div className="grounding-pharma">
               <h5>Pharma Safety Metrics</h5>
               <p className="pharma-explainer">
-                Correctness penalises missing critical info (FN) twice as hard as inaccuracies (FP).
+                Peer-reviewed confusion matrix (self-reviews excluded). TP/FP/FN averaged per reviewer for equal distribution. Correctness penalises missing critical info (FN) twice as hard as inaccuracies (FP). F1 is the RAGAS-aligned balanced score.
               </p>
               {per_response.map((r, i) => {
                 const pm = r.pharma_metrics;
@@ -156,15 +156,51 @@ export default function GroundingScore({ groundingScores }) {
                   <div className="pharma-model-block" key={i}>
                     <span className="pharma-model-name">#{r.rank} {shortName}</span>
                     <div className="pharma-metrics-grid">
-                      <PharmaBar label="Correctness" value={pm.correctness} formula="TP/(TP+2×FN+FP)" />
-                      <PharmaBar label="Precision" value={pm.precision} formula="TP/(TP+FP)" />
-                      <PharmaBar label="Recall" value={pm.recall} formula="TP/(TP+FN)" />
+                      <PharmaBar label="Correctness" value={pm.correctness} formula="TP/(TP+2×FN+FP) — Pharma-weighted" />
+                      <PharmaBar label="F1 (RAGAS)" value={pm.f1} formula="TP/(TP+0.5×(FP+FN)) — RAGAS Factual Correctness" />
+                      <PharmaBar label="Precision" value={pm.precision} formula="TP/(TP+FP) — = RAGAS Faithfulness" />
+                      <PharmaBar label="Recall" value={pm.recall} formula="TP/(TP+FN) — = RAGAS Context Recall" />
                     </div>
                     <span className="pharma-counts">
                       TP {pm.tp} · FP {pm.fp} · FN {pm.fn}
+                      {r.peer_reviews != null && (
+                        <> · {r.peer_reviews} peer review{r.peer_reviews !== 1 ? 's' : ''}</>
+                      )}
                       {r.verbalized_coverage != null && (
                         <> · VS coverage {Math.round(r.verbalized_coverage * 100)}%</>
                       )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Context Awareness (Catastrophic Forgetting Detection) */}
+          {per_response && per_response.some(r => r.context_awareness) && (
+            <div className="grounding-context-awareness">
+              <h5>Context Awareness <span className="ca-subtitle">(Catastrophic Forgetting Detection)</span></h5>
+              <p className="pharma-explainer">
+                Self-review only: measures whether a model recognises its own claims when reviewing its anonymized response. Low score = forgetting or self-contradiction.
+              </p>
+              {per_response.map((r, i) => {
+                const ca = r.context_awareness;
+                if (!ca || ca.score == null) return null;
+                const shortName = (r.model || '').split('/')[1] || r.model;
+                const caPct = Math.round(ca.score);
+                const caColor = caPct >= 80 ? 'var(--success)' : caPct >= 60 ? 'var(--warning)' : 'var(--error)';
+                const caLabel = caPct >= 80 ? 'Strong' : caPct >= 60 ? 'Moderate' : 'Weak (Forgetting)';
+                return (
+                  <div className="ca-model-block" key={i}>
+                    <div className="ca-header-row">
+                      <span className="pharma-model-name">#{r.rank} {shortName}</span>
+                      <span className="ca-score" style={{ color: caColor }}>{caPct}% — {caLabel}</span>
+                    </div>
+                    <div className="ca-bar-track">
+                      <div className="ca-bar-fill" style={{ width: `${caPct}%`, background: caColor }} />
+                    </div>
+                    <span className="pharma-counts">
+                      self-TP {ca.self_tp} · self-FP {ca.self_fp} · self-FN {ca.self_fn}
                     </span>
                   </div>
                 );

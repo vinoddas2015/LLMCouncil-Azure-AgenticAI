@@ -36,6 +36,8 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime
 
+from .reranker import rerank_citations
+
 logger = logging.getLogger("skills")
 
 # ── Timeouts & Limits ────────────────────────────────────────────
@@ -1175,7 +1177,7 @@ async def run_evidence_skills(
         bench_key = source_name.lower().replace(".", "").replace(" ", "_") + "_ms"
         benchmarks[bench_key] = round(elapsed, 1)
 
-    # Merge, deduplicate by URL, sort by relevance
+    # Merge and deduplicate by URL
     all_citations = []
     for c_list in results.values():
         all_citations.extend(c_list)
@@ -1187,7 +1189,27 @@ async def run_evidence_skills(
             seen_urls.add(c.url)
             unique.append(c)
 
-    unique.sort(key=lambda c: c.relevance, reverse=True)
+    # ── MedCPT Neural Reranking ────────────────────────────────────
+    # Replace static per-source relevance with query-aware medical
+    # cross-encoder scores from DeepMind MedCPT.
+    t_rerank = datetime.now()
+    reranker_used = False
+    try:
+        reranked = await rerank_citations(user_query, unique)
+        if reranked is not unique:          # reranker actually ran
+            reranker_used = True
+            unique = reranked
+            logger.info(f"[Skills] MedCPT reranking applied to {len(unique)} citations")
+        else:
+            # Fallback: keep static sort
+            unique.sort(key=lambda c: c.relevance, reverse=True)
+    except Exception as e:
+        logger.warning(f"[Skills] MedCPT reranking failed ({e}), using static sort")
+        unique.sort(key=lambda c: c.relevance, reverse=True)
+    rerank_ms = (datetime.now() - t_rerank).total_seconds() * 1000
+    benchmarks["medcpt_rerank_ms"] = round(rerank_ms, 1)
+
+    # Cap to citation limit
     cap = MAX_TOTAL_CITATIONS_WEB if web_search_enabled else MAX_TOTAL_CITATIONS
     top = unique[:cap]
 
@@ -1203,6 +1225,7 @@ async def run_evidence_skills(
     logger.info(
         f"[Skills] Found {len(unique)} citations from {len(skills_used)} sources "
         f"({', '.join(skills_used)}) in {total_ms:.0f}ms"
+        f"{' [MedCPT reranked]' if reranker_used else ' [static rank]'}"
         f"{' [WEB SEARCH ON]' if web_search_enabled else ''}"
     )
 
@@ -1211,6 +1234,11 @@ async def run_evidence_skills(
         "skills_used": skills_used,
         "total_found": len(unique),
         "web_search_active": web_search_enabled,
+        "reranker": {
+            "model": "deepmind/medcpt" if reranker_used else None,
+            "active": reranker_used,
+            "latency_ms": round(rerank_ms, 1),
+        },
         "benchmark": benchmarks,
     }
 

@@ -161,7 +161,7 @@ function MemoryCard({ memory, tier, expanded, onToggle, onLearn, onUnlearn, onDe
         </div>
         <div className="memory-card-title">
           {tier === 'semantic' && memory.topic}
-          {tier === 'episodic' && (memory.query || '').slice(0, 80)}
+          {tier === 'episodic' && (memory.query || '').slice(0, 200)}
           {tier === 'procedural' && memory.task_type}
         </div>
         <div className="memory-card-conf" style={{ color: confColor }}>
@@ -200,7 +200,7 @@ function MemoryCard({ memory, tier, expanded, onToggle, onLearn, onUnlearn, onDe
               </div>
               <div className="memory-field">
                 <strong>Decision preview:</strong>{' '}
-                {(memory.chairman_response_preview || '').slice(0, 300)}...
+                {(memory.chairman_response_preview || '').slice(0, 600)}...
               </div>
               {memory.aggregate_rankings && (
                 <div className="memory-field">

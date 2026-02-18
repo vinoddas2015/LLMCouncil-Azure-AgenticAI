@@ -12,6 +12,14 @@
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+/* Semantic wrappers stretch to fill layout slots */
+.app > nav,
+.app > main,
+.app > aside {
+  display: contents;
 }
 
 /* Skip navigation link for screen readers (WCAG 2.4.1) */
@@ -66,21 +74,21 @@
 
 /* ── Atlas-open layout adjustment ──
    When the 3D atlas panel is open, the chat interface shrinks
-   to make room for the 480 px right panel. */
+   to make room for the resizable right panel. */
 .app.atlas-open .chat-interface {
-  /* 280 px sidebar + 480 px atlas panel → chat fills the rest */
-  max-width: calc(100vw - 280px - 480px);
+  /* 280 px sidebar + dynamic atlas width → chat fills the rest */
+  max-width: calc(100vw - 280px - var(--atlas-width, 480px));
 }
 
 @media (max-width: 1400px) {
   .app.atlas-open .chat-interface {
-    max-width: calc(100vw - 240px - 380px);
+    max-width: calc(100vw - 240px - var(--atlas-width, 380px));
   }
 }
 
 @media (max-width: 1100px) {
   .app.atlas-open .chat-interface {
-    max-width: calc(100vw - 340px);
+    max-width: calc(100vw - 60px - var(--atlas-width, 340px));
   }
 }
 

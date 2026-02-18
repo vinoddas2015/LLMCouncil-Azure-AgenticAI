@@ -27,7 +27,7 @@ export default function EnhancePrompt({
       <div className="enhance-prompt-body">
         <h3 className="enhance-prompt-title">Enhance Prompt</h3>
         <p className="enhance-prompt-intro">
-          I understand your prompt <strong>"{originalPrompt.length > 80 ? originalPrompt.slice(0, 80) + '...' : originalPrompt}"</strong> and made an improved version of it. Feel free to edit it and improve to fit your needs.
+          I understand your prompt <strong>"{originalPrompt.length > 150 ? originalPrompt.slice(0, 150) + '...' : originalPrompt}"</strong> and made an improved version of it. Feel free to edit it and improve to fit your needs.
         </p>
 
         <div className="enhance-prompt-editor">

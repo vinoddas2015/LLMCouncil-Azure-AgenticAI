@@ -4,6 +4,13 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/__tests__/setup.js',
+    css: true,
+    include: ['src/__tests__/**/*.{test,spec}.{js,jsx}'],
+  },
   server: {
     // Proxy /api requests through Vite to the FastAPI backend.
     // This keeps all traffic on the same origin (localhost:5173),

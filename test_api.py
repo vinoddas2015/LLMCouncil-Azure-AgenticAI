@@ -15,7 +15,7 @@ load_dotenv()
 
 JWT = os.getenv('OPENROUTER_API_KEY')
 BAYER_API_BASE = 'https://chat.int.bayer.com/api/v2'
-USER_ID = 211
+USER_ID = int(os.getenv('BAYER_USER_ID', '0')) or None
 
 def test_api():
     """Test if API connection works."""

@@ -47,9 +47,32 @@
   color: #93c5fd;
 }
 
-.export-btn-jpg:hover:not(:disabled) {
-  border-color: rgba(52, 211, 153, 0.5);
-  color: #6ee7b7;
+.export-btn-pdf:hover:not(:disabled) {
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+}
+
+/* ── Light theme export buttons ─── */
+[data-theme="light"] .export-btn {
+  color: #475569;
+  border-color: rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .export-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.2);
+  color: #1e293b;
+}
+
+[data-theme="light"] .export-btn-png:hover:not(:disabled) {
+  border-color: rgba(37, 99, 235, 0.5);
+  color: #2563eb;
+}
+
+[data-theme="light"] .export-btn-pdf:hover:not(:disabled) {
+  border-color: rgba(220, 38, 38, 0.5);
+  color: #dc2626;
 }
 
 /* ═══════════════════════════════════════════════════════════════════

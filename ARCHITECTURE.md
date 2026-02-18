@@ -1,7 +1,7 @@
 ﻿# LLM Council MGA — System Architecture
 
-> **Version 3.0** | Bayer Pharmaceutical Division — myGenAssist  
-> Last updated: February 12, 2026
+> **Version 3.1** | Bayer Pharmaceutical Division — myGenAssist  
+> Last updated: February 15, 2026
 
 ---
 
@@ -12,7 +12,7 @@
 3. [Evidence Skills Pipeline](#3-evidence-skills-pipeline)
 4. [Scientific Markdown Rendering](#4-scientific-markdown-rendering)
 5. [Value Proposition Map](#5-value-proposition-map)
-6. [Component Details](#6-component-details)
+6. [Component Details](#6-component-details) *(incl. Accessibility & WCAG 3.0)*
 7. [Technology Stack](#7-technology-stack)
 8. [Self-Healing & Resilience](#8-self-healing--resilience)
 9. [Grounding Score & Verbalized Sampling](#9-grounding-score--verbalized-sampling)
@@ -382,6 +382,68 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
 
 ---
 
+## 4.5 Agent Team — Post-Pipeline Intelligence
+
+After the 3-stage council pipeline completes, a team of **6 specialised agents** analyses the results in parallel and produces structured signals for the **Prompt Atlas Intelligence Dashboard**.
+
+### Agent Roster
+
+| Agent | Icon | Focus Area |
+|-------|------|-----------|
+| **Research Analyst** | 🔬 | Topic coverage, data density, evidence breadth, key findings |
+| **Fact Checker** | 🛡️ | Grounding validation, hallucination detection, claim analysis (TP/FP/FN) |
+| **Risk Assessor** | ⚠️ | Safety signals, regulatory flags, compliance gaps (pharmaceutical focus) |
+| **Pattern Scout** | 🔍 | Consensus detection, recurring themes, rubric trends, emerging signals |
+| **Insight Synthesizer** | 💡 | Cross-model analysis, novel connections, evidence gap detection |
+| **Quality Auditor** | 📊 | Rubric scores, response completeness, cost efficiency, actionability |
+
+### Signal Schema
+
+Each agent returns a structured result:
+
+```json
+{
+  "agent_id": "research_analyst",
+  "role": "Research Analyst",
+  "icon": "🔬",
+  "summary": "Strong topic coverage across 3 domains",
+  "confidence": 0.91,
+  "signals": [
+    {
+      "kind": "finding",
+      "severity": "success|info|warning|critical",
+      "title": "High data density",
+      "detail": "All 4 models addressed the core therapeutic question",
+      "evidence": "optional supporting reference"
+    }
+  ],
+  "metadata": {},
+  "timestamp": "ISO-8601"
+}
+```
+
+### SSE Integration
+
+The agent team executes after `cost_summary` in the SSE streaming pipeline:
+
+```
+session_start → memory_recall → stage1 → evidence → stage2 → memory_gate
+  → stage3 → infographic → cost_summary → ✨ agent_team_complete ✨
+  → memory_learning → complete
+```
+
+The `agent_team_complete` event carries the combined result of all 6 agents, rendered by the Prompt Atlas dashboard.
+
+### Architecture Principles
+
+- **Pure async, stateless** — Each agent is an `async` function; no side effects
+- **Parallel execution** — All 6 agents run concurrently via `asyncio.gather`
+- **Non-fatal** — Agent failures are caught and logged; the pipeline continues
+- **Structured output** — Every signal has severity, kind, title, detail — no free-form text
+- **Scalable** — Designed for horizontal scaling (serverless-compatible)
+
+---
+
 ## 5. Value Proposition Map
 
 | Metric | Single LLM | LLM Council | Improvement |
@@ -429,6 +491,7 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
 | **Security** | backend/security.py | Fernet encryption at rest (AES-128-CBC), PII redaction (9 pattern types), security status reporting |
 | **Prompt Guard** | backend/prompt_guard.py | Pre-stage suitability gate: 6 rejection categories (off-topic, harmful, illegal, PII, injection, trivial) + LLM fallback |
 | **Infographics** | backend/infographics.py | Infographic JSON extraction from chairman responses, auto-extraction fallback, validation & cleaning |
+| **Agent Team** | backend/agents.py | 6 specialised post-pipeline agents: Research Analyst, Fact Checker, Risk Assessor, Pattern Scout, Insight Synthesizer, Quality Auditor — run in parallel via `asyncio.gather`, emit structured signals for the Prompt Atlas dashboard |
 | **Config** | backend/config.py | Model definitions, API settings, base URLs |
 
 ### Frontend Components
@@ -444,13 +507,41 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
 | **InfographicPanel** | InfographicPanel.jsx | Visual summary: key metrics grid, comparison table, process steps flow, highlight cards (success/warning/info/danger) |
 | **GroundingScore** | GroundingScore.jsx | Circular SVG gauge + expandable criteria bars |
 | **TokenBurndown** | TokenBurndown.jsx | Cost/token dashboard, gateway savings display |
-| **PromptAtlas** | PromptAtlas3D.jsx | CSS decision tree flow visualization (no Three.js) |
+| **PromptAtlas** | PromptAtlas3D.jsx | Intelligence Dashboard: 6-agent signals + CSS decision tree — tabbed view with Agent Team cards (signals/patterns/risks/insights), WCAG 3.0 ARIA (complementary landmark, tablist, keyboard-operable cards) |
 | **MemoryPanel** | MemoryPanel.jsx | 3-tier memory browser, learn/unlearn/delete |
 | **LearnUnlearn** | LearnUnlearn.jsx | Inline bar — auto-learned (green) vs pending (amber) |
 | **KillSwitch** | KillSwitch.jsx | Emergency stop (session + global halt + release) |
 | **EnhancePrompt** | EnhancePrompt.jsx | Prompt improvement UI |
 | **Settings** | Settings.jsx | Model configuration per conversation |
 | **Sidebar** | Sidebar.jsx | Conversation list, navigation, create/delete |
+| **ThemeToggle** | ThemeToggle.jsx | Day/Night mode switch (WCAG 3.0 `role="switch"`, keyboard-operable) |
+| **ThemeContext** | ThemeContext.jsx | Theme provider — `localStorage` persistence, `prefers-color-scheme` OS detection |
+
+### Accessibility (WCAG 3.0 Silver)
+
+The frontend implements WCAG 3.0 draft guidelines using the **APCA** (Advanced Perceptual Contrast Algorithm) contrast methodology:
+
+| APCA Lc Threshold | Use Case | Example |
+|---|---|---|
+| ≥ 90 | Body text | `--text-primary` on `--bg-primary` |
+| ≥ 75 | Large text / headlines | `--text-secondary` on `--bg-primary` |
+| ≥ 60 | Sub-text, placeholders | `--text-muted` on `--bg-primary` |
+| ≥ 45 | Non-text UI, icons, focus rings | `--accent-primary`, `--border-focus` |
+| ≥ 30 | Decorative / disabled | Decorative borders |
+
+**Key accessibility features:**
+- **Dual Theme** — Full dark (Night) and light (Day) palettes via CSS custom properties on `[data-theme]`
+- **ARIA Landmarks** — `<nav>` (sidebar), `<main>` (chat), `<aside>` (atlas), `role="region"` (emergency controls)
+- **Dialog Semantics** — `role="dialog"`, `aria-modal="true"`, `aria-labelledby` on Settings
+- **Listbox Pattern** — `role="listbox"`/`role="option"` with `aria-selected` on conversation list
+- **Menu Pattern** — `role="menu"`/`role="menuitem"` with `aria-haspopup`/`aria-expanded` on context menus
+- **Skip Navigation** — Skip-to-content link targeting `#main-content`
+- **Keyboard Operability** — All conversation items, toggles, and menus operable via Enter/Space
+- **Focus Indicators** — 3px solid `--border-focus` ring via `:focus-visible`
+- **Min Target Size** — 24 × 24 CSS px minimum (WCAG 2.5.8)
+- **Reduced Motion** — `prefers-reduced-motion: reduce` disables all animations
+- **High Contrast** — `forced-colors: active` for Windows High Contrast mode
+- **CVD-Safe** — Palette distinguishable under protanopia, deuteranopia, tritanopia
 
 ---
 
@@ -469,7 +560,9 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
 | rehype-katex + katex | Math equation rendering |
 | smiles-drawer | 2D molecular structure SVGs |
 | 3Dmol.js (3dmol) | Interactive 3D molecular viewer (WebGL) |
-| CSS (scoped) | Per-component styling, dark theme |
+| CSS (scoped) | Per-component styling, WCAG 3.0 dual-theme (Day/Night) |
+| ThemeContext | React context + localStorage + prefers-color-scheme |
+| Vitest + Testing Library | 89 accessibility tests (APCA contrast, ARIA, landmarks) |
 
 ### Backend
 

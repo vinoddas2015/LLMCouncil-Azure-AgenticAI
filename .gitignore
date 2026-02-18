@@ -61,4 +61,6 @@ uv.lock
 
 # ── Temp / scratch files ────────────────────────────────────
 *.tmp
+*.bak
+*.png
 response_*.json

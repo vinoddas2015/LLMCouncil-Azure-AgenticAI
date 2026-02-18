@@ -117,7 +117,20 @@
 
 .evidence-item-title {
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+/* ── Light-theme: Stage3 overrides ─────────────────────────────── */
+[data-theme="light"] .citation-link:hover {
+  color: #059669;
+  text-decoration-color: #059669;
+}
+
+[data-theme="light"] .evidence-item {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .evidence-item:hover {
+  background: rgba(5, 150, 105, 0.06);
 }

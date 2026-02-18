@@ -37,7 +37,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
-  const [atlasOpen, setAtlasOpen] = useState(false);
+  const [atlasOpen, setAtlasOpen] = useState(true);
+  const [atlasWidth, setAtlasWidth] = useState(480);
   const [preferences, setPreferences] = useState(loadPreferences);
   const [activeSessionId, setActiveSessionId] = useState(null);
 
@@ -156,6 +157,19 @@ function App() {
         messages: [...prev.messages, userMessage],
       }));
 
+      // Helper: immutably update the last assistant message.
+      // Clones both the message object and its loading sub-object so
+      // React detects changes at every level of the component tree.
+      const cloneLastMsg = (prev, updater) => {
+        const messages = [...prev.messages];
+        const idx = messages.length - 1;
+        if (idx < 0) return prev;
+        const msg = { ...messages[idx], loading: { ...messages[idx].loading } };
+        updater(msg);
+        messages[idx] = msg;
+        return { ...prev, messages };
+      };
+
       // Create a partial assistant message that will be updated progressively
       const assistantMessage = {
         role: 'assistant',
@@ -167,6 +181,9 @@ function App() {
         memoryRecall: null,
         memoryGate: null,
         memoryLearning: null,
+        agentTeam: null,
+        evidence: null,
+        infographic: null,
         loading: {
           stage1: false,
           stage2: false,
@@ -192,115 +209,85 @@ function App() {
             break;
 
           case 'stage1_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.loading.stage1 = true;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.loading.stage1 = true;
+            }));
             break;
 
           case 'stage1_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.stage1 = event.data;
-              lastMsg.loading.stage1 = false;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.stage1 = event.data;
+              msg.loading.stage1 = false;
+            }));
             break;
 
           case 'stage2_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.loading.stage2 = true;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.loading.stage2 = true;
+            }));
             break;
 
           case 'stage2_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.stage2 = event.data;
-              lastMsg.metadata = event.metadata;
-              lastMsg.loading.stage2 = false;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.stage2 = event.data;
+              msg.metadata = event.metadata;
+              msg.loading.stage2 = false;
+            }));
             break;
 
           case 'stage3_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.loading.stage3 = true;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.loading.stage3 = true;
+            }));
             break;
 
           case 'stage3_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.stage3 = event.data;
-              lastMsg.loading.stage3 = false;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.stage3 = event.data;
+              msg.loading.stage3 = false;
+            }));
             break;
 
           case 'cost_summary':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.costSummary = event.data;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.costSummary = event.data;
+            }));
             break;
 
           case 'memory_recall':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.memoryRecall = event.data;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.memoryRecall = event.data;
+            }));
             break;
 
           case 'memory_gate':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.memoryGate = event.data;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.memoryGate = event.data;
+            }));
             break;
 
           case 'evidence_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.evidence = event.data;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.evidence = event.data;
+            }));
             break;
 
           case 'infographic_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.infographic = event.data;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.infographic = event.data;
+            }));
+            break;
+
+          case 'agent_team_complete':
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.agentTeam = event.data;
+            }));
             break;
 
           case 'memory_learning':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.memoryLearning = event.data;
-              return { ...prev, messages };
-            });
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              msg.memoryLearning = event.data;
+            }));
             break;
 
           case 'title_complete':
@@ -321,20 +308,17 @@ function App() {
             setIsLoading(false);
             setActiveSessionId(null);
             // Update the last assistant message to show killed state
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              if (lastMsg && lastMsg.role === 'assistant') {
-                lastMsg.loading = { stage1: false, stage2: false, stage3: false };
-                if (!lastMsg.stage3) {
-                  lastMsg.stage3 = {
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              if (msg.role === 'assistant') {
+                msg.loading = { stage1: false, stage2: false, stage3: false };
+                if (!msg.stage3) {
+                  msg.stage3 = {
                     model: 'system',
                     response: '⏹ **Council session stopped by user.**'
                   };
                 }
               }
-              return { ...prev, messages };
-            });
+            }));
             break;
 
           case 'error':
@@ -351,8 +335,10 @@ function App() {
             // Show the rejection as a system message in the assistant slot
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              if (lastMsg && lastMsg.role === 'assistant') {
+              const idx = messages.length - 1;
+              if (idx < 0) return prev;
+              const lastMsg = { ...messages[idx], loading: { ...messages[idx].loading } };
+              if (lastMsg.role === 'assistant') {
                 lastMsg.loading = { stage1: false, stage2: false, stage3: false };
                 lastMsg.stage3 = {
                   model: 'system',
@@ -360,6 +346,7 @@ function App() {
                 };
                 lastMsg.rejected = true;
               }
+              messages[idx] = lastMsg;
               // Mark conversation as blocked in local state
               return { ...prev, blocked: true, messages };
             });
@@ -389,18 +376,22 @@ function App() {
       setCurrentConversation((prev) => {
         if (!prev) return prev;
         const messages = [...prev.messages];
-        const lastMsg = messages[messages.length - 1];
-        if (lastMsg && lastMsg.role === 'assistant') {
-          lastMsg.loading = { stage1: false, stage2: false, stage3: false };
-          if (!lastMsg.stage3) {
-            lastMsg.stage3 = {
-              model: 'system',
-              response: `⚠ **Connection Error**\n\n${friendlyMsg}\n\nYou can try sending your message again.`,
-            };
+        const idx = messages.length - 1;
+        if (idx >= 0) {
+          const lastMsg = { ...messages[idx], loading: { ...messages[idx].loading } };
+          if (lastMsg.role === 'assistant') {
+            lastMsg.loading = { stage1: false, stage2: false, stage3: false };
+            if (!lastMsg.stage3) {
+              lastMsg.stage3 = {
+                model: 'system',
+                response: `⚠ **Connection Error**\n\n${friendlyMsg}\n\nYou can try sending your message again.`,
+              };
+            }
+            messages[idx] = lastMsg;
+          } else {
+            // Fallback: remove optimistic messages
+            return { ...prev, messages: prev.messages.slice(0, -2) };
           }
-        } else {
-          // Fallback: remove optimistic messages
-          return { ...prev, messages: prev.messages.slice(0, -2) };
         }
         return { ...prev, messages };
       });
@@ -416,15 +407,19 @@ function App() {
       setCurrentConversation((prev) => {
         if (!prev) return prev;
         const messages = [...prev.messages];
-        const lastMsg = messages[messages.length - 1];
-        if (lastMsg && lastMsg.role === 'assistant') {
-          lastMsg.loading = { stage1: false, stage2: false, stage3: false };
-          if (!lastMsg.stage3) {
-            lastMsg.stage3 = {
-              model: 'system',
-              response: '⚠ **Emergency halt activated — all sessions stopped.**'
-            };
+        const idx = messages.length - 1;
+        if (idx >= 0) {
+          const lastMsg = { ...messages[idx], loading: { ...messages[idx].loading } };
+          if (lastMsg.role === 'assistant') {
+            lastMsg.loading = { stage1: false, stage2: false, stage3: false };
+            if (!lastMsg.stage3) {
+              lastMsg.stage3 = {
+                model: 'system',
+                response: '⚠ **Emergency halt activated — all sessions stopped.**'
+              };
+            }
           }
+          messages[idx] = lastMsg;
         }
         return { ...prev, messages };
       });
@@ -432,31 +427,38 @@ function App() {
   };
 
   return (
-    <div className={`app${atlasOpen ? ' atlas-open' : ''}`}>
+    <div className={`app${atlasOpen ? ' atlas-open' : ''}`} style={{ '--atlas-width': `${atlasWidth}px` }}>
       <a href="#main-content" className="skip-link">Skip to main content</a>
-      <Sidebar
-        conversations={conversations}
-        currentConversationId={currentConversationId}
-        onSelectConversation={handleSelectConversation}
-        onNewConversation={handleNewConversation}
-        onOpenSettings={() => setShowSettings(true)}
-        onExportConversation={handleExportConversation}
-        onDeleteConversation={handleDeleteConversation}
-      />
-      <ChatInterface
-        conversation={currentConversation}
-        onSendMessage={handleSendMessage}
-        isLoading={isLoading}
-        preferences={preferences}
-        onUpdatePreferences={handleSavePreferences}
-      />
-      <PromptAtlas3D
-        conversation={currentConversation}
-        isOpen={atlasOpen}
-        onToggle={() => setAtlasOpen((v) => !v)}
-      />
+      <nav aria-label="Conversation sidebar">
+        <Sidebar
+          conversations={conversations}
+          currentConversationId={currentConversationId}
+          onSelectConversation={handleSelectConversation}
+          onNewConversation={handleNewConversation}
+          onOpenSettings={() => setShowSettings(true)}
+          onExportConversation={handleExportConversation}
+          onDeleteConversation={handleDeleteConversation}
+        />
+      </nav>
+      <main id="main-content" role="main" aria-label="Chat area">
+        <ChatInterface
+          conversation={currentConversation}
+          onSendMessage={handleSendMessage}
+          isLoading={isLoading}
+          preferences={preferences}
+          onUpdatePreferences={handleSavePreferences}
+        />
+      </main>
+      <aside aria-label="3D Prompt Atlas">
+        <PromptAtlas3D
+          conversation={currentConversation}
+          isOpen={atlasOpen}
+          onToggle={() => setAtlasOpen((v) => !v)}
+          onWidthChange={setAtlasWidth}
+        />
+      </aside>
       {/* Kill Switch — always accessible to the end user */}
-      <div className="kill-switch-fixed">
+      <div className="kill-switch-fixed" role="region" aria-label="Emergency controls">
         <KillSwitch
           sessionId={activeSessionId}
           isLoading={isLoading}
@@ -468,6 +470,7 @@ function App() {
         className="memory-panel-toggle"
         onClick={() => setShowMemory(true)}
         title="Memory Management"
+        aria-label="Open memory management panel"
       >
         🧠
       </button>
