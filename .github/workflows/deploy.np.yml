@@ -10,6 +10,8 @@ env:
   FARGATE_STACK_NAME: SC-795575357752-pp-j3xspba5muwl4
   AWS_ROLE_TO_ASSUME: arn:aws:iam::795575357752:role/llmcouncil-github-role-nonprod
   ENVIRONMENT: nonprod
+  S3_BUCKET: llmcouncil-nonprod
+  CLOUDFRONT_DISTRIBUTION_ID: E3LUNZ7W5SLTIF
 jobs:
   DeployApi:
     runs-on: [external-k8s-v2]
@@ -60,3 +62,42 @@ jobs:
         run: |
           fg-deploy -m infrastructure/fg-config/fg-$ENVIRONMENT.js
 
+  DeployFrontend:
+    needs: DeployApi
+    runs-on: [external-k8s-v2]
+    timeout-minutes: 15
+    steps:
+      - name: Git Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install AWS CLI
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -qq awscliv2.zip
+          sudo ./aws/install --update
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@master
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-east-1
+      - name: Build Frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build:nonprod
+
+      - name: Sync to S3
+        run: |
+          aws s3 sync frontend/dist s3://${{ env.S3_BUCKET }} --delete
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ env.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
