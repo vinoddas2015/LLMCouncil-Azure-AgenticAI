@@ -5,17 +5,95 @@
  * so all requests stay on the same origin — avoiding corporate
  * proxy / Zscaler interception of cross-origin localhost calls.
  *
- * In production, set VITE_API_BASE to the real backend URL.
+ * In production, the environment config determines the backend URL.
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE || '';
+import { config, currentEnvironment } from './enviroments/env.js';
+
+const API_BASE = config.apiBaseUrl;
+const AUTH_TOKEN_REFRESH_URL = config.authTokenRefreshUrl;
+const TOKEN_STORAGE_KEY = 'LLM-COUNCIL-TOKEN-INFO';
+
+console.log(`[API] Running in ${currentEnvironment} mode, API_BASE: ${API_BASE}`);
+
+/**
+ * Store token info in sessionStorage with expiry timestamp.
+ * Includes 120-second buffer before actual expiry for safety.
+ * @param {Object} token - Token response data
+ */
+function storeToken(token) {
+  const tokenExpiryInMs = Date.now() + ((token.expires_in - 120) * 1000);
+  sessionStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify({ ...token, tokenExpiryInMs }));
+}
+
+/**
+ * Fetch OAuth token from the auth endpoint.
+ * @returns {Promise<Object>} Token response data
+ */
+async function getOAuthTokenInfo() {
+  try {
+    const response = await fetch(AUTH_TOKEN_REFRESH_URL, {
+      method: 'GET',
+      cache: 'no-store',
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch token: HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    const tokenData = result.data || result;
+    
+    storeToken(tokenData);
+    return tokenData;
+  } catch (error) {
+    console.error('[Auth] Failed to get OAuth token:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get valid access token, fetching a new one if expired or missing.
+ * @returns {Promise<string>} Valid access token
+ */
+async function getToken() {
+  const currentToken = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+  const { tokenExpiryInMs = 0, access_token: accessToken = '' } = JSON.parse(currentToken || '{}');
+  
+  if (!accessToken || Date.now() > tokenExpiryInMs) {
+    console.log('[Auth] Token missing or expired, fetching new token');
+    const newToken = await getOAuthTokenInfo();
+    return newToken.access_token;
+  }
+  
+  return accessToken;
+}
+
+/**
+ * Wrapper around fetch that automatically adds Authorization header to all requests.
+ * This acts as an interceptor for authentication.
+ */
+async function fetchWithAuth(url, options = {}) {
+  const token = await getToken();
+  
+  const headers = {
+    ...options.headers,
+    'Authorization': `Bearer ${token}`,
+  };
+  
+  return fetch(url, {
+    ...options,
+    headers,
+  });
+}
 
 export const api = {
   /**
    * Get available models and defaults.
    */
   async getModels() {
-    const response = await fetch(`${API_BASE}/api/models`);
+    const response = await fetchWithAuth(`${API_BASE}/api/models`);
     if (!response.ok) {
       throw new Error('Failed to get models');
     }
@@ -28,7 +106,7 @@ export const api = {
    * @returns {Promise<{original: string, enhanced: string}>}
    */
   async enhancePrompt(content) {
-    const response = await fetch(`${API_BASE}/api/enhance-prompt`, {
+    const response = await fetchWithAuth(`${API_BASE}/api/enhance-prompt`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -45,7 +123,7 @@ export const api = {
    * List all conversations.
    */
   async listConversations() {
-    const response = await fetch(`${API_BASE}/api/conversations`);
+    const response = await fetchWithAuth(`${API_BASE}/api/conversations`);
     if (!response.ok) {
       throw new Error('Failed to list conversations');
     }
@@ -56,7 +134,7 @@ export const api = {
    * Create a new conversation.
    */
   async createConversation() {
-    const response = await fetch(`${API_BASE}/api/conversations`, {
+    const response = await fetchWithAuth(`${API_BASE}/api/conversations`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -73,7 +151,7 @@ export const api = {
    * Get a specific conversation.
    */
   async getConversation(conversationId) {
-    const response = await fetch(
+    const response = await fetchWithAuth(
       `${API_BASE}/api/conversations/${conversationId}`
     );
     if (!response.ok) {
@@ -89,7 +167,7 @@ export const api = {
    * @returns {Promise<{filename: string, content: string, content_type: string}>}
    */
   async exportConversation(conversationId, format = 'markdown') {
-    const response = await fetch(
+    const response = await fetchWithAuth(
       `${API_BASE}/api/conversations/${conversationId}/export?format=${format}`
     );
     if (!response.ok) {
@@ -102,7 +180,7 @@ export const api = {
    * Delete a conversation.
    */
   async deleteConversation(conversationId) {
-    const response = await fetch(
+    const response = await fetchWithAuth(
       `${API_BASE}/api/conversations/${conversationId}`,
       {
         method: 'DELETE',
@@ -118,7 +196,7 @@ export const api = {
    * Send a message in a conversation.
    */
   async sendMessage(conversationId, content) {
-    const response = await fetch(
+    const response = await fetchWithAuth(
       `${API_BASE}/api/conversations/${conversationId}/message`,
       {
         method: 'POST',
@@ -157,7 +235,7 @@ export const api = {
     }, 10_000);
 
     try {
-      const response = await fetch(
+      const response = await fetchWithAuth(
         `${API_BASE}/api/conversations/${conversationId}/message/stream`,
         {
           method: 'POST',
@@ -249,7 +327,7 @@ export const api = {
    * @param {string} reason - Optional reason for killing
    */
   async killSession(sessionId, reason = 'User triggered kill switch') {
-    const response = await fetch(`${API_BASE}/api/kill-switch/session`, {
+    const response = await fetchWithAuth(`${API_BASE}/api/kill-switch/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId, reason }),
@@ -265,7 +343,7 @@ export const api = {
    * @param {string} reason - Reason for the halt
    */
   async globalHalt(reason = 'Emergency halt triggered by user') {
-    const response = await fetch(`${API_BASE}/api/kill-switch/halt`, {
+    const response = await fetchWithAuth(`${API_BASE}/api/kill-switch/halt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reason }),
@@ -280,7 +358,7 @@ export const api = {
    * Release global halt to resume normal operation.
    */
   async releaseHalt() {
-    const response = await fetch(`${API_BASE}/api/kill-switch/release`, {
+    const response = await fetchWithAuth(`${API_BASE}/api/kill-switch/release`, {
       method: 'POST',
     });
     if (!response.ok) {
@@ -293,7 +371,7 @@ export const api = {
    * Get kill switch status (active sessions, halt state).
    */
   async getKillSwitchStatus() {
-    const response = await fetch(`${API_BASE}/api/kill-switch/status`);
+    const response = await fetchWithAuth(`${API_BASE}/api/kill-switch/status`);
     if (!response.ok) {
       throw new Error('Failed to get kill switch status');
     }
@@ -304,7 +382,7 @@ export const api = {
    * Get full system health: circuits, healing actions, kill switch.
    */
   async getSystemHealth() {
-    const response = await fetch(`${API_BASE}/api/health`);
+    const response = await fetchWithAuth(`${API_BASE}/api/health`);
     if (!response.ok) {
       throw new Error('Failed to get system health');
     }
@@ -319,7 +397,7 @@ export const api = {
     const url = model
       ? `${API_BASE}/api/health/circuits/reset?model=${encodeURIComponent(model)}`
       : `${API_BASE}/api/health/circuits/reset`;
-    const response = await fetch(url, { method: 'POST' });
+    const response = await fetchWithAuth(url, { method: 'POST' });
     if (!response.ok) {
       throw new Error('Failed to reset circuit');
     }
@@ -334,7 +412,7 @@ export const api = {
    * Get memory statistics across all tiers.
    */
   async getMemoryStats() {
-    const response = await fetch(`${API_BASE}/api/memory/stats`);
+    const response = await fetchWithAuth(`${API_BASE}/api/memory/stats`);
     if (!response.ok) throw new Error('Failed to get memory stats');
     return response.json();
   },
@@ -346,7 +424,7 @@ export const api = {
    */
   async listMemories(type, includeUnlearned = false) {
     const url = `${API_BASE}/api/memory/${type}?include_unlearned=${includeUnlearned}`;
-    const response = await fetch(url);
+    const response = await fetchWithAuth(url);
     if (!response.ok) throw new Error(`Failed to list ${type} memories`);
     return response.json();
   },
@@ -355,7 +433,7 @@ export const api = {
    * Get a specific memory entry.
    */
   async getMemoryEntry(type, id) {
-    const response = await fetch(`${API_BASE}/api/memory/${type}/${id}`);
+    const response = await fetchWithAuth(`${API_BASE}/api/memory/${type}/${id}`);
     if (!response.ok) throw new Error('Memory entry not found');
     return response.json();
   },
@@ -368,7 +446,7 @@ export const api = {
    * @param {string} reason - Optional reason for the decision
    */
   async applyMemoryDecision(decision, memoryType, memoryId, reason = '') {
-    const response = await fetch(`${API_BASE}/api/memory/decision`, {
+    const response = await fetchWithAuth(`${API_BASE}/api/memory/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -387,7 +465,7 @@ export const api = {
    */
   async searchMemories(type, query, limit = 10) {
     const url = `${API_BASE}/api/memory/search/${type}?q=${encodeURIComponent(query)}&limit=${limit}`;
-    const response = await fetch(url);
+    const response = await fetchWithAuth(url);
     if (!response.ok) throw new Error('Search failed');
     return response.json();
   },
@@ -396,7 +474,7 @@ export const api = {
    * Delete a memory entry permanently.
    */
   async deleteMemory(type, id) {
-    const response = await fetch(`${API_BASE}/api/memory/${type}/${id}`, { method: 'DELETE' });
+    const response = await fetchWithAuth(`${API_BASE}/api/memory/${type}/${id}`, { method: 'DELETE' });
     if (!response.ok) throw new Error('Failed to delete memory');
     return response.json();
   },
@@ -405,7 +483,7 @@ export const api = {
    * Run on-demand agent team analysis for an existing conversation.
    */
   async analyzeAgents(conversationId) {
-    const response = await fetch(
+    const response = await fetchWithAuth(
       `${API_BASE}/api/conversations/${conversationId}/analyze-agents`,
       { method: 'POST' }
     );

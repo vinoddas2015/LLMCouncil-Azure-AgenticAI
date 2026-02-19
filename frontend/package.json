@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:nonprod": "VITE_ENV=nonprod PUBLIC_URL=/llm-council-np/ vite build",
+    "build:prod": "VITE_ENV=production PUBLIC_URL=/llm-council/ vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
