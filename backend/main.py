@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 from . import storage
 from .council import run_full_council, generate_conversation_title, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, stage2_ca_validation_pass
 from .config import OPENROUTER_API_KEY, AVAILABLE_MODELS, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL
+from .model_sync import sync_models, get_live_models, get_defaults, get_sync_status, periodic_sync_loop
 from .openrouter import query_model
 from .resilience import (
     kill_switch,
@@ -91,7 +92,23 @@ def check_token_expiry():
 # Check token on startup
 check_token_expiry()
 
-app = FastAPI(title="LLM Council API")
+
+# ── Lifespan: startup model sync + periodic refresh ─────────────────────
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(application):
+    """Run model sync on startup, launch periodic refresh in background."""
+    logger.info("🚀 Running initial model sync...")
+    summary = await sync_models()
+    logger.info(f"   Initial sync result: {summary.get('total_after_filter', '?')} models")
+    # Launch periodic sync as a background task
+    sync_task = asyncio.create_task(periodic_sync_loop())
+    yield
+    sync_task.cancel()
+
+
+app = FastAPI(title="LLM Council API", lifespan=lifespan)
 
 # Enable CORS for all origins
 app.add_middleware(
@@ -195,14 +212,33 @@ async def health():
 
 @app.get("/api/models")
 async def get_available_models():
-    """Get list of available models with their metadata."""
-    return {
-        "models": AVAILABLE_MODELS,
-        "defaults": {
+    """Get list of available models — live from MyGenAssist API with auto-version-management."""
+    live = get_live_models()
+    defaults = get_defaults()
+    # Fallback to static config if sync hasn't populated yet
+    if not live:
+        live = AVAILABLE_MODELS
+        defaults = {
             "council_models": DEFAULT_COUNCIL_MODELS,
-            "chairman_model": DEFAULT_CHAIRMAN_MODEL
+            "chairman_model": DEFAULT_CHAIRMAN_MODEL,
         }
+    return {
+        "models": live,
+        "defaults": defaults,
     }
+
+
+@app.post("/api/models/sync")
+async def trigger_model_sync():
+    """Manually trigger a model sync from the MyGenAssist catalog."""
+    summary = await sync_models()
+    return summary
+
+
+@app.get("/api/models/sync-status")
+async def model_sync_status():
+    """Get the current model sync status and last sync time."""
+    return get_sync_status()
 
 
 @app.post("/api/enhance-prompt")

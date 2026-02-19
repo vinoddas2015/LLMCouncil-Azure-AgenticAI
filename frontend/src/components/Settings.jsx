@@ -10,10 +10,13 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
 
   useEffect(() => {
     if (isOpen) {
       loadModels();
+      loadSyncStatus();
     }
   }, [isOpen]);
 
@@ -91,6 +94,28 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
     setWebSearchEnabled(false);
   };
 
+  const loadSyncStatus = async () => {
+    try {
+      const status = await api.getSyncStatus();
+      setSyncStatus(status);
+    } catch (e) {
+      console.error('Failed to load sync status:', e);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    setSyncing(true);
+    try {
+      await api.syncModels();
+      await loadModels();
+      await loadSyncStatus();
+    } catch (e) {
+      console.error('Model sync failed:', e);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -110,8 +135,12 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
             <div className="settings-section">
               <h3>🏛️ Council Members</h3>
               <p className="settings-description">
-                Select which models will participate in Stage 1 (individual responses) and Stage 2 (peer rankings).
-                At least 2 models are recommended.
+                Models are auto-synced from MyGenAssist — latest versions only.
+                {syncStatus?.last_sync && (
+                  <span className="sync-info"> Last sync: {new Date(syncStatus.last_sync).toLocaleTimeString()}
+                    · {syncStatus.model_count} models (from {syncStatus.catalog_size} in catalog)
+                  </span>
+                )}
               </p>
               <div className="model-list">
                 {models.map(model => (
@@ -122,7 +151,12 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
                       onChange={() => handleCouncilToggle(model.id)}
                     />
                     <span className="model-info">
-                      <span className="model-name">{model.name}</span>
+                      <span className="model-name">
+                        {model.name}
+                        {model.family && model.family !== 'other' && (
+                          <span className="model-family-tag">{model.family}</span>
+                        )}
+                      </span>
                       <span className="model-description">{model.description}</span>
                     </span>
                   </label>
@@ -150,7 +184,12 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
                       onChange={() => handleChairmanSelect(model.id)}
                     />
                     <span className="model-info">
-                      <span className="model-name">{model.name}</span>
+                      <span className="model-name">
+                        {model.name}
+                        {model.family && model.family !== 'other' && (
+                          <span className="model-family-tag">{model.family}</span>
+                        )}
+                      </span>
                       <span className="model-description">{model.description}</span>
                     </span>
                   </label>
@@ -166,16 +205,26 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
                 Download the full Agent-to-Agent protocol card bundle for all {10} council agents.
                 Includes the main council card and individual cards for each specialist agent.
               </p>
-              <button
-                className="download-agent-cards-btn"
-                onClick={async () => {
-                  try { await api.downloadAgentCards(); }
-                  catch (e) { console.error('Agent card download failed:', e); }
-                }}
-                aria-label="Download A2A agent cards as JSON"
-              >
-                📥 Download Agent Cards
-              </button>
+              <div className="settings-btn-row">
+                <button
+                  className="download-agent-cards-btn"
+                  onClick={async () => {
+                    try { await api.downloadAgentCards(); }
+                    catch (e) { console.error('Agent card download failed:', e); }
+                  }}
+                  aria-label="Download A2A agent cards as JSON"
+                >
+                  📥 Download Agent Cards
+                </button>
+                <button
+                  className="sync-models-btn"
+                  onClick={handleSyncNow}
+                  disabled={syncing}
+                  aria-label="Sync models from MyGenAssist API"
+                >
+                  {syncing ? '⏳ Syncing...' : '🔄 Sync Models Now'}
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -510,4 +510,22 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(url);
   },
+
+  /**
+   * Trigger a manual model sync from the MyGenAssist catalog.
+   */
+  async syncModels() {
+    const response = await fetchWithAuth(`${API_BASE}/api/models/sync`, { method: 'POST' });
+    if (!response.ok) throw new Error('Model sync failed');
+    return response.json();
+  },
+
+  /**
+   * Get model sync status (last sync time, model count, etc.).
+   */
+  async getSyncStatus() {
+    const response = await fetchWithAuth(`${API_BASE}/api/models/sync-status`);
+    if (!response.ok) throw new Error('Failed to get sync status');
+    return response.json();
+  },
 };
