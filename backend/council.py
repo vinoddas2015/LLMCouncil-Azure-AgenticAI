@@ -1,6 +1,8 @@
 """3-stage LLM Council orchestration with self-healing resilience."""
 
+import asyncio
 import logging
+import random
 from typing import List, Dict, Any, Tuple, Optional
 from .openrouter import query_models_parallel, query_model
 from .config import COUNCIL_MODELS, CHAIRMAN_MODEL, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL
@@ -760,6 +762,160 @@ Title:"""
         title = title[:47] + "..."
 
     return title
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# CA Validation Pass — Multi-Round + Adversarial Shuffling
+# ═══════════════════════════════════════════════════════════════════════
+
+def _shuffle_paragraphs(text: str) -> Tuple[str, bool]:
+    """
+    Shuffle paragraphs in a response for adversarial CA testing.
+
+    Returns (shuffled_text, was_shuffled) — was_shuffled is False when
+    the text has ≤1 paragraph and therefore can't be reordered.
+    """
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if len(paragraphs) <= 1:
+        # Try single-newline splitting
+        paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+    if len(paragraphs) <= 1:
+        return text, False
+    original_order = list(paragraphs)
+    random.shuffle(paragraphs)
+    # Ensure the order actually changed (re-shuffle if identical)
+    if paragraphs == original_order and len(paragraphs) > 1:
+        paragraphs.reverse()
+    return "\n\n".join(paragraphs), True
+
+
+async def stage2_ca_validation_pass(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    label_to_model: Dict[str, str],
+    council_models: Optional[List[str]] = None,
+    web_search_enabled: bool = False,
+    session_id: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    CA Validation Pass: Re-evaluate each model's OWN anonymized response
+    with adversarial paragraph shuffling to detect position-sensitive
+    forgetting.
+
+    This is the "second round" of self-review, run as a lightweight
+    claims-only probe (no rubric or ranking).  Combined with the
+    original self-review from Stage 2, it provides:
+
+      • Multi-round comparison — two independent self-evaluations
+      • Adversarial shuffling — paragraph order randomised
+      • Stability metric — |round1 − round2| detects inconsistency
+
+    Each model evaluates ONLY its own response (in isolation, shuffled).
+    Cost: 1 API call per council model (short prompt, claims-only).
+
+    Args:
+        user_query: The original user query
+        stage1_results: Stage 1 individual model responses
+        label_to_model: Mapping from "Response X" label to model name
+        council_models: Council model list (for filtering)
+        web_search_enabled: Whether to enable web search
+        session_id: Kill switch session ID
+
+    Returns:
+        Dict mapping model_name → {
+            "claims": {"tp": int, "fp": int, "fn": int},
+            "shuffled": bool,
+            "raw_text": str,
+        }
+    """
+    if session_id and kill_switch.is_session_killed(session_id):
+        return {}
+
+    models_to_use = council_models or COUNCIL_MODELS
+
+    # Build model → (label, response) mapping
+    model_to_info: Dict[str, Dict[str, str]] = {}
+    for label, model_name in label_to_model.items():
+        for result in stage1_results:
+            if result["model"] == model_name:
+                model_to_info[model_name] = {
+                    "label": label,
+                    "response": result["response"],
+                }
+                break
+
+    async def _probe_model(model_name: str) -> Optional[Dict[str, Any]]:
+        """Send a claims-only self-review probe to one model."""
+        info = model_to_info.get(model_name)
+        if not info:
+            return None
+
+        shuffled_text, was_shuffled = _shuffle_paragraphs(info["response"])
+        label = info["label"]
+
+        prompt = f"""You are a pharmaceutical domain expert. Evaluate the following response to a question by classifying its major claims.
+
+Question: {user_query}
+
+{label}:
+{shuffled_text}
+
+Classify the major claims in this response:
+  TP (True Positive)  = Correct, verifiable claim relevant to the question
+  FP (False Positive) = Incorrect, misleading, or hallucinated claim
+  FN (False Negative) = Important information the response FAILED to mention
+
+Format EXACTLY:
+
+CLAIMS {label}:
+  TP: <count> — <brief summary of correct claims>
+  FP: <count> — <brief summary of incorrect/hallucinated claims, or "None detected">
+  FN: <count> — <brief summary of important omissions, or "None detected">"""
+
+        try:
+            result = await query_model(
+                model_name,
+                [{"role": "user", "content": prompt}],
+                web_search_enabled=web_search_enabled,
+                timeout=60.0,
+            )
+            if result:
+                text = result.get("content", "")
+                claims = parse_claim_counts(text)
+                label_claims = claims.get(label, {})
+                return {
+                    "model": model_name,
+                    "claims": label_claims,
+                    "shuffled": was_shuffled,
+                    "raw_text": text,
+                    "usage": result.get("usage"),
+                }
+        except Exception as e:
+            logger.warning(f"[CA Validation] Probe failed for {model_name}: {e}")
+        return None
+
+    # Fire all probes in parallel
+    probes = await asyncio.gather(
+        *[_probe_model(m) for m in models_to_use if m in model_to_info],
+        return_exceptions=True,
+    )
+
+    results: Dict[str, Dict[str, Any]] = {}
+    for probe in probes:
+        if isinstance(probe, dict) and probe is not None:
+            results[probe["model"]] = {
+                "claims": probe["claims"],
+                "shuffled": probe["shuffled"],
+                "raw_text": probe.get("raw_text", ""),
+                "usage": probe.get("usage"),
+            }
+        elif isinstance(probe, Exception):
+            logger.warning(f"[CA Validation] Probe exception: {probe}")
+
+    logger.info(
+        f"[CA Validation] Completed {len(results)}/{len(model_to_info)} probes"
+    )
+    return results
 
 
 async def run_full_council(

@@ -1,0 +1,59 @@
+{
+  "name": "Risk Assessor",
+  "description": "Evaluates pharmaceutical safety signals, regulatory compliance flags, and clinical trial phase indicators in the council synthesis. Scans for critical safety keywords (black box warnings, hepatotoxicity, cardiotoxicity, etc.), regulatory warnings, and cross-references safety claims against grounding scores to detect under-grounded safety assertions.",
+  "supportedInterfaces": [
+    {
+      "url": "https://localhost:8001/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://chat.int.bayer.com"
+  },
+  "iconUrl": "data:text/plain,⚠️",
+  "version": "2.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "safety-signal-detection",
+      "name": "Safety Signal Detection",
+      "description": "Keyword-based detection of 20+ pharmaceutical safety terms across severity levels: critical (black box warning, hepatotoxicity, cardiotoxicity, nephrotoxicity, teratogenic, fatal, withdrawn, recalled) and warning (contraindication, adverse event, drug interaction, FDA/EMA warning).",
+      "tags": ["safety", "pharmacovigilance", "adverse-events", "toxicity", "warnings"],
+      "examples": [
+        "Scan synthesis for safety signals in an ATTR-CM treatment response"
+      ]
+    },
+    {
+      "id": "regulatory-phase-detection",
+      "name": "Regulatory Phase Detection",
+      "description": "Identifies clinical trial development phases (Phase I–IV) and post-marketing surveillance references in the synthesis output.",
+      "tags": ["regulatory", "clinical-trial", "phase", "post-marketing"]
+    },
+    {
+      "id": "safety-grounding-cross-check",
+      "name": "Safety-Grounding Cross-Check",
+      "description": "Critical alert: flags when safety-relevant claims are paired with low grounding scores (<70%), indicating high risk of inaccurate safety information that could affect patient outcomes.",
+      "tags": ["safety", "grounding", "cross-check", "patient-safety"]
+    }
+  ],
+  "metadata": {
+    "agentId": "risk_assessor",
+    "icon": "⚠️",
+    "category": "core",
+    "pipelinePosition": "post-stage3",
+    "executionMode": "parallel",
+    "confidenceFormula": "max(0.0, 1.0 - (critical*0.3 + warning*0.15))",
+    "safetyKeywords": {
+      "critical": ["black box warning", "hepatotoxicity", "cardiotoxicity", "nephrotoxicity", "teratogenic", "fatal", "withdrawn", "recalled"],
+      "warning": ["contraindication", "adverse event", "drug interaction", "fda warning", "ema warning"],
+      "info": ["off-label", "phase i", "phase ii", "phase iii", "phase iv", "post-marketing"]
+    }
+  }
+}

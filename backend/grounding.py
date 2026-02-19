@@ -50,6 +50,16 @@ Context Awareness (Catastrophic Forgetting detection):
   High → model recognises its own claims.
   Low  → catastrophic forgetting (self-contradiction or omission).
 
+Enhanced CA (Multi-Round + Adversarial Shuffling):
+  A lightweight CA Validation Pass re-probes each model with its own
+  response (paragraphs shuffled) to test position-dependent recognition.
+
+  Round 1 = original Stage 2 self-review (side-by-side with other responses)
+  Round 2 = CA validation pass (isolated, shuffled paragraphs)
+
+  Stability = 1 − |round1 − round2|    — low delta = robust self-awareness
+  Combined CA = (round1 + round2) / 2  — more robust single estimate
+
 Rubric criteria:
   1. Relevancy       — Direct & complete answer to the question
   2. Faithfulness    — Factual accuracy, no hallucinations
@@ -445,4 +455,116 @@ def compute_response_grounding_scores(
         "council_size": total_models,
         "reviewers_count": len(stage2_results),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Enhanced CA — Multi-Round + Adversarial Shuffling
+# ═══════════════════════════════════════════════════════════════════════
+
+def enhance_ca_with_validation(
+    grounding_scores: Dict[str, Any],
+    ca_validation_results: Dict[str, Dict[str, Any]],
+    label_to_model: Dict[str, str],
+) -> Dict[str, Any]:
+    """
+    Enrich grounding_scores with multi-round CA data from the validation pass.
+
+    For each model that has both a Round 1 (original Stage 2 self-review)
+    and Round 2 (CA validation pass with shuffled paragraphs), compute:
+
+      • round1_score — original CA from Stage 2
+      • round2_score — CA from the validation probe (shuffled, isolated)
+      • stability   — 1 − |round1 − round2|  (0–100, higher = more robust)
+      • adversarial_delta — signed change from round1 to round2
+      • combined_score — average of round1 + round2  (more robust estimate)
+
+    Mutates grounding_scores in-place and returns it.
+
+    Args:
+        grounding_scores: The existing grounding scores dict (from
+            compute_response_grounding_scores).
+        ca_validation_results: Dict from stage2_ca_validation_pass(),
+            mapping model_name → {claims, shuffled, raw_text}.
+        label_to_model: "Response X" → model_name mapping.
+
+    Returns:
+        The enriched grounding_scores dict (same reference, mutated).
+    """
+    if not ca_validation_results:
+        return grounding_scores
+
+    # Build canonical model name → validation result lookup
+    canon_to_validation = {}
+    for model_name, val_data in ca_validation_results.items():
+        canon = _canonicalise_model(model_name)
+        canon_to_validation[canon] = val_data
+
+    for resp in grounding_scores.get("per_response", []):
+        model = resp.get("model", "")
+        canon = _canonicalise_model(model)
+        ca = resp.get("context_awareness")
+        val = canon_to_validation.get(canon)
+
+        if val is None:
+            # No validation probe for this model — skip
+            continue
+
+        # Round 2 claims from validation pass
+        r2_claims = val.get("claims", {})
+        r2_tp = r2_claims.get("tp", 0)
+        r2_fp = r2_claims.get("fp", 0)
+        r2_fn = r2_claims.get("fn", 0)
+        r2_denom = r2_tp + r2_fp + r2_fn
+        round2_score = _context_awareness(r2_tp, r2_fp, r2_fn) if r2_denom > 0 else None
+
+        # Round 1 score (from original Stage 2 self-review)
+        if ca and ca.get("score") is not None:
+            round1_score = ca["score"] / 100.0  # back to 0–1 for computation
+        else:
+            round1_score = None
+
+        # Compute enhanced metrics
+        if round1_score is not None and round2_score is not None:
+            stability = 1.0 - abs(round1_score - round2_score)
+            combined = (round1_score + round2_score) / 2.0
+            adversarial_delta = round2_score - round1_score
+
+            # Enrich the context_awareness block
+            if ca is None:
+                ca = {}
+            ca["round1_score"] = round(round1_score * 100, 1)
+            ca["round2_score"] = round(round2_score * 100, 1)
+            ca["round2_tp"] = r2_tp
+            ca["round2_fp"] = r2_fp
+            ca["round2_fn"] = r2_fn
+            ca["stability"] = round(stability * 100, 1)
+            ca["adversarial_delta"] = round(adversarial_delta * 100, 1)
+            ca["combined_score"] = round(combined * 100, 1)
+            ca["shuffled"] = val.get("shuffled", False)
+            resp["context_awareness"] = ca
+
+        elif round2_score is not None:
+            # Only round 2 available (no original self-review)
+            resp["context_awareness"] = {
+                "score": round(round2_score * 100, 1),
+                "self_tp": r2_tp,
+                "self_fp": r2_fp,
+                "self_fn": r2_fn,
+                "round1_score": None,
+                "round2_score": round(round2_score * 100, 1),
+                "round2_tp": r2_tp,
+                "round2_fp": r2_fp,
+                "round2_fn": r2_fn,
+                "stability": None,
+                "adversarial_delta": None,
+                "combined_score": round(round2_score * 100, 1),
+                "shuffled": val.get("shuffled", False),
+            }
+
+    # Add enhanced CA formulas to the return block
+    grounding_scores["ca_enhanced"] = True
+    grounding_scores["ca_stability_formula"] = "1 − |round1 − round2|"
+    grounding_scores["ca_combined_formula"] = "(round1 + round2) / 2"
+
+    return grounding_scores
 

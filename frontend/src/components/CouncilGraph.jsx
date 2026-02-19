@@ -221,6 +221,7 @@ function buildGraphData(conversation, agentTeamData) {
     data: {
       icon: '💬', label: 'User Prompt',
       sublabel: userText.slice(0, 120) + (userText.length > 120 ? '…' : ''),
+      fullSublabel: userText.length > 120 ? userText : undefined,
       ariaLabel: `User prompt: ${userText.slice(0, 200)}`,
       detailText: userText,
     },
@@ -244,7 +245,8 @@ function buildGraphData(conversation, agentTeamData) {
         type: 'neuron',
         position: { x: startX + i * NODE_GAP, y: LAYER_Y.stage1 },
         data: {
-          icon: '🤖', label: model.slice(0, 24),
+          icon: '🤖', label: model.slice(0, 24) + (model.length > 24 ? '…' : ''),
+          fullLabel: model.length > 24 ? model : undefined,
           sublabel: `${wc} words`,
           metric: `${wc}w`,
           accent: '#3b82f6',
@@ -356,7 +358,8 @@ function buildGraphData(conversation, agentTeamData) {
         position: { x: startX + i * 140, y: LAYER_Y.evidence },
         data: {
           icon: c.source === 'OpenFDA' ? '💊' : c.source === 'PubMed' ? '📄' : '🏥',
-          label: (c.title || '').slice(0, 80),
+          label: (c.title || '').slice(0, 80) + ((c.title || '').length > 80 ? '…' : ''),
+          fullLabel: (c.title || '').length > 80 ? c.title : undefined,
           sublabel: c.source,
           accent: '#f59e0b',
           size: 'sm',
@@ -453,7 +456,8 @@ function buildGraphData(conversation, agentTeamData) {
         data: {
           icon: agent.icon || '🔍',
           label: agent.role || `Agent ${i + 1}`,
-          sublabel: (agent.summary || '').slice(0, 150),
+          sublabel: (agent.summary || '').slice(0, 150) + ((agent.summary || '').length > 150 ? '…' : ''),
+          fullSublabel: (agent.summary || '').length > 150 ? agent.summary : undefined,
           accent: severityAccent,
           severity: criticalCount > 0 ? 'critical' : warningCount > 0 ? 'warning' : '',
           signals: signals.length,
@@ -587,11 +591,37 @@ function StaticGraphExport({ nodes, edges }) {
     (n.data.detailSignals?.length > 0) || n.data.detailText || (n.data.detailMetrics?.length > 0)
   );
 
+  // ── Callout reference system: collect nodes with truncated content ──
+  const calloutEntries = [];
+  nodes.forEach(n => {
+    const d = n.data;
+    if (d.fullLabel || d.fullSublabel) {
+      calloutEntries.push({
+        num: calloutEntries.length + 1,
+        id: n.id,
+        icon: d.icon,
+        type: n.type,
+        label: d.label,
+        fullLabel: d.fullLabel,
+        fullSublabel: d.fullSublabel,
+        metric: d.metric,
+        detailText: d.detailText,
+        detailEvidence: d.detailEvidence,
+      });
+    }
+  });
+  const calloutMap = {};
+  calloutEntries.forEach(c => { calloutMap[c.id] = c.num; });
+  const promptCallouts = calloutEntries.filter(c => c.type === 'input');
+  const modelCallouts = calloutEntries.filter(c => c.id.startsWith('s1-'));
+  const evidenceCallouts = calloutEntries.filter(c => c.id.startsWith('ev-'));
+  const agentRefCallouts = calloutEntries.filter(c => c.type === 'agent');
+
   return (
     <div className="static-graph-export" style={{ width: graphWidth }}>
 
       {/* ═══ Page 1: Graph ═══ */}
-      <div className="sg-graph-page" style={{ width: graphWidth, height: graphHeight, position: 'relative' }}>
+      <div className="sg-graph-page sg-export-page" style={{ width: graphWidth, height: graphHeight, position: 'relative' }}>
 
         {/* SVG edge layer */}
         <svg width={graphWidth} height={graphHeight}
@@ -630,6 +660,9 @@ function StaticGraphExport({ nodes, edges }) {
                 {node.data.warningCount > 0 && <span className="sn-dot sn-warn">{node.data.warningCount}</span>}
               </div>
             )}
+            {calloutMap[node.id] && (
+              <span className="sn-callout">{calloutMap[node.id]}</span>
+            )}
           </div>
         ))}
 
@@ -643,9 +676,82 @@ function StaticGraphExport({ nodes, edges }) {
         </div>
       </div>
 
-      {/* ═══ Page 2: Agent Detail Callouts ═══ */}
+      {/* ═══ Page 2: Full Reference for Annotated Nodes ═══ */}
+      {calloutEntries.length > 0 && (
+        <div className="sg-reference sg-export-page">
+          <div className="sg-ref-header-block">
+            <div className="sg-ref-title">📋 Council Graph — Full Reference</div>
+            <div className="sg-ref-subtitle">Complete text for annotated nodes ({calloutEntries.length} items)</div>
+          </div>
+
+          {promptCallouts.length > 0 && (
+            <div className="sg-ref-section">
+              <div className="sg-ref-section-title">💬 User Prompt</div>
+              {promptCallouts.map(c => (
+                <div key={c.id} className="sg-ref-entry sg-ref-prompt">
+                  <span className="sg-ref-num">{c.num}</span>
+                  <div className="sg-ref-content">
+                    <div className="sg-ref-text">{c.fullSublabel}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {modelCallouts.length > 0 && (
+            <div className="sg-ref-section">
+              <div className="sg-ref-section-title">🤖 Stage 1 — Model Responses</div>
+              {modelCallouts.map(c => (
+                <div key={c.id} className="sg-ref-entry">
+                  <span className="sg-ref-num">{c.num}</span>
+                  <div className="sg-ref-content">
+                    <div className="sg-ref-label">{c.fullLabel}</div>
+                    {c.metric && <span className="sg-ref-metric">{c.metric}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {evidenceCallouts.length > 0 && (
+            <div className="sg-ref-section">
+              <div className="sg-ref-section-title">📚 Evidence Citations</div>
+              {evidenceCallouts.map(c => {
+                const cit = c.detailEvidence?.[0];
+                return (
+                  <div key={c.id} className="sg-ref-entry sg-ref-evidence">
+                    <span className="sg-ref-num">{c.num}</span>
+                    <div className="sg-ref-content">
+                      <div className="sg-ref-label">{c.fullLabel}</div>
+                      {cit?.source && <div className="sg-ref-source">Source: {cit.source}</div>}
+                      {cit?.snippet && <div className="sg-ref-snippet">{cit.snippet}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {agentRefCallouts.length > 0 && (
+            <div className="sg-ref-section">
+              <div className="sg-ref-section-title">🔍 Agent Summaries</div>
+              {agentRefCallouts.map(c => (
+                <div key={c.id} className="sg-ref-entry">
+                  <span className="sg-ref-num">{c.num}</span>
+                  <div className="sg-ref-content">
+                    <div className="sg-ref-label">{c.icon} {c.label}</div>
+                    <div className="sg-ref-text">{c.fullSublabel}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═══ Page 3: Agent Detail Callouts ═══ */}
       {hasCallouts && (
-        <div className="sg-callouts">
+        <div className="sg-callouts sg-export-page">
           <div className="sg-callouts-title">Agent Analysis Detail</div>
           <div className="sg-callouts-subtitle">Expanded signal breakdown for each council agent</div>
 

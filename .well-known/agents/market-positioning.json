@@ -1,0 +1,62 @@
+{
+  "name": "Market Positioning Agent",
+  "description": "Analyses value proposition responses for competitive differentiation strength, unmet need identification, target audience specificity, and competitor framing. Activated only in value_proposition query mode. Evaluates the council synthesis for market-positioning clarity using keyword-based scoring across four strategic dimensions.",
+  "supportedInterfaces": [
+    {
+      "url": "https://localhost:8001/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://chat.int.bayer.com"
+  },
+  "iconUrl": "data:text/plain,🏷️",
+  "version": "2.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "competitive-differentiation",
+      "name": "Competitive Differentiation Analysis",
+      "description": "Keyword scoring for competitive positioning terms: 'differentiat', 'unique', 'superior', 'first-in-class', 'best-in-class', 'competitive advantage', 'novel'. Scores ≥3 hits = strong, 1-2 = moderate, 0 = weak.",
+      "tags": ["differentiation", "competitive", "positioning", "market"],
+      "examples": [
+        "Evaluate the competitive differentiation strength in a tafamidis value proposition"
+      ]
+    },
+    {
+      "id": "unmet-need-assessment",
+      "name": "Unmet Need Assessment",
+      "description": "Detects unmet need articulation via keywords: 'unmet need', 'gap in', 'no current', 'lack of', 'limited option', 'inadequate'. Strong articulation (3+) vs missing (0).",
+      "tags": ["unmet-need", "market-gap", "opportunity"]
+    },
+    {
+      "id": "target-audience-clarity",
+      "name": "Target Audience Clarity",
+      "description": "Identifies audience specificity: 'cardiologist', 'oncologist', 'primary care', 'specialist', 'patient population', 'prescriber', 'payer', 'HTA'. Well-defined (3+) vs needs refinement (0).",
+      "tags": ["audience", "targeting", "hcp", "payer", "hta"]
+    },
+    {
+      "id": "competitor-framing-check",
+      "name": "Competitor Framing Check",
+      "description": "Detects competitor references: 'competitor', 'versus', 'compared to', 'head-to-head', 'switching from', 'market share'. Good framing (2+) vs no competitive context (0).",
+      "tags": ["competitor", "framing", "comparison", "market-share"]
+    }
+  ],
+  "metadata": {
+    "agentId": "market_positioning",
+    "icon": "🏷️",
+    "category": "value_proposition",
+    "activationMode": "conditional",
+    "activationCondition": "detect_query_mode() == 'value_proposition'",
+    "pipelinePosition": "post-stage3",
+    "executionMode": "parallel",
+    "confidenceFormula": "min(1.0, 0.2 + sum(dimension_scores)*0.05)"
+  }
+}

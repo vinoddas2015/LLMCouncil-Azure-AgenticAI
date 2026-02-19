@@ -1,0 +1,54 @@
+{
+  "name": "Quality Auditor",
+  "description": "Audits response quality, completeness, and cost-effectiveness across the entire council pipeline. Computes aggregate rubric scores, evaluates Stage 3 synthesis completeness (structure, headings, conclusion), and reports token usage and cost metrics per model.",
+  "supportedInterfaces": [
+    {
+      "url": "https://localhost:8001/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://chat.int.bayer.com"
+  },
+  "iconUrl": "data:text/plain,📊",
+  "version": "2.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "rubric-score-audit",
+      "name": "Rubric Score Audit",
+      "description": "Aggregates rubric evaluation scores across all criteria and responses. Reports overall quality level: High (≥80%), Moderate (60-80%), or Below-Average (<60%). Flags individual criteria scoring below 50%.",
+      "tags": ["rubric", "quality", "audit", "scoring"],
+      "examples": [
+        "Audit the quality scores for a council session on cardiovascular drug comparisons"
+      ]
+    },
+    {
+      "id": "synthesis-completeness",
+      "name": "Synthesis Completeness Check",
+      "description": "Evaluates Stage 3 chairman output for structural completeness: word count thresholds (200+, 500+), markdown heading presence, bold text structure, and conclusion/summary section detection. Completeness from 0-100%.",
+      "tags": ["completeness", "structure", "synthesis", "headings"]
+    },
+    {
+      "id": "cost-efficiency-report",
+      "name": "Cost Efficiency Report",
+      "description": "Reports total token usage and estimated USD cost across all models in the pipeline. Provides cost-per-model breakdown for budget monitoring.",
+      "tags": ["cost", "tokens", "efficiency", "budget"]
+    }
+  ],
+  "metadata": {
+    "agentId": "quality_auditor",
+    "icon": "📊",
+    "category": "core",
+    "pipelinePosition": "post-stage3",
+    "executionMode": "parallel",
+    "confidenceFormula": "min(1.0, quality*0.6 + completeness*0.4)"
+  }
+}

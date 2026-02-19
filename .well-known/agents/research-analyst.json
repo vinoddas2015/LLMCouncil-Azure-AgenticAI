@@ -1,0 +1,54 @@
+{
+  "name": "Research Analyst",
+  "description": "Analyses research depth across the council pipeline: topic coverage, data density, evidence breadth, and synthesis richness. Measures average word count per model, citation integration from evidence skills, and output richness features (tables, references, equations, molecular structures).",
+  "supportedInterfaces": [
+    {
+      "url": "https://localhost:8001/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://chat.int.bayer.com"
+  },
+  "iconUrl": "data:text/plain,🔬",
+  "version": "2.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "topic-coverage-analysis",
+      "name": "Topic Coverage Analysis",
+      "description": "Evaluates the breadth and depth of model responses by measuring total word count, average words per model, and response distribution. Flags low-depth responses (<100 words/model) and celebrates high-depth (>400 words/model).",
+      "tags": ["coverage", "depth", "word-count", "response-quality"],
+      "examples": [
+        "Assess whether 5 models produced comprehensive enough responses on ATTR-CM treatment"
+      ]
+    },
+    {
+      "id": "evidence-integration-check",
+      "name": "Evidence Integration Check",
+      "description": "Verifies whether external citations from evidence skills (PubMed, ClinicalTrials.gov, FDA, etc.) were retrieved and integrated. Reports source types and skills used. Warns when answers rely purely on model training data.",
+      "tags": ["evidence", "citations", "integration", "sources"]
+    },
+    {
+      "id": "synthesis-richness-score",
+      "name": "Synthesis Richness Score",
+      "description": "Measures richness of the chairman's Stage 3 output: presence of markdown tables, inline citation tags, mathematical equations (KaTeX), and SMILES molecular structures. A score of 3+ features indicates rich scientific output.",
+      "tags": ["richness", "tables", "equations", "smiles", "scientific"]
+    }
+  ],
+  "metadata": {
+    "agentId": "research_analyst",
+    "icon": "🔬",
+    "category": "core",
+    "pipelinePosition": "post-stage3",
+    "executionMode": "parallel",
+    "confidenceFormula": "min(1.0, (avg_words/400)*0.5 + (citations/10)*0.3 + (richness/4)*0.2)"
+  }
+}

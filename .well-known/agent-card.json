@@ -1,0 +1,92 @@
+{
+  "name": "LLM Council — Multi-Model Deliberation System",
+  "description": "A 3-stage pharmaceutical deliberation engine where multiple LLMs collaboratively answer user questions through parallel response generation, anonymized peer review with RAGAS-aligned grounding metrics, and chairman synthesis. Post-pipeline, a team of 7 specialist agents (expandable to 10 in value-proposition mode) analyse the output for research depth, factual grounding, risk signals, patterns, insights, quality, and citation integrity.",
+  "supportedInterfaces": [
+    {
+      "url": "https://localhost:8001/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Bayer AG — Pharmaceutical Data Science",
+    "url": "https://chat.int.bayer.com"
+  },
+  "iconUrl": "https://localhost:5173/bayer-logo.png",
+  "version": "2.0.0",
+  "documentationUrl": "https://localhost:5173",
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false,
+    "extendedAgentCard": true
+  },
+  "securitySchemes": {
+    "bayerApiKey": {
+      "httpAuthSecurityScheme": {
+        "description": "Bayer myGenAssist API key via Bearer token",
+        "scheme": "Bearer",
+        "bearerFormat": "API Key"
+      }
+    }
+  },
+  "securityRequirements": [
+    { "bayerApiKey": [] }
+  ],
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["text/plain", "application/json", "text/event-stream"],
+  "skills": [
+    {
+      "id": "council-deliberation",
+      "name": "Council Deliberation Pipeline",
+      "description": "End-to-end 3-stage deliberation: Stage 1 (parallel LLM responses), Stage 2 (anonymized peer review with claim-level grounding), Stage 3 (chairman synthesis). Returns structured output with grounding scores, aggregate rankings, and evidence bundles.",
+      "tags": ["deliberation", "multi-model", "peer-review", "synthesis", "pharma", "grounding"],
+      "examples": [
+        "What is the mechanism of action of tafamidis for ATTR-CM?",
+        "Compare the safety profiles of DOACs vs warfarin in atrial fibrillation",
+        "Summarize Phase III clinical trial results for pembrolizumab in NSCLC"
+      ],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/event-stream", "application/json"]
+    },
+    {
+      "id": "agent-team-analysis",
+      "name": "Agent Team Post-Pipeline Analysis",
+      "description": "Runs 7 specialist agents in parallel after the council pipeline to provide multi-dimensional analysis: research depth, fact-checking, risk assessment, pattern detection, insight synthesis, quality auditing, and citation supervision.",
+      "tags": ["agents", "analysis", "fact-check", "risk", "quality", "citations"],
+      "examples": [
+        "Analyse the council output for safety signals and hallucination risk",
+        "Audit response quality, completeness, and cost-effectiveness"
+      ],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "value-proposition-analysis",
+      "name": "Value Proposition Specialist Analysis",
+      "description": "Activates 3 additional VP-specialist agents (Market Positioning, Clinical Value, Messaging Strategist) when the query involves competitive differentiation, positioning, or messaging strategy. Auto-detected from query keywords.",
+      "tags": ["value-proposition", "positioning", "clinical-value", "messaging", "competitive"],
+      "examples": [
+        "Create a value proposition for tafamidis targeting cardiologists",
+        "Develop a competitive positioning framework for our ATTR-CM treatment vs standard of care"
+      ],
+      "inputModes": ["text/plain"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "context-awareness-validation",
+      "name": "Context Awareness & Catastrophic Forgetting Detection",
+      "description": "Detects catastrophic forgetting by running adversarial self-review probes. Measures whether models can recognise their own claims when anonymized and paragraph-shuffled. Produces stability scores, adversarial deltas, and combined CA metrics.",
+      "tags": ["context-awareness", "catastrophic-forgetting", "self-review", "adversarial", "validation"],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "evidence-skills",
+      "name": "Evidence Retrieval Skills",
+      "description": "Multi-source evidence retrieval via PubMed, ClinicalTrials.gov, FDA, EMA, UniProt, ChEMBL, SMILES, Wikipedia, ORCID, and patent search. Citations are integrated into the chairman synthesis with inline tags.",
+      "tags": ["evidence", "pubmed", "clinical-trials", "fda", "citations", "retrieval"],
+      "inputModes": ["text/plain"],
+      "outputModes": ["application/json"]
+    }
+  ]
+}

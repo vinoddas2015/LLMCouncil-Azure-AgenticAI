@@ -396,3 +396,23 @@
 [data-theme="light"] .grounding-context-awareness {
   border-top-color: rgba(0, 0, 0, 0.08);
 }
+
+/* ── CA Multi-Round + Adversarial Enhancements ── */
+
+.ca-multi-round {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.ca-stability-badge {
+  font-size: 0.78rem;
+  opacity: 0.85;
+}
+
+.ca-delta {
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-top: 2px;
+}

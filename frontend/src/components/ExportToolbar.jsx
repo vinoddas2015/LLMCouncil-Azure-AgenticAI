@@ -59,33 +59,39 @@ async function capturePages(element) {
   element.classList.add('export-print-mode');
   await new Promise((r) => setTimeout(r, 400));
 
-  const sections = [];
-  const graphPage = element.querySelector('.sg-graph-page');
-  const calloutsPage = element.querySelector('.sg-callouts');
-
   try {
     const scale = window.devicePixelRatio >= 2 ? 2 : 3;
     const opts = { scale, useCORS: true, allowTaint: true, backgroundColor: '#ffffff', logging: false };
 
-    if (graphPage) {
-      const c = await html2canvas(graphPage, {
+    // Capture all pages marked with .sg-export-page (multi-page callout system)
+    const pageEls = element.querySelectorAll('.sg-export-page');
+    const sections = [];
+
+    for (const page of pageEls) {
+      const c = await html2canvas(page, {
         ...opts,
-        width: Math.max(graphPage.scrollWidth, A4_WIDTH_PX),
-        windowWidth: Math.max(graphPage.scrollWidth, A4_WIDTH_PX),
+        width: Math.max(page.scrollWidth, A4_WIDTH_PX),
+        windowWidth: Math.max(page.scrollWidth, A4_WIDTH_PX),
       });
       sections.push(c);
     }
 
-    if (calloutsPage) {
-      const c = await html2canvas(calloutsPage, {
-        ...opts,
-        width: Math.max(calloutsPage.scrollWidth, A4_WIDTH_PX),
-        windowWidth: Math.max(calloutsPage.scrollWidth, A4_WIDTH_PX),
-      });
-      sections.push(c);
+    // Fallback: try legacy selectors
+    if (sections.length === 0) {
+      for (const sel of ['.sg-graph-page', '.sg-callouts']) {
+        const el = element.querySelector(sel);
+        if (el) {
+          const c = await html2canvas(el, {
+            ...opts,
+            width: Math.max(el.scrollWidth, A4_WIDTH_PX),
+            windowWidth: Math.max(el.scrollWidth, A4_WIDTH_PX),
+          });
+          sections.push(c);
+        }
+      }
     }
 
-    // Fallback: grab entire element if no sub-sections found
+    // Final fallback: grab entire element
     if (sections.length === 0) {
       const c = await html2canvas(element, {
         ...opts,

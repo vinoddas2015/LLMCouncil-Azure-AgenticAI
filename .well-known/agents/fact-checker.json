@@ -1,0 +1,59 @@
+{
+  "name": "Fact Checker",
+  "description": "Validates claims against peer-review evidence, detects hallucination signals, and assesses inter-model agreement via RAGAS-aligned grounding metrics. Analyses True Positive, False Positive, and False Negative claim counts from Stage 2 peer reviews, overall grounding score, and per-response score variance.",
+  "supportedInterfaces": [
+    {
+      "url": "https://localhost:8001/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://chat.int.bayer.com"
+  },
+  "iconUrl": "data:text/plain,🛡️",
+  "version": "2.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "grounding-score-analysis",
+      "name": "Grounding Score Analysis",
+      "description": "Evaluates overall grounding score from peer reviews. Strong (≥80%), Moderate (60-80%), or Low (<60%) grounding levels with corresponding hallucination risk assessment.",
+      "tags": ["grounding", "hallucination", "agreement", "ragas"],
+      "examples": [
+        "Verify claim accuracy across 5 model responses on drug safety profiles"
+      ]
+    },
+    {
+      "id": "claim-confusion-matrix",
+      "name": "Claim Confusion Matrix Analysis",
+      "description": "Aggregates TP/FP/FN claim counts across all peer reviewers. Detects false positive (hallucinated) and false negative (omitted) claims. Clean profile = 0 FP, 0 FN.",
+      "tags": ["claims", "tp", "fp", "fn", "confusion-matrix", "precision", "recall"]
+    },
+    {
+      "id": "score-variance-detection",
+      "name": "Score Variance Detection",
+      "description": "Identifies high variance (>30 point spread) in per-response grounding scores, indicating strong disagreement among model reviewers.",
+      "tags": ["variance", "disagreement", "consistency"]
+    }
+  ],
+  "metadata": {
+    "agentId": "fact_checker",
+    "icon": "🛡️",
+    "category": "core",
+    "pipelinePosition": "post-stage3",
+    "executionMode": "parallel",
+    "confidenceFormula": "overall_grounding_score / 100.0",
+    "ragasAlignment": {
+      "precision": "Faithfulness (supported claims / total claims)",
+      "recall": "Context Recall (attributable sentences / total sentences)",
+      "f1": "Factual Correctness (balanced F1 score)"
+    }
+  }
+}

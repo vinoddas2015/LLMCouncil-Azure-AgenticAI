@@ -182,26 +182,61 @@ export default function GroundingScore({ groundingScores }) {
               <h5>Context Awareness <span className="ca-subtitle">(Catastrophic Forgetting Detection)</span></h5>
               <p className="pharma-explainer">
                 Self-review only: measures whether a model recognises its own claims when reviewing its anonymized response. Low score = forgetting or self-contradiction.
+                {groundingScores.ca_enhanced && (
+                  <> Multi-round validation with adversarial paragraph shuffling provides stability measurement.</>
+                )}
               </p>
               {per_response.map((r, i) => {
                 const ca = r.context_awareness;
                 if (!ca || ca.score == null) return null;
                 const shortName = (r.model || '').split('/')[1] || r.model;
-                const caPct = Math.round(ca.score);
+                const displayScore = ca.combined_score != null ? ca.combined_score : ca.score;
+                const caPct = Math.round(displayScore);
                 const caColor = caPct >= 80 ? 'var(--success)' : caPct >= 60 ? 'var(--warning)' : 'var(--error)';
                 const caLabel = caPct >= 80 ? 'Strong' : caPct >= 60 ? 'Moderate' : 'Weak (Forgetting)';
+                const hasMultiRound = ca.round1_score != null && ca.round2_score != null;
                 return (
                   <div className="ca-model-block" key={i}>
                     <div className="ca-header-row">
                       <span className="pharma-model-name">#{r.rank} {shortName}</span>
-                      <span className="ca-score" style={{ color: caColor }}>{caPct}% — {caLabel}</span>
+                      <span className="ca-score" style={{ color: caColor }}>
+                        {caPct}% — {caLabel}
+                        {hasMultiRound && ca.stability != null && (
+                          <span className="ca-stability-badge" title={`Stability: consistency between Round 1 and Round 2 self-review`}>
+                            {' '}· Stability {Math.round(ca.stability)}%
+                          </span>
+                        )}
+                      </span>
                     </div>
                     <div className="ca-bar-track">
                       <div className="ca-bar-fill" style={{ width: `${caPct}%`, background: caColor }} />
                     </div>
-                    <span className="pharma-counts">
-                      self-TP {ca.self_tp} · self-FP {ca.self_fp} · self-FN {ca.self_fn}
-                    </span>
+                    {hasMultiRound ? (
+                      <div className="ca-multi-round">
+                        <span className="pharma-counts">
+                          R1: {Math.round(ca.round1_score)}%
+                          (self-TP {ca.self_tp} · self-FP {ca.self_fp} · self-FN {ca.self_fn})
+                        </span>
+                        <span className="pharma-counts">
+                          R2{ca.shuffled ? ' (shuffled)' : ''}: {Math.round(ca.round2_score)}%
+                          (TP {ca.round2_tp} · FP {ca.round2_fp} · FN {ca.round2_fn})
+                        </span>
+                        {ca.adversarial_delta != null && (
+                          <span className="ca-delta" style={{
+                            color: Math.abs(ca.adversarial_delta) <= 10 ? 'var(--success)' :
+                                   Math.abs(ca.adversarial_delta) <= 25 ? 'var(--warning)' : 'var(--error)'
+                          }}>
+                            Δ {ca.adversarial_delta > 0 ? '+' : ''}{Math.round(ca.adversarial_delta)}%
+                            {Math.abs(ca.adversarial_delta) <= 10 ? ' (stable)' :
+                             Math.abs(ca.adversarial_delta) <= 25 ? ' (moderate shift)' : ' (position-sensitive)'}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="pharma-counts">
+                        self-TP {ca.self_tp} · self-FP {ca.self_fp} · self-FN {ca.self_fn}
+                      </span>
+                    )}
                   </div>
                 );
               })}

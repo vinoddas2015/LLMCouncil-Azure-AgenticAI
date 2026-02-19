@@ -62,6 +62,20 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
   - Self-reviews excluded from peer metrics but repurposed for self-consistency measurement
   - A model that marks its own claims as FP or fails to detect them (FN) during anonymized self-review exhibits catastrophic forgetting
   - Score: `self_TP / (self_TP + self_FP + self_FN)` — severity: Strong ≥80%, Moderate ≥60%, Weak <60%
+- **Enhanced CA (Multi-Round + Adversarial Shuffling)**:
+  - `stage2_ca_validation_pass()` in council.py runs a lightweight claims-only self-review probe per model
+  - Paragraphs in the model's own response are **shuffled** before re-evaluation (adversarial)
+  - Runs in **parallel with Stage 3** (no added latency to user-visible pipeline)
+  - `enhance_ca_with_validation()` in grounding.py merges Round 1 (original Stage 2) + Round 2 (validation pass) data
+  - Enhanced metrics: `round1_score`, `round2_score`, `stability` (1−|R1−R2|), `adversarial_delta`, `combined_score` ((R1+R2)/2)
+  - Stability score: high = robust self-awareness, low = position-sensitive forgetting
+  - Adversarial delta: large |Δ| = content-order-dependent recognition → brittle
+- **Cross-Session CA Tracking**:
+  - `store_ca_snapshot()` in memory.py persists per-model CA data after each council run
+  - `get_ca_trend(model)` retrieves historical CA snapshots for degradation analysis
+  - `get_ca_trends_all_models()` returns trends for all models
+  - Stored in episodic collection with `type: "ca_snapshot"` for audit trail
+  - SSE event `ca_validation_complete` includes updated grounding_scores for live frontend refresh
 - `compute_response_grounding_scores()` returns `peer_reviews` count per response for transparency
 - Formulas:
   - Correctness = TP/(TP+2×FN+FP) — pharma-weighted (penalises missed safety info)
@@ -69,12 +83,14 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
   - Precision = TP/(TP+FP)
   - Recall = TP/(TP+FN)
   - Context Awareness = self_TP/(self_TP+self_FP+self_FN)
+  - CA Stability = 1 − |round1 − round2|
+  - CA Combined = (round1 + round2) / 2
 
 **`main.py`**
 - FastAPI app with CORS enabled for localhost:5173 and localhost:3000
 - POST `/api/conversations/{id}/message` returns metadata in addition to stages
 - Metadata includes: label_to_model mapping and aggregate_rankings
-- SSE pipeline includes `agent_team_complete` event after cost_summary
+- SSE pipeline includes `ca_validation_complete` event (with enhanced grounding_scores) after Stage 3 and `agent_team_complete` event after cost_summary
 
 **`agents.py`** — Agent Team (Post-Pipeline Intelligence)
 - 7 specialised async agents that analyse council output in parallel:

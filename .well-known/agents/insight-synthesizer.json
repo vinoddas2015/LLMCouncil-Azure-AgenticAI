@@ -1,0 +1,55 @@
+{
+  "name": "Insight Synthesizer",
+  "description": "Generates strategic insights by cross-referencing model outputs, evidence bundles, and ranking patterns. Identifies unique perspectives from top-ranked models, detects evidence-to-response gaps (retrieved but unused citations), and assesses query complexity across multiple dimensions (comparison, mechanism, safety).",
+  "supportedInterfaces": [
+    {
+      "url": "https://localhost:8001/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://chat.int.bayer.com"
+  },
+  "iconUrl": "data:text/plain,💡",
+  "version": "2.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "cross-model-uniqueness",
+      "name": "Cross-Model Unique Insight Detection",
+      "description": "Identifies information that appears only in the top-ranked model's response, measuring unique term count to quantify distinctive analytical contributions.",
+      "tags": ["unique-insights", "cross-model", "differentiation"],
+      "examples": [
+        "Identify unique perspectives in the top-ranked model's response on ATTR-CM mechanisms"
+      ]
+    },
+    {
+      "id": "evidence-gap-analysis",
+      "name": "Evidence-to-Response Gap Analysis",
+      "description": "Compares retrieved evidence citations against actual references in the chairman's synthesis. Detects unused citations (potential knowledge gaps) and confirms successful integration count.",
+      "tags": ["evidence-gap", "citations", "knowledge-gap", "integration"]
+    },
+    {
+      "id": "query-complexity-assessment",
+      "name": "Query Complexity Assessment",
+      "description": "Multi-dimensional complexity scoring: word count, comparison indicators, mechanism queries, safety focus. Classifies as Simple, Moderate, Complex, Highly Complex, or Expert-Level.",
+      "tags": ["complexity", "assessment", "classification"]
+    }
+  ],
+  "metadata": {
+    "agentId": "insight_synthesizer",
+    "icon": "💡",
+    "category": "core",
+    "pipelinePosition": "post-stage3",
+    "executionMode": "parallel",
+    "confidenceFormula": "min(1.0, 0.4 + signals*0.12)",
+    "complexityLevels": ["Simple", "Moderate", "Complex", "Highly Complex", "Expert-Level"]
+  }
+}

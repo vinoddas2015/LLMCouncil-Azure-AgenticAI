@@ -331,7 +331,15 @@ function buildTree(conversation) {
                 <> — Corr {r.pharma_metrics.correctness}% · F1 {r.pharma_metrics.f1}% · Prec {r.pharma_metrics.precision}% · Rec {r.pharma_metrics.recall}%</>
               )}
               {r.context_awareness && r.context_awareness.score != null && (
-                <> · CA {r.context_awareness.score}%</>
+                <>
+                  {' · CA '}
+                  {r.context_awareness.combined_score != null
+                    ? r.context_awareness.combined_score
+                    : r.context_awareness.score}%
+                  {r.context_awareness.stability != null && (
+                    <> (stab {Math.round(r.context_awareness.stability)}%)</>
+                  )}
+                </>
               )}
             </div>
           ))}

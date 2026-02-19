@@ -1,0 +1,64 @@
+{
+  "name": "Citation Supervisor",
+  "description": "Validates and enriches the REFERENCES section in the chairman's synthesis. Parses numbered reference entries, verifies clickable URLs, auto-generates PubMed lookup links for unlinked references, detects orphan inline citation tags not backed by evidence, and linkifies DOIs and PMIDs throughout the response.",
+  "supportedInterfaces": [
+    {
+      "url": "https://localhost:8001/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://chat.int.bayer.com"
+  },
+  "iconUrl": "data:text/plain,🔗",
+  "version": "2.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "reference-validation",
+      "name": "Reference Section Validation",
+      "description": "Parses the REFERENCES section from Stage 3 markdown output. Counts total references, checks each for clickable URLs, and reports link coverage ratio.",
+      "tags": ["references", "validation", "urls", "links"],
+      "examples": [
+        "Validate that all references in the ATTR-CM synthesis have clickable DOI or PubMed links"
+      ]
+    },
+    {
+      "id": "pubmed-auto-enrichment",
+      "name": "PubMed Auto-Enrichment",
+      "description": "For references lacking URLs, automatically generates PubMed search links from extracted title, first author surname, and publication year metadata.",
+      "tags": ["pubmed", "enrichment", "auto-link", "search"]
+    },
+    {
+      "id": "inline-tag-grounding",
+      "name": "Inline Citation Tag Grounding",
+      "description": "Cross-references inline citation tags ([FDA-xxx], [CT-xxx], [PM-xxx], etc.) against the evidence bundle to verify each tag has a matching source. Reports orphan tags without evidence backing.",
+      "tags": ["inline-citations", "grounding", "orphan-tags", "evidence"]
+    },
+    {
+      "id": "doi-pmid-linkification",
+      "name": "DOI & PMID Linkification",
+      "description": "Detects standalone DOI patterns (doi:10.xxxx/...) and PMID mentions (PMID: 12345678) throughout the text and reports counts. The pre-emission enrichment function converts these to clickable links.",
+      "tags": ["doi", "pmid", "persistent-identifiers", "linkification"]
+    }
+  ],
+  "metadata": {
+    "agentId": "citation_supervisor",
+    "icon": "🔗",
+    "category": "core",
+    "pipelinePosition": "post-stage3",
+    "executionMode": "parallel",
+    "confidenceFormula": "0.3 + link_ratio*0.35 + tag_grounding_ratio*0.35",
+    "knownJournals": [
+      "N Engl J Med", "Lancet", "JAMA", "BMJ", "Nature", "Science",
+      "Cell", "Circulation", "Blood", "J Clin Oncol", "Ann Intern Med"
+    ]
+  }
+}

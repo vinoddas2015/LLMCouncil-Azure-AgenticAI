@@ -547,6 +547,109 @@ class MemoryManager:
         backend.put(memory_type, memory_id, doc)
         return True
 
+    # ── Context Awareness Cross-Session Tracking ─────────────────────
+
+    CA_COLLECTION = "episodic"  # Store CA history alongside episode records
+
+    def store_ca_snapshot(
+        self,
+        conversation_id: str,
+        model: str,
+        ca_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Persist a per-model Context Awareness snapshot for cross-session
+        trend analysis.
+
+        Stored in the episodic collection with type "ca_snapshot" so it
+        can be queried alongside deliberation records.
+
+        Args:
+            conversation_id: The conversation this CA was measured in.
+            model: Canonical model name (e.g. "claude-opus-4.6").
+            ca_data: The context_awareness dict from grounding_scores.
+
+        Returns:
+            The stored document.
+        """
+        backend = get_memory_backend()
+        entry_id = f"ca_{conversation_id}_{model.replace('/', '_')}_{uuid.uuid4().hex[:6]}"
+
+        entry = {
+            "id": entry_id,
+            "type": "ca_snapshot",
+            "conversation_id": conversation_id,
+            "model": model,
+            "score": ca_data.get("score"),
+            "self_tp": ca_data.get("self_tp", 0),
+            "self_fp": ca_data.get("self_fp", 0),
+            "self_fn": ca_data.get("self_fn", 0),
+            "round1_score": ca_data.get("round1_score"),
+            "round2_score": ca_data.get("round2_score"),
+            "stability": ca_data.get("stability"),
+            "combined_score": ca_data.get("combined_score"),
+            "adversarial_delta": ca_data.get("adversarial_delta"),
+            "shuffled": ca_data.get("shuffled", False),
+            "status": "active",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        backend.put(self.CA_COLLECTION, entry_id, entry)
+        logger.info(
+            f"[MemoryManager] CA snapshot stored for {model} "
+            f"(score={ca_data.get('score')}, conv={conversation_id})"
+        )
+        return entry
+
+    def get_ca_trend(
+        self,
+        model: str,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve historical CA snapshots for a specific model, sorted
+        newest-first.
+
+        Args:
+            model: Model name to query (e.g. "claude-opus-4.6").
+            limit: Maximum number of snapshots to return.
+
+        Returns:
+            List of ca_snapshot documents, newest first.
+        """
+        backend = get_memory_backend()
+        all_snapshots = backend.query(self.CA_COLLECTION, {"type": "ca_snapshot", "model": model})
+        # Sort by created_at descending
+        all_snapshots.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return all_snapshots[:limit]
+
+    def get_ca_trends_all_models(
+        self,
+        limit_per_model: int = 10,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Retrieve CA trends for ALL models that have snapshots.
+
+        Returns:
+            Dict mapping model name → list of snapshots (newest first).
+        """
+        backend = get_memory_backend()
+        keys = backend.list_keys(self.CA_COLLECTION)
+        model_snapshots: Dict[str, List[Dict[str, Any]]] = {}
+        for k in keys:
+            doc = backend.get(self.CA_COLLECTION, k)
+            if doc and doc.get("type") == "ca_snapshot":
+                model = doc.get("model", "unknown")
+                if model not in model_snapshots:
+                    model_snapshots[model] = []
+                model_snapshots[model].append(doc)
+        # Sort each model's snapshots newest first and limit
+        for model in model_snapshots:
+            model_snapshots[model].sort(
+                key=lambda x: x.get("created_at", ""), reverse=True
+            )
+            model_snapshots[model] = model_snapshots[model][:limit_per_model]
+        return model_snapshots
+
     # ── Statistics ───────────────────────────────────────────────────
 
     def stats(self) -> Dict[str, Any]:

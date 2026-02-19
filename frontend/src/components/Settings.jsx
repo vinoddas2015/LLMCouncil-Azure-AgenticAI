@@ -159,6 +159,24 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
             </div>
 
             {/* Web Search toggle moved to input area — see ChatInterface.jsx */}
+
+            <div className="settings-section">
+              <h3>🤖 A2A Agent Cards</h3>
+              <p className="settings-description">
+                Download the full Agent-to-Agent protocol card bundle for all {10} council agents.
+                Includes the main council card and individual cards for each specialist agent.
+              </p>
+              <button
+                className="download-agent-cards-btn"
+                onClick={async () => {
+                  try { await api.downloadAgentCards(); }
+                  catch (e) { console.error('Agent card download failed:', e); }
+                }}
+                aria-label="Download A2A agent cards as JSON"
+              >
+                📥 Download Agent Cards
+              </button>
+            </div>
           </div>
         )}
 

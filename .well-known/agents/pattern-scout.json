@@ -1,0 +1,61 @@
+{
+  "name": "Pattern Scout",
+  "description": "Detects patterns across model responses: consensus areas, divergence points, recurring pharmaceutical themes, and rubric trend analysis. Calculates rank spread to measure inter-model agreement, performs keyword-frequency theme detection across 15 pharma-specific categories, and analyses rubric score distributions to identify strongest and weakest evaluation criteria.",
+  "supportedInterfaces": [
+    {
+      "url": "https://localhost:8001/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://chat.int.bayer.com"
+  },
+  "iconUrl": "data:text/plain,🔍",
+  "version": "2.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "consensus-detection",
+      "name": "Consensus Detection",
+      "description": "Analyses aggregate rankings to determine model consensus. Rank spread <1.0 = strong consensus; >2.5 = significant divergence. Identifies top-ranked model with average position and review count.",
+      "tags": ["consensus", "rankings", "agreement", "divergence"],
+      "examples": [
+        "Determine how much models agree on the best response about tafamidis efficacy"
+      ]
+    },
+    {
+      "id": "pharma-theme-detection",
+      "name": "Pharmaceutical Theme Detection",
+      "description": "Keyword-frequency analysis across 15 pharma categories: mechanism of action, pharmacokinetics, pharmacodynamics, clinical trial, safety profile, efficacy, bioavailability, half-life, dosing, metabolism, side effect, adverse, regulation, approval, indication.",
+      "tags": ["themes", "pharma", "pharmacokinetics", "pharmacodynamics", "clinical"]
+    },
+    {
+      "id": "rubric-trend-analysis",
+      "name": "Rubric Trend Analysis",
+      "description": "Analyses Stage 2 rubric scores across all criteria and responses. Identifies strongest and weakest evaluation dimensions with aggregate percentages to guide quality improvement.",
+      "tags": ["rubric", "trends", "quality-criteria", "scoring"]
+    }
+  ],
+  "metadata": {
+    "agentId": "pattern_scout",
+    "icon": "🔍",
+    "category": "core",
+    "pipelinePosition": "post-stage3",
+    "executionMode": "parallel",
+    "confidenceFormula": "min(1.0, 0.5 + themes*0.03 + (0.2 if rankings))",
+    "pharmaThemes": [
+      "mechanism of action", "pharmacokinetics", "pharmacodynamics",
+      "clinical trial", "safety profile", "efficacy",
+      "bioavailability", "half-life", "dosing",
+      "metabolism", "side effect", "adverse",
+      "regulation", "approval", "indication"
+    ]
+  }
+}

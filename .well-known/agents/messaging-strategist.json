@@ -1,0 +1,62 @@
+{
+  "name": "Messaging Strategist",
+  "description": "Evaluates pharma value propositions for commercial messaging excellence: Challenge-Solution-Outcome narrative structure, patient-centric language, audience segmentation, and readability metrics. Activated only in value_proposition query mode.",
+  "supportedInterfaces": [
+    {
+      "url": "https://localhost:8001/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://chat.int.bayer.com"
+  },
+  "iconUrl": "data:text/plain,📣",
+  "version": "2.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "cso-narrative-check",
+      "name": "Challenge-Solution-Outcome Narrative Check",
+      "description": "Evaluates presence of the three messaging pillars: Challenge keywords ('challenge', 'problem', 'burden', 'unmet'), Solution keywords ('solution', 'addresses', 'offers', 'provides', 'enables'), Outcome keywords ('outcome', 'result', 'improvement', 'benefit', 'reduction'). Each pillar scored independently.",
+      "tags": ["narrative", "messaging", "cso-structure", "storytelling"],
+      "examples": [
+        "Check if the Bayer product value proposition follows Challenge→Solution→Outcome structure"
+      ]
+    },
+    {
+      "id": "patient-centricity-score",
+      "name": "Patient-Centricity Score",
+      "description": "Measures patient-focused language density: 'patient', 'quality of life', 'qol', 'symptom', 'burden', 'daily living', 'caregiver', 'adherence', 'convenience'. High (5+) vs clinical-only (0) language.",
+      "tags": ["patient-centric", "qol", "adherence", "patient-outcomes"]
+    },
+    {
+      "id": "audience-segmentation-review",
+      "name": "Audience Segmentation Review",
+      "description": "Detects audience-specific language: 'hcp', 'physician', 'payer', 'patient', 'formulary', 'reimbursement', 'guideline', 'protocol'. Multi-segment (4+) vs mono-audience (0-1).",
+      "tags": ["segmentation", "hcp", "payer", "formulary", "reimbursement"]
+    },
+    {
+      "id": "readability-metrics",
+      "name": "Readability Metrics",
+      "description": "Computes sentence-level readability: average sentence length (words/sentence). Optimal = 15-20 words/sentence. Very long (>25) or very short (<10) sentences flagged for messaging clarity.",
+      "tags": ["readability", "sentence-length", "clarity", "plain-language"]
+    }
+  ],
+  "metadata": {
+    "agentId": "messaging_strategist",
+    "icon": "📣",
+    "category": "value_proposition",
+    "activationMode": "conditional",
+    "activationCondition": "detect_query_mode() == 'value_proposition'",
+    "pipelinePosition": "post-stage3",
+    "executionMode": "parallel",
+    "confidenceFormula": "min(1.0, 0.2 + sum(dimension_scores)*0.05)"
+  }
+}

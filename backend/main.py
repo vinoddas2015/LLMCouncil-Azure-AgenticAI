@@ -16,7 +16,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 from . import storage
-from .council import run_full_council, generate_conversation_title, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings
+from .council import run_full_council, generate_conversation_title, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, stage2_ca_validation_pass
 from .config import OPENROUTER_API_KEY, AVAILABLE_MODELS, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL
 from .openrouter import query_model
 from .resilience import (
@@ -26,7 +26,7 @@ from .resilience import (
     KillSwitchError,
     QuorumError,
 )
-from .grounding import compute_response_grounding_scores, get_rubric_criteria
+from .grounding import compute_response_grounding_scores, get_rubric_criteria, enhance_ca_with_validation
 from .skills import run_evidence_skills, format_citations_for_prompt
 from .token_tracking import SessionCostTracker
 from .memory import get_memory_manager
@@ -571,6 +571,84 @@ async def reset_circuits(model: Optional[str] = None):
 
 
 # ────────────────────────────────────────────────────────────────────────
+# A2A Agent Card Discovery (/.well-known/agent-card.json)
+# ────────────────────────────────────────────────────────────────────────
+
+_WELLKNOWN_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".well-known")
+
+
+def _load_json(path: str):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.get("/.well-known/agent-card.json")
+async def get_agent_card():
+    """A2A protocol discovery endpoint — returns the main council agent card."""
+    card_path = os.path.join(_WELLKNOWN_DIR, "agent-card.json")
+    if not os.path.exists(card_path):
+        raise HTTPException(status_code=404, detail="Agent card not found")
+    return _load_json(card_path)
+
+
+@app.get("/api/agent-cards")
+async def list_agent_cards():
+    """List all individual agent cards (core + VP)."""
+    agents_dir = os.path.join(_WELLKNOWN_DIR, "agents")
+    if not os.path.isdir(agents_dir):
+        return {"agents": []}
+    cards = []
+    for fname in sorted(os.listdir(agents_dir)):
+        if fname.endswith(".json"):
+            cards.append(_load_json(os.path.join(agents_dir, fname)))
+    return {"agents": cards, "count": len(cards)}
+
+
+@app.get("/api/agent-cards/{agent_id}")
+async def get_individual_agent_card(agent_id: str):
+    """Get a specific agent card by ID (e.g. 'research-analyst')."""
+    card_path = os.path.join(_WELLKNOWN_DIR, "agents", f"{agent_id}.json")
+    if not os.path.exists(card_path):
+        raise HTTPException(status_code=404, detail=f"Agent card '{agent_id}' not found")
+    return _load_json(card_path)
+
+
+@app.get("/api/agent-cards-download")
+async def download_agent_cards():
+    """Download the full A2A agent card bundle as a single JSON file."""
+    from fastapi.responses import Response
+
+    # Load the main council card
+    main_card_path = os.path.join(_WELLKNOWN_DIR, "agent-card.json")
+    main_card = _load_json(main_card_path) if os.path.exists(main_card_path) else {}
+
+    # Load all individual agent cards
+    agents_dir = os.path.join(_WELLKNOWN_DIR, "agents")
+    agent_cards = []
+    if os.path.isdir(agents_dir):
+        for fname in sorted(os.listdir(agents_dir)):
+            if fname.endswith(".json"):
+                agent_cards.append(_load_json(os.path.join(agents_dir, fname)))
+
+    bundle = {
+        "a2a_protocol_version": "1.0",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "council": main_card,
+        "agents": agent_cards,
+        "agent_count": len(agent_cards),
+    }
+
+    content = json.dumps(bundle, indent=2, ensure_ascii=False)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="llm-council-agent-cards.json"'
+        },
+    )
+
+
+# ────────────────────────────────────────────────────────────────────────
 # Memory Management API
 # ────────────────────────────────────────────────────────────────────────
 
@@ -831,6 +909,19 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             # Stage 3: Synthesize final answer
             yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
             evidence_text = format_citations_for_prompt(evidence_bundle)
+
+            # Fire CA validation pass in parallel with Stage 3 (lightweight probes)
+            ca_validation_task = asyncio.create_task(
+                stage2_ca_validation_pass(
+                    augmented_content,
+                    stage1_results,
+                    label_to_model,
+                    user_council_models,
+                    web_search_enabled,
+                    session_id=session_id,
+                )
+            )
+
             stage3_result = await stage3_synthesize_final(
                 augmented_content, stage1_results, stage2_results,
                 user_chairman_model, conversation_history, web_search_enabled,
@@ -839,6 +930,38 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             )
             # Record Stage 3 token usage
             cost_tracker.record("stage3", stage3_result.get("model", "unknown"), stage3_result.get("usage"))
+
+            # Await CA validation (should be done — ran during Stage 3)
+            try:
+                ca_validation_results = await ca_validation_task
+                if ca_validation_results:
+                    # Record CA validation token usage
+                    for model_name, val_data in ca_validation_results.items():
+                        if val_data.get("usage"):
+                            cost_tracker.record("ca_validation", model_name, val_data["usage"])
+                    # Enhance grounding scores with multi-round CA data
+                    grounding_scores = enhance_ca_with_validation(
+                        grounding_scores, ca_validation_results, label_to_model
+                    )
+                    yield f"data: {json.dumps({'type': 'ca_validation_complete', 'data': {'models_probed': len(ca_validation_results), 'grounding_scores': grounding_scores}})}\n\n"
+                    logger.info(f"[CA Validation] Enhanced CA for {len(ca_validation_results)} models")
+
+                    # Persist CA snapshots for cross-session tracking
+                    try:
+                        memory_mgr = get_memory_manager()
+                        for resp in grounding_scores.get("per_response", []):
+                            ca = resp.get("context_awareness")
+                            if ca and ca.get("score") is not None:
+                                memory_mgr.store_ca_snapshot(
+                                    conversation_id=conversation_id,
+                                    model=resp["model"],
+                                    ca_data=ca,
+                                )
+                    except Exception as e:
+                        logger.debug(f"[CA Tracking] Non-fatal persistence error: {e}")
+            except Exception as e:
+                logger.warning(f"[CA Validation] Non-fatal error: {e}")
+                # Continue without enhanced CA — original grounding_scores remain
 
             # Extract infographic data from the chairman's response
             infographic_data = None

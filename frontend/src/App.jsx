@@ -278,6 +278,15 @@ function App() {
             }));
             break;
 
+          case 'ca_validation_complete':
+            // Update grounding scores with enhanced CA (multi-round + adversarial)
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              if (event.data?.grounding_scores && msg.metadata) {
+                msg.metadata.grounding_scores = event.data.grounding_scores;
+              }
+            }));
+            break;
+
           case 'agent_team_complete':
             setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
               msg.agentTeam = event.data;
