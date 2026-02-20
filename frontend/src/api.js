@@ -98,6 +98,25 @@ async function fetchWithAuth(url, options = {}) {
   });
 }
 
+/**
+ * Get the current user ID.
+ * Cloud: read from the stored token payload (set by auth-token-refresh).
+ * Local dev: returns "local-user".
+ */
+export function getUserId() {
+  if (currentEnvironment === 'development') {
+    return 'local-user';
+  }
+  try {
+    const stored = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed['user-id']) return parsed['user-id'];
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
 export const api = {
   /**
    * Get available models and defaults.
