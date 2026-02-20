@@ -27,6 +27,33 @@ Resources:
             Action:
               - "sts:AssumeRole"
 
+  ConversationsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AppName}-conversations-${Environment}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+      Tags:
+        - Key: Application
+          Value: !Ref AppName
+        - Key: Environment
+          Value: !Ref Environment
+
   ECSTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -63,6 +90,22 @@ Resources:
                   - "kms:GenerateDataKey"
                   - "kms:Decrypt"
                 Resource: "*"
+        -
+          PolicyName: "s3-conversations"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                  - "s3:DeleteObject"
+                  - "s3:ListBucket"
+                  - "s3:HeadObject"
+                Resource:
+                  - !GetAtt ConversationsBucket.Arn
+                  - !Sub "${ConversationsBucket.Arn}/*"
 
   TheSecrets:
     Type: AWS::SecretsManager::Secret

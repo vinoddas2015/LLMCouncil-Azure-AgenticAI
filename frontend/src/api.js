@@ -77,9 +77,12 @@ async function getToken() {
  * In LOCAL environment, authentication is skipped entirely.
  */
 async function fetchWithAuth(url, options = {}) {
-  // Skip authentication for local development
+  // Local development: no OAuth, but include user-id header for storage isolation
   if (currentEnvironment === 'development') {
-    return fetch(url, options);
+    return fetch(url, {
+      ...options,
+      headers: { ...options.headers, 'user-id': 'local-user' },
+    });
   }
   
   const token = await getToken();
@@ -93,6 +96,25 @@ async function fetchWithAuth(url, options = {}) {
     ...options,
     headers,
   });
+}
+
+/**
+ * Get the current user ID.
+ * Cloud: read from the stored token payload (set by auth-token-refresh).
+ * Local dev: returns "local-user".
+ */
+export function getUserId() {
+  if (currentEnvironment === 'development') {
+    return 'local-user';
+  }
+  try {
+    const stored = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed['user-id']) return parsed['user-id'];
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 export const api = {

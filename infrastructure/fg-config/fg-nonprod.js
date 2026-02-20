@@ -7,7 +7,7 @@ module.exports = {
   fargateParameters: {
     cpu: "4096",
     memory: "10GB",
-    instanceCount: 1,
+    instanceCount: 2,
     healthCheckPath: "/health",
     healthCheckGracePeriod: 60,
     timeoutInSeconds: 1200,
@@ -24,6 +24,7 @@ module.exports = {
     buildArgs: {
       OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
       API_BASE_URL: process.env.API_BASE_URL,
+      S3_BUCKET_NAME: `${process.env.APP_NAME}-conversations-${process.env.ENVIRONMENT}`,
     },
   },
 };

@@ -38,8 +38,14 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - `parse_ranking_from_text()`: Extracts "FINAL RANKING:" section, handles both numbered lists and plain format
 - `calculate_aggregate_rankings()`: Computes average rank position across all peer evaluations
 
-**`storage.py`**
-- JSON-based conversation storage in `data/conversations/`
+**`storage.py`** — Dual-Mode Conversation Storage (S3 + Local Files)
+- **Cloud users** → S3 bucket (`S3_BUCKET_NAME` env var, key: `conversations/{user_id}/{conversation_id}.json`)
+- **Local dev** (`user_id == "local-user"`) → file-based at `data/conversations/local-user/{conversation_id}.json`
+- `user_id` is extracted from the `user-id` HTTP header (injected by reverse proxy in cloud, hardcoded as `local-user` in dev)
+- Every public function takes `user_id` as its first parameter
+- S3 objects use AES-256 server-side encryption; local files use the custom `encrypt_data`/`decrypt_data` from `security.py`
+- Path traversal protection: rejects `user_id` containing `/`, `\`, or `..`
+- boto3 S3 client is lazy-initialised (one per process) to avoid import cost in local dev
 - Each conversation: `{id, created_at, messages[]}`
 - Assistant messages contain: `{role, stage1, stage2, stage3}`
 - Note: metadata (label_to_model, aggregate_rankings) is NOT persisted to storage, only returned via API
@@ -87,7 +93,8 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
   - CA Combined = (round1 + round2) / 2
 
 **`main.py`**
-- FastAPI app with CORS enabled for localhost:5173 and localhost:3000
+- FastAPI app with CORS enabled for all origins
+- `get_user_id` dependency: extracts `user-id` header from request, validates against path traversal, required on all `/api/conversations/*` endpoints
 - POST `/api/conversations/{id}/message` returns metadata in addition to stages
 - Metadata includes: label_to_model mapping and aggregate_rankings
 - SSE pipeline includes `ca_validation_complete` event (with enhanced grounding_scores) after Stage 3 and `agent_team_complete` event after cost_summary
@@ -183,6 +190,16 @@ This strict format allows reliable parsing while still getting thoughtful evalua
 - Users see explanation that original evaluation used anonymous labels
 - This prevents bias while maintaining transparency
 
+### User-ID Data Isolation & S3 Storage
+- **Cloud**: conversations stored in S3 bucket (`${AppName}-conversations-${Environment}`) under key `conversations/{user_id}/{conversation_id}.json`
+- **Local dev**: file-based storage at `data/conversations/local-user/` (detected by `user_id == "local-user"`)
+- The `user-id` HTTP header is injected by the reverse proxy in cloud deployments
+- In local development, `frontend/src/api.js` sends `user-id: local-user` automatically
+- `get_user_id` FastAPI dependency (in `main.py`) extracts/validates the header on every conversation endpoint
+- Path traversal attacks are blocked: `user_id` values containing `/`, `\`, or `..` are rejected with HTTP 400
+- S3 bucket has versioning enabled, AES-256 encryption, and all public access blocked
+- `S3_BUCKET_NAME` env var must be set in ECS task definition for cloud deployments
+
 ### Error Handling Philosophy
 - Continue with successful responses if some models fail (graceful degradation)
 - Never fail the entire request due to single model failure
@@ -216,6 +233,7 @@ Models are hardcoded in `backend/config.py`. Chairman can be same or different f
 2. **CORS Issues**: Frontend must match allowed origins in `main.py` CORS middleware
 3. **Ranking Parse Failures**: If models don't follow format, fallback regex extracts any "Response X" patterns in order
 4. **Missing Metadata**: Metadata is ephemeral (not persisted), only available in API responses
+5. **Missing `user-id` Header**: All `/api/conversations/*` endpoints require a `user-id` header. In cloud the reverse proxy injects it; locally the frontend sends `local-user`. Direct curl/Postman calls must include `-H "user-id: test-user"` or the request will return HTTP 422
 
 ## Accessibility Testing
 

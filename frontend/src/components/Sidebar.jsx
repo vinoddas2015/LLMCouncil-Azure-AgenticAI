@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import ThemeToggle from './ThemeToggle';
+import { getUserId } from '../api';
 import './Sidebar.css';
 
 export default function Sidebar({
@@ -12,6 +13,19 @@ export default function Sidebar({
   onDeleteConversation,
 }) {
   const [showMenu, setShowMenu] = useState(null);
+  const [userId, setUserId] = useState(null);
+
+  useEffect(() => {
+    const id = getUserId();
+    if (id) setUserId(id);
+
+    // Re-check after a short delay so the token fetch has time to complete
+    const timer = setTimeout(() => {
+      const id = getUserId();
+      if (id) setUserId(id);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleContextMenu = (e, convId) => {
     e.preventDefault();
@@ -122,6 +136,7 @@ export default function Sidebar({
       </div>
 
       <div className="sidebar-footer">
+        {userId && <span className="footer-user-id" title={userId}>{userId}</span>}
         <span className="powered-by">Queries contact: <a href="mailto:llmcouncil@bayer.com" className="footer-email">llmcouncil@bayer.com</a></span>
       </div>
     </div>

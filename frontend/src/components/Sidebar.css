@@ -187,6 +187,17 @@
   text-align: center;
 }
 
+.footer-user-id {
+  display: block;
+  color: var(--text-muted);
+  font-size: 10px;
+  opacity: 0.6;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .powered-by {
   color: var(--text-muted);
   font-size: 11px;

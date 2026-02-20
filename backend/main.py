@@ -1,7 +1,7 @@
 """FastAPI backend for LLM Council."""
 
 import logging
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -217,6 +217,14 @@ def extract_file_content_description(attachment: AttachmentData) -> str:
     return f"[Attached {file_type} file: {attachment.name} ({attachment.size / 1024:.1f} KB)]"
 
 
+async def get_user_id(user_id: str = Header(..., alias="user-id")) -> str:
+    """Extract and validate the user-id header injected by the reverse proxy."""
+    sanitized = user_id.strip()
+    if not sanitized or "/" in sanitized or "\\" in sanitized or ".." in sanitized:
+        raise HTTPException(status_code=400, detail="Invalid user-id header")
+    return sanitized
+
+
 class ConversationMetadata(BaseModel):
     """Conversation metadata for list view."""
     id: str
@@ -326,30 +334,30 @@ EXAMPLES:
 
 
 @app.get("/api/conversations", response_model=List[ConversationMetadata])
-async def list_conversations():
-    """List all conversations (metadata only)."""
-    return storage.list_conversations()
+async def list_conversations(user_id: str = Depends(get_user_id)):
+    """List all conversations for the authenticated user (metadata only)."""
+    return storage.list_conversations(user_id)
 
 
 @app.post("/api/conversations", response_model=Conversation)
-async def create_conversation(request: CreateConversationRequest):
+async def create_conversation(request: CreateConversationRequest, user_id: str = Depends(get_user_id)):
     """Create a new conversation."""
     conversation_id = str(uuid.uuid4())
-    conversation = storage.create_conversation(conversation_id)
+    conversation = storage.create_conversation(user_id, conversation_id)
     return conversation
 
 
 @app.get("/api/conversations/{conversation_id}", response_model=Conversation)
-async def get_conversation(conversation_id: str):
+async def get_conversation(conversation_id: str, user_id: str = Depends(get_user_id)):
     """Get a specific conversation with all its messages."""
-    conversation = storage.get_conversation(conversation_id)
+    conversation = storage.get_conversation(user_id, conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conversation
 
 
 @app.get("/api/conversations/{conversation_id}/export")
-async def export_conversation(conversation_id: str, format: str = "markdown"):
+async def export_conversation(conversation_id: str, user_id: str = Depends(get_user_id), format: str = "markdown"):
     """
     Export a conversation in the specified format.
     
@@ -360,7 +368,7 @@ async def export_conversation(conversation_id: str, format: str = "markdown"):
     Returns:
         The conversation in the requested format
     """
-    conversation = storage.get_conversation(conversation_id)
+    conversation = storage.get_conversation(user_id, conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
@@ -432,13 +440,13 @@ async def export_conversation(conversation_id: str, format: str = "markdown"):
 
 
 @app.post("/api/conversations/{conversation_id}/message")
-async def send_message(conversation_id: str, request: SendMessageRequest):
+async def send_message(conversation_id: str, request: SendMessageRequest, user_id: str = Depends(get_user_id)):
     """
     Send a message and run the 3-stage council process.
     Returns the complete response with all stages.
     """
     # Check if conversation exists
-    conversation = storage.get_conversation(conversation_id)
+    conversation = storage.get_conversation(user_id, conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -446,12 +454,12 @@ async def send_message(conversation_id: str, request: SendMessageRequest):
     is_first_message = len(conversation["messages"]) == 0
 
     # Add user message
-    storage.add_user_message(conversation_id, request.content)
+    storage.add_user_message(user_id, conversation_id, request.content)
 
     # If this is the first message, generate a title
     if is_first_message:
         title = await generate_conversation_title(request.content)
-        storage.update_conversation_title(conversation_id, title)
+        storage.update_conversation_title(user_id, conversation_id, title)
 
     # Run the 3-stage council process with user preferences
     stage1_results, stage2_results, stage3_result, metadata = await run_full_council(
@@ -462,6 +470,7 @@ async def send_message(conversation_id: str, request: SendMessageRequest):
 
     # Add assistant message with all stages
     storage.add_assistant_message(
+        user_id,
         conversation_id,
         stage1_results,
         stage2_results,
@@ -478,22 +487,22 @@ async def send_message(conversation_id: str, request: SendMessageRequest):
 
 
 @app.delete("/api/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str):
+async def delete_conversation(conversation_id: str, user_id: str = Depends(get_user_id)):
     """Delete a conversation."""
-    success = storage.delete_conversation(conversation_id)
+    success = storage.delete_conversation(user_id, conversation_id)
     if not success:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return {"status": "deleted"}
 
 
 @app.post("/api/conversations/{conversation_id}/analyze-agents")
-async def analyze_agents(conversation_id: str):
+async def analyze_agents(conversation_id: str, user_id: str = Depends(get_user_id)):
     """Run agent team analysis on-demand for an existing conversation.
 
     Useful for conversations that were created before agent-team
     persistence was added, or when the original analysis failed.
     """
-    conv = storage.get_conversation(conversation_id)
+    conv = storage.get_conversation(user_id, conversation_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -544,7 +553,7 @@ async def analyze_agents(conversation_id: str):
     # Persist to storage
     try:
         storage.update_last_message_metadata(
-            conversation_id, {"agent_team": result}
+            user_id, conversation_id, {"agent_team": result}
         )
     except Exception as e:
         logger.warning(f"Failed to persist on-demand agent_team: {e}")
@@ -795,14 +804,14 @@ async def delete_memory_entry(memory_type: str, memory_id: str):
 
 
 @app.post("/api/conversations/{conversation_id}/message/stream")
-async def send_message_stream(conversation_id: str, request: SendMessageRequest):
+async def send_message_stream(conversation_id: str, request: SendMessageRequest, user_id: str = Depends(get_user_id)):
     """
     Send a message and stream the 3-stage council process.
     Returns Server-Sent Events as each stage completes.
     Supports file attachments (PDF, PPTX, XLSX, DOCX).
     """
     # Check if conversation exists
-    conversation = storage.get_conversation(conversation_id)
+    conversation = storage.get_conversation(user_id, conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -896,10 +905,10 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
                 # Mark conversation as blocked so no follow-ups are accepted
                 conversation["blocked"] = True
                 conversation["blocked_reason"] = guard_verdict.category
-                storage.save_conversation(conversation)
+                storage.save_conversation(user_id, conversation)
                 # Store the user message so the rejection is visible in history
                 storage_content_early = request.content or ""
-                storage.add_user_message(conversation_id, storage_content_early)
+                storage.add_user_message(user_id, conversation_id, storage_content_early)
                 yield f"data: {json.dumps({'type': 'prompt_rejected', 'data': {'category': guard_verdict.category, 'message': guard_verdict.message}})}\n\n"
                 return
 
@@ -916,7 +925,7 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             conversation_history = conversation.get("messages", [])
             
             # Add user message
-            storage.add_user_message(conversation_id, storage_content)
+            storage.add_user_message(user_id, conversation_id, storage_content)
 
             # Start title generation in parallel (don't await yet)
             title_task = None
@@ -1055,11 +1064,12 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             # Wait for title generation if it was started
             if title_task:
                 title = await title_task
-                storage.update_conversation_title(conversation_id, title)
+                storage.update_conversation_title(user_id, conversation_id, title)
                 yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
 
             # Save complete assistant message (including metadata for reload)
             storage.add_assistant_message(
+                user_id,
                 conversation_id,
                 stage1_results,
                 stage2_results,
@@ -1093,7 +1103,7 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
                 # Persist agent team data so reloaded conversations retain it
                 try:
                     storage.update_last_message_metadata(
-                        conversation_id, {"agent_team": agent_team_result}
+                        user_id, conversation_id, {"agent_team": agent_team_result}
                     )
                 except Exception:
                     logger.debug("Failed to persist agent_team metadata")
