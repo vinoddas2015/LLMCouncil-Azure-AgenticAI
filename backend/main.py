@@ -1,7 +1,7 @@
 """FastAPI backend for LLM Council."""
 
 import logging
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -12,7 +12,9 @@ import os
 import asyncio
 import base64
 from datetime import datetime
+from starlette.middleware.base import BaseHTTPMiddleware
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from . import storage
@@ -109,6 +111,52 @@ async def lifespan(application):
 
 
 app = FastAPI(title="LLM Council API", lifespan=lifespan)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Request Logging Middleware
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log incoming requests with user profile info (excluding /health endpoint)."""
+    
+    async def dispatch(self, request: Request, call_next):
+        # Skip logging for health endpoint (used by ECS)
+        if request.url.path == "/health":
+            return await call_next(request)
+        
+        # Log endpoint
+        logger.info(f"[Request] {request.method} {request.url.path}")
+        
+        # Check for user profile header (common headers: x-user-profile, x-user-id, x-forwarded-user, etc.)
+        user_profile_headers = [
+            "x-user-profile",
+            "x-user-id", 
+            "x-forwarded-user",
+            "x-remote-user",
+            "x-authenticated-user",
+        ]
+        
+        user_profile_found = False
+        for header_name in user_profile_headers:
+            header_value = request.headers.get(header_name)
+            if header_value:
+                # Log that we found the header without exposing the full value
+                logger.info(f"[Request] User profile header found: {header_name} (value length: {len(header_value)} chars)")
+                user_profile_found = True
+                break
+        
+        if not user_profile_found:
+            logger.info("[Request] No user profile header found in request")
+        
+        # Continue processing the request
+        response = await call_next(request)
+        return response
+
+
+# Add request logging middleware
+app.add_middleware(RequestLoggingMiddleware)
 
 # Enable CORS for all origins
 app.add_middleware(
