@@ -77,9 +77,12 @@ async function getToken() {
  * In LOCAL environment, authentication is skipped entirely.
  */
 async function fetchWithAuth(url, options = {}) {
-  // Skip authentication for local development
+  // Local development: no OAuth, but include user-id header for storage isolation
   if (currentEnvironment === 'development') {
-    return fetch(url, options);
+    return fetch(url, {
+      ...options,
+      headers: { ...options.headers, 'user-id': 'local-user' },
+    });
   }
   
   const token = await getToken();

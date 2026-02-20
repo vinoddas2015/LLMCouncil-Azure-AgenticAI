@@ -21,6 +21,9 @@ python-dotenv>=1.0.0,<2.0.0
 # Security — encryption at rest
 cryptography>=43.0.0,<45.0.0
 
+# AWS SDK (S3 conversation storage in cloud)
+boto3>=1.35.0
+
 # ── Testing (optional) ──────────────────────────────────────
 # pytest>=8.0.0
 # pytest-asyncio>=0.23.0

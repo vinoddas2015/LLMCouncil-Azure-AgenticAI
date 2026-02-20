@@ -24,6 +24,7 @@ module.exports = {
     buildArgs: {
       OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
       API_BASE_URL: process.env.API_BASE_URL,
+      S3_BUCKET_NAME: `${process.env.APP_NAME}-conversations-${process.env.ENVIRONMENT}`,
     },
   },
 };

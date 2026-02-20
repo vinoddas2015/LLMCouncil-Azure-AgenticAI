@@ -42,5 +42,9 @@ OPENROUTER_API_URL = os.getenv(
     os.getenv("API_BASE_URL", "https://chat.int.bayer.com/api/v2/chat/completions"),
 )
 
-# Data directory for conversation storage
+# Data directory for local-dev conversation storage (file-based fallback)
 DATA_DIR = "data/conversations"
+
+# S3 bucket for cloud conversation storage (set via ECS env / .env)
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "")
+S3_CONVERSATIONS_PREFIX = "conversations"
