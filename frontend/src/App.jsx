@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { flushSync } from 'react-dom';
 import Sidebar from './components/Sidebar';
 import ChatInterface from './components/ChatInterface';
 import Settings from './components/Settings';
@@ -170,6 +171,13 @@ function App() {
         return { ...prev, messages };
       };
 
+      // Wrap state updates in flushSync so the UI re-renders immediately
+      // on each stream event. Without this, React batches updates in production
+      // and the UI stays frozen until the stream completes.
+      const streamUpdate = (updater) => {
+        flushSync(() => setCurrentConversation(updater));
+      };
+
       // Create a partial assistant message that will be updated progressively
       const assistantMessage = {
         role: 'assistant',
@@ -209,26 +217,26 @@ function App() {
             break;
 
           case 'stage1_start':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.loading.stage1 = true;
             }));
             break;
 
           case 'stage1_complete':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.stage1 = event.data;
               msg.loading.stage1 = false;
             }));
             break;
 
           case 'stage2_start':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.loading.stage2 = true;
             }));
             break;
 
           case 'stage2_complete':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.stage2 = event.data;
               msg.metadata = event.metadata;
               msg.loading.stage2 = false;
@@ -236,51 +244,51 @@ function App() {
             break;
 
           case 'stage3_start':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.loading.stage3 = true;
             }));
             break;
 
           case 'stage3_complete':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.stage3 = event.data;
               msg.loading.stage3 = false;
             }));
             break;
 
           case 'cost_summary':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.costSummary = event.data;
             }));
             break;
 
           case 'memory_recall':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.memoryRecall = event.data;
             }));
             break;
 
           case 'memory_gate':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.memoryGate = event.data;
             }));
             break;
 
           case 'evidence_complete':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.evidence = event.data;
             }));
             break;
 
           case 'infographic_complete':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.infographic = event.data;
             }));
             break;
 
           case 'ca_validation_complete':
             // Update grounding scores with enhanced CA (multi-round + adversarial)
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               if (event.data?.grounding_scores && msg.metadata) {
                 msg.metadata.grounding_scores = event.data.grounding_scores;
               }
@@ -288,13 +296,13 @@ function App() {
             break;
 
           case 'agent_team_complete':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.agentTeam = event.data;
             }));
             break;
 
           case 'memory_learning':
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.memoryLearning = event.data;
             }));
             break;
@@ -317,7 +325,7 @@ function App() {
             setIsLoading(false);
             setActiveSessionId(null);
             // Update the last assistant message to show killed state
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               if (msg.role === 'assistant') {
                 msg.loading = { stage1: false, stage2: false, stage3: false };
                 if (!msg.stage3) {
@@ -342,7 +350,7 @@ function App() {
             setIsLoading(false);
             setActiveSessionId(null);
             // Show the rejection as a system message in the assistant slot
-            setCurrentConversation((prev) => {
+            streamUpdate((prev) => {
               const messages = [...prev.messages];
               const idx = messages.length - 1;
               if (idx < 0) return prev;
