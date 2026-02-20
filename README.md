@@ -92,23 +92,57 @@ Pharma-grade evaluation in all 3 stages using binary classification metrics:
 - **Grounding Score** — 5-rubric evaluation (Relevancy 25%, Faithfulness 25%, Output Quality 20%, Context Recall 15%, Consensus 15%) with hybrid Verbalized + Synthetic scoring
 - **Token & Cost Burndown** — Real-time tracking of token usage, cost per model/stage, gateway vs direct pricing with ~40% savings display
 - **Three-Tier Memory** — Semantic (domain knowledge), Episodic (deliberation history), Procedural (workflow patterns) with confidence-gated auto-learning
+- **Auto Model Sync** — Live catalog from MyGenAssist API, family-based version deduplication, 30-min periodic refresh, manual sync trigger
+- **A2A Agent Cards** — Agent-to-Agent protocol v1.0 RC compliant agent discovery and cards for all 10 agents
+- **10 Post-Pipeline Agents** — Research Analyst, Fact Checker, Risk Assessor, Pattern Scout, Insight Synthesizer, Quality Auditor, Citation Supervisor + 3 VP-mode agents
 - **Decision Tree Visualization** — Interactive conversation flow (Root → Stage 1 → Stage 2 → Evidence → Stage 3) with click-to-expand nodes
 - **Prompt Enhancement** — Automatic prompt improvement before council submission
 - **File Attachments** — PDF, PPTX, XLSX, DOCX support (up to 10MB)
 - **Conversation Management** — Full CRUD, export to markdown, multi-turn follow-ups
 - **Cloud-Agnostic Storage** — Pluggable backend (Local JSON, Redis, DynamoDB, Cosmos DB)
 
-### Models
+### Models (Auto-Synced)
 
-| Model | Provider | Role |
-|-------|----------|------|
-| **Claude Opus 4.5** | Anthropic | Default Chairman — strongest reasoning |
-| **Gemini 2.5 Pro** | Google | Council member — 1M context window |
-| **GPT-5 Mini** | OpenAI | Council member — balanced performance |
-| **Grok 3** | xAI | Council member — 1M context window |
-| **Gemini 2.5 Flash** | Google | Fallback — fast and efficient |
+Models are **auto-discovered** from the Bayer myGenAssist API catalog at startup and every 30 minutes. The system classifies models into families and keeps only the **latest version** per family — older versions are automatically removed.
 
-*Models are configurable per-conversation via the Settings panel.*
+| Model | Provider | Family | Role |
+|-------|----------|--------|------|
+| **Claude Opus 4.6** | Anthropic | anthropic/opus | Default Chairman — strongest reasoning |
+| **Claude Sonnet 4.6** | Anthropic | anthropic/sonnet | Council member — fast + capable |
+| **Gemini 2.5 Pro** | Google | google/pro | Council member — 1M context window |
+| **Gemini 2.5 Flash** | Google | google/flash | Council member — fast and efficient |
+| **GPT-5.2** | OpenAI | openai/flagship | Council member — latest flagship |
+| **GPT-5 Mini** | OpenAI | openai/mini | Council member — balanced performance |
+| **GPT-5 Nano** | OpenAI | openai/nano | Council member — ultra-efficient |
+| **GPT-4o** | OpenAI | openai/4o | Legacy bridge |
+| **o4-mini** | OpenAI | openai/o-mini | Reasoning specialist |
+| **Grok 3** | xAI | xai/grok | Council member — 1M context window |
+
+*Models are auto-synced and configurable per-conversation via the Settings panel. When new model versions appear in the MyGenAssist catalog (e.g., Gemini 3), they are automatically adopted and previous versions dropped.*
+
+### Agent Team (Post-Pipeline Intelligence)
+
+10 specialised agents analyse council output in parallel after Stage 3:
+
+| Agent | Icon | Focus Area |
+|-------|------|------------|
+| **Research Analyst** | 🔬 | Topic coverage, data density, evidence breadth |
+| **Fact Checker** | 🛡️ | Grounding validation, hallucination detection (TP/FP/FN) |
+| **Risk Assessor** | ⚠️ | Safety signals, regulatory compliance flags |
+| **Pattern Scout** | 🔍 | Consensus detection, recurring themes, rubric trends |
+| **Insight Synthesizer** | 💡 | Cross-model analysis, novel connections, evidence gaps |
+| **Quality Auditor** | 📊 | Rubric scores, completeness, cost efficiency |
+| **Citation Supervisor** | 🔗 | Reference validation, PubMed link enrichment, orphan tag detection |
+| **Market Positioning** | 📈 | VP-mode: competitive landscape, market analysis |
+| **Clinical Value** | 🏥 | VP-mode: clinical differentiation, value proposition |
+| **Messaging Strategist** | 💬 | VP-mode: key messages, stakeholder communication |
+
+### A2A Agent Cards (Agent-to-Agent Protocol)
+
+- **A2A v1.0 RC compliant** — standard agent discovery at `/.well-known/agent-card.json`
+- **11 agent cards** — 1 main council card + 10 individual agent cards
+- **API discovery** — `GET /api/agent-cards` lists all, `GET /api/agent-cards/{id}` per agent
+- **Downloadable bundle** — `GET /api/agent-cards-download` or Settings panel button
 
 ---
 
@@ -121,7 +155,7 @@ Pharma-grade evaluation in all 3 stages using binary classification metrics:
 │  + Vite 7.x  │────────────────────►│  ┌──────────┐  ┌──────────┐  ┌────────┐ │
 │              │                      │  │ Prompt   │  │ Evidence │  │ Memory │ │
 │  SciMarkdown │                      │  │ Guard ──►│  │ Skills   │  │ 3-Tier │ │
-│  + KaTeX     │                      │  │ Council  │  │(7+4 Web) │  │ System │ │
+│  + KaTeX     │                      │  │ Council  │  │(7+8 Web) │  │ System │ │
 │              │                      │  │ 3-Stage  │  │          │  │        │ │
 │  Port 5173   │                      │  └─────┬────┘  └────┬─────┘  └───┬────┘ │
 └──────────────┘                      │        │            │            │       │
@@ -229,8 +263,19 @@ Navigate to **http://localhost:5173** — the Vite dev server proxies `/api/*` r
 | `POST` | `/api/kill-switch/halt` | Emergency global halt |
 | `POST` | `/api/kill-switch/release` | Release global halt |
 | `GET` | `/api/kill-switch/status` | Kill switch state |
-| `GET` | `/api/models` | Available model list |
+| `GET` | `/api/models` | Available model list (auto-synced from MyGenAssist) |
+| `POST` | `/api/models/sync` | Trigger manual model re-sync |
+| `GET` | `/api/models/sync-status` | Sync metadata (last sync, model count) |
 | `POST` | `/api/enhance-prompt` | Enhance prompt before submission |
+
+### Agent Cards (A2A Protocol)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/.well-known/agent-card.json` | A2A discovery — main council agent card |
+| `GET` | `/api/agent-cards` | List all individual agent cards |
+| `GET` | `/api/agent-cards/{agent_id}` | Get specific agent card |
+| `GET` | `/api/agent-cards-download` | Download full card bundle (JSON) |
 
 ### SSE Event Types
 
@@ -253,6 +298,8 @@ Events emitted during `POST /api/conversations/{id}/stream`:
 | `stage3_start` | S3 | Chairman synthesis initiated |
 | `stage3_complete` | S3 | Final citation-grounded response |
 | `cost_summary` | Post-S3 | Token usage, gateway/direct costs, savings |
+| `agent_team_complete` | Post-S3 | 10-agent analysis signals (after cost_summary) |
+| `ca_validation_complete` | Post-S3 | Enhanced grounding scores with Context Awareness |
 | `memory_learning` | Post-S3 | Learn/unlearn decision + tier IDs |
 | `complete` | End | Full metadata + timing |
 
@@ -352,8 +399,10 @@ npm run test:watch
 ```
 LLMCouncilMGA/
 ├── backend/                        # FastAPI backend
-│   ├── main.py                     # App, routes, SSE streaming
+│   ├── main.py                     # App, routes, SSE streaming, A2A endpoints
 │   ├── council.py                  # 3-stage council (Verbalized Sampling)
+│   ├── agents.py                   # 10 post-pipeline agents (7 core + 3 VP-mode)
+│   ├── model_sync.py               # Auto-sync models from MyGenAssist API
 │   ├── prompt_guard.py              # Prompt suitability guard (6-category filter)
 │   ├── skills.py                   # Evidence retrieval (15 skills: 7 core + 8 web)
 │   ├── infographics.py             # Infographic extraction from chairman output
@@ -364,8 +413,9 @@ LLMCouncilMGA/
 │   ├── memory_store.py             # Cloud-agnostic storage abstraction
 │   ├── orchestrator.py             # Stage-gate orchestrator agents
 │   ├── storage.py                  # Conversation persistence (JSON)
+│   ├── security.py                 # Fernet encryption, PII redaction
 │   ├── token_tracking.py           # Token/cost burndown tracking
-│   └── config.py                   # Model config & API settings
+│   └── config.py                   # Static model fallback & API settings
 ├── frontend/                       # React 19 + Vite 7
 │   └── src/
 │       ├── api.js                  # Backend API client
@@ -397,6 +447,19 @@ LLMCouncilMGA/
 │           ├── app-a11y.test.jsx
 │           ├── sidebar-a11y.test.jsx
 │           └── settings-a11y.test.jsx
+├── .well-known/                    # A2A Protocol discovery
+│   ├── agent-card.json             # Main council agent card
+│   └── agents/                     # 10 individual agent cards
+│       ├── research-analyst.json
+│       ├── fact-checker.json
+│       ├── risk-assessor.json
+│       ├── pattern-scout.json
+│       ├── insight-synthesizer.json
+│       ├── quality-auditor.json
+│       ├── citation-supervisor.json
+│       ├── market-positioning.json
+│       ├── clinical-value.json
+│       └── messaging-strategist.json
 ├── tests/                          # Test suite
 │   └── test_memory_pipeline.py     # 42 memory pipeline tests
 ├── deploy/                         # Deployment guides

@@ -1,7 +1,7 @@
 ﻿# LLM Council MGA — System Architecture
 
-> **Version 3.1** | Bayer Pharmaceutical Division — myGenAssist  
-> Last updated: February 15, 2026
+> **Version 3.2** | Bayer Pharmaceutical Division — myGenAssist  
+> Last updated: February 19, 2026
 
 ---
 
@@ -21,7 +21,9 @@
 12. [Security & Privacy](#12-security--privacy)
 13. [Infographics Pipeline](#13-infographics-pipeline)
 14. [Prompt Suitability Guard](#14-prompt-suitability-guard)
-15. [Production Deployment](#15-production-deployment)
+15. [Auto Model Sync](#15-auto-model-sync)
+16. [A2A Agent Cards](#16-a2a-agent-cards)
+17. [Production Deployment](#17-production-deployment)
 
 ---
 
@@ -87,6 +89,13 @@
   │  │  Fernet encrypt  │  │  Pre-stage gate  │  │  JSON extraction │               │
   │  │  PII redaction   │  │  6 categories    │  │  + auto-extract  │               │
   │  └──────────────────┘  └──────────────────┘  └──────────────────┘               │
+  │                                                                                  │
+  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐               │
+  │  │  Model Sync      │  │  Agent Team      │  │  A2A Agent Cards │               │
+  │  │  Auto-discover   │  │  10 specialists  │  │  .well-known/    │               │
+  │  │  Family dedup    │  │  7 core + 3 VP   │  │  agent-card.json │               │
+  │  │  30-min refresh  │  │  asyncio.gather  │  │  + 10 individual │               │
+  │  └──────────────────┘  └──────────────────┘  └──────────────────┘               │
   └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -122,7 +131,7 @@
   ╔═══════════════════════╧═══════════════════════════════════╗
   ║  STAGE 1: Individual Responses                            ║
   ║                                                           ║
-  ║  Query → [Claude 4.5] → Response A  ─┐                   ║
+  ║  Query → [Claude 4.6] → Response A  ─┐                   ║
   ║  Query → [Gemini 2.5] → Response B  ─┤  Parallel         ║
   ║  Query → [GPT-5 Mini] → Response C  ─┤  (asyncio.gather) ║
   ║  Query → [Grok 3    ] → Response D  ─┘                   ║
@@ -164,7 +173,7 @@
   ╔═══════════════════════╧═══════════════════════════════════╗
   ║  STAGE 3: Chairman Synthesis                              ║
   ║                                                           ║
-  ║  Chairman (Claude Opus 4.5 by default) receives:         ║
+  ║  Chairman (Claude Opus 4.6 by default) receives:         ║
   ║  • All Stage 1 responses with rankings                   ║
   ║  • Peer review evaluations                               ║
   ║  • Evidence citations (from parallel skills task)        ║
@@ -384,18 +393,22 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
 
 ## 4.5 Agent Team — Post-Pipeline Intelligence
 
-After the 3-stage council pipeline completes, a team of **6 specialised agents** analyses the results in parallel and produces structured signals for the **Prompt Atlas Intelligence Dashboard**.
+After the 3-stage council pipeline completes, a team of **10 specialised agents** analyses the results in parallel and produces structured signals for the **Prompt Atlas Intelligence Dashboard**.
 
 ### Agent Roster
 
 | Agent | Icon | Focus Area |
-|-------|------|-----------|
+|-------|------|------------|
 | **Research Analyst** | 🔬 | Topic coverage, data density, evidence breadth, key findings |
 | **Fact Checker** | 🛡️ | Grounding validation, hallucination detection, claim analysis (TP/FP/FN) |
 | **Risk Assessor** | ⚠️ | Safety signals, regulatory flags, compliance gaps (pharmaceutical focus) |
 | **Pattern Scout** | 🔍 | Consensus detection, recurring themes, rubric trends, emerging signals |
 | **Insight Synthesizer** | 💡 | Cross-model analysis, novel connections, evidence gap detection |
 | **Quality Auditor** | 📊 | Rubric scores, response completeness, cost efficiency, actionability |
+| **Citation Supervisor** | 🔗 | Reference validation, PubMed link enrichment, orphan tag & DOI detection |
+| **Market Positioning** | 📈 | VP-mode: competitive landscape, market gap analysis |
+| **Clinical Value** | 🏥 | VP-mode: clinical differentiation, value proposition |
+| **Messaging Strategist** | 💬 | VP-mode: key messages, stakeholder communication |
 
 ### Signal Schema
 
@@ -429,15 +442,15 @@ The agent team executes after `cost_summary` in the SSE streaming pipeline:
 ```
 session_start → memory_recall → stage1 → evidence → stage2 → memory_gate
   → stage3 → infographic → cost_summary → ✨ agent_team_complete ✨
-  → memory_learning → complete
+  → ca_validation_complete → memory_learning → complete
 ```
 
-The `agent_team_complete` event carries the combined result of all 6 agents, rendered by the Prompt Atlas dashboard.
+The `agent_team_complete` event carries the combined result of all 10 agents, rendered by the Prompt Atlas dashboard.
 
 ### Architecture Principles
 
 - **Pure async, stateless** — Each agent is an `async` function; no side effects
-- **Parallel execution** — All 6 agents run concurrently via `asyncio.gather`
+- **Parallel execution** — All 10 agents run concurrently via `asyncio.gather`
 - **Non-fatal** — Agent failures are caught and logged; the pipeline continues
 - **Structured output** — Every signal has severity, kind, title, detail — no free-form text
 - **Scalable** — Designed for horizontal scaling (serverless-compatible)
@@ -459,9 +472,12 @@ The `agent_team_complete` event carries the combined result of all 6 agents, ren
 
 | Capability | Description |
 |-----------|-------------|
-| **Consensus-Driven** | 4 models must agree through blind peer review |
+| **Consensus-Driven** | 4+ models must agree through blind peer review |
 | **Citation-Grounded** | Real-time evidence from 15 APIs (FDA, ClinicalTrials, PubMed, arXiv, Patents, Wikipedia, ORCID, and more) |
 | **Infographics** | Auto-generated visual summaries: metrics, comparisons, process steps, highlights |
+| **Auto Model Sync** | Live catalog from MyGenAssist API — family version dedup, 30-min refresh |
+| **A2A Agent Cards** | Agent-to-Agent protocol v1.0 RC compliant discovery for all 10 agents |
+| **10-Agent Intelligence** | Post-pipeline analysis: research, fact-check, risk, patterns, insights, quality, citations + 3 VP-mode |
 | **Pharma Metrics** | Verbalized Sampling with Correctness/Precision/Recall |
 | **Scientific Output** | SMILES structures, LaTeX equations, GFM tables |
 | **Self-Healing** | Circuit breakers + fallback chains + quorum enforcement |
@@ -477,7 +493,7 @@ The `agent_team_complete` event carries the combined result of all 6 agents, ren
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **API Layer** | backend/main.py | FastAPI endpoints, CORS, SSE streaming, session management, prompt guard gate |
+| **API Layer** | backend/main.py | FastAPI endpoints, CORS, SSE streaming, session management, prompt guard gate, A2A agent card endpoints |
 | **Council Orchestrator** | backend/council.py | 3-stage pipeline, Verbalized Sampling, RUBRIC+CLAIMS+RANKING, chairman prompt with 10 guidelines (incl. infographic directive) |
 | **Evidence Skills** | backend/skills.py | 15 evidence APIs (7 core + 8 web-search), deduplication, citation formatting |
 | **LLM Client** | backend/openrouter.py | Async httpx calls to Bayer myGenAssist API, Gemini multi-modal support (text + image), PII redaction before dispatch |
@@ -491,8 +507,9 @@ The `agent_team_complete` event carries the combined result of all 6 agents, ren
 | **Security** | backend/security.py | Fernet encryption at rest (AES-128-CBC), PII redaction (9 pattern types), security status reporting |
 | **Prompt Guard** | backend/prompt_guard.py | Pre-stage suitability gate: 6 rejection categories (off-topic, harmful, illegal, PII, injection, trivial) + LLM fallback |
 | **Infographics** | backend/infographics.py | Infographic JSON extraction from chairman responses, auto-extraction fallback, validation & cleaning |
-| **Agent Team** | backend/agents.py | 6 specialised post-pipeline agents: Research Analyst, Fact Checker, Risk Assessor, Pattern Scout, Insight Synthesizer, Quality Auditor — run in parallel via `asyncio.gather`, emit structured signals for the Prompt Atlas dashboard |
-| **Config** | backend/config.py | Model definitions, API settings, base URLs |
+| **Agent Team** | backend/agents.py | 10 specialised post-pipeline agents: 7 core (Research Analyst, Fact Checker, Risk Assessor, Pattern Scout, Insight Synthesizer, Quality Auditor, Citation Supervisor) + 3 VP-mode (Market Positioning, Clinical Value, Messaging Strategist) — run in parallel via `asyncio.gather`, emit structured signals for the Prompt Atlas dashboard |
+| **Model Sync** | backend/model_sync.py | Auto-discover models from MyGenAssist /api/v2/models, family classification, version deduplication, periodic 30-min refresh, graceful degradation to static config |
+| **Config** | backend/config.py | Static model fallback definitions, API settings, base URLs |
 
 ### Frontend Components
 
@@ -507,12 +524,12 @@ The `agent_team_complete` event carries the combined result of all 6 agents, ren
 | **InfographicPanel** | InfographicPanel.jsx | Visual summary: key metrics grid, comparison table, process steps flow, highlight cards (success/warning/info/danger) |
 | **GroundingScore** | GroundingScore.jsx | Circular SVG gauge + expandable criteria bars |
 | **TokenBurndown** | TokenBurndown.jsx | Cost/token dashboard, gateway savings display |
-| **PromptAtlas** | PromptAtlas3D.jsx | Intelligence Dashboard: 6-agent signals + CSS decision tree — tabbed view with Agent Team cards (signals/patterns/risks/insights), WCAG 3.0 ARIA (complementary landmark, tablist, keyboard-operable cards) |
+| **PromptAtlas** | PromptAtlas3D.jsx | Intelligence Dashboard: 10-agent signals + CSS decision tree — tabbed view with Agent Team cards (signals/patterns/risks/insights), WCAG 3.0 ARIA (complementary landmark, tablist, keyboard-operable cards) |
 | **MemoryPanel** | MemoryPanel.jsx | 3-tier memory browser, learn/unlearn/delete |
 | **LearnUnlearn** | LearnUnlearn.jsx | Inline bar — auto-learned (green) vs pending (amber) |
 | **KillSwitch** | KillSwitch.jsx | Emergency stop (session + global halt + release) |
 | **EnhancePrompt** | EnhancePrompt.jsx | Prompt improvement UI |
-| **Settings** | Settings.jsx | Model configuration per conversation |
+| **Settings** | Settings.jsx | Model configuration per conversation, model family tags, sync button, A2A agent card download |
 | **Sidebar** | Sidebar.jsx | Conversation list, navigation, create/delete |
 | **ThemeToggle** | ThemeToggle.jsx | Day/Night mode switch (WCAG 3.0 `role="switch"`, keyboard-operable) |
 | **ThemeContext** | ThemeContext.jsx | Theme provider — `localStorage` persistence, `prefers-color-scheme` OS detection |
@@ -585,15 +602,22 @@ The frontend implements WCAG 3.0 draft guidelines using the **APCA** (Advanced P
 | Redis / DynamoDB / CosmosDB | Production storage backends |
 | Server-Sent Events | Real-time streaming |
 
-### LLM Models (via myGenAssist)
+### LLM Models (via myGenAssist — Auto-Synced)
 
-| Model | Provider | Strengths |
-|-------|----------|-----------|
-| Claude Opus 4.5 | Anthropic | Strongest reasoning, default chairman |
-| Gemini 2.5 Pro | Google | 1M context, strong analysis |
-| GPT-5 Mini | OpenAI | Balanced speed/quality |
-| Grok 3 | xAI | 1M context, strong reasoning |
-| Gemini 2.5 Flash | Google | Fast fallback option |
+Models are auto-discovered from the MyGenAssist catalog API every 30 minutes. Only the latest version per family is retained.
+
+| Model | Provider | Family | Strengths |
+|-------|----------|--------|----------|
+| Claude Opus 4.6 | Anthropic | anthropic/opus | Strongest reasoning, default chairman |
+| Claude Sonnet 4.6 | Anthropic | anthropic/sonnet | Fast + capable, cost-efficient |
+| Gemini 2.5 Pro | Google | google/pro | 1M context, strong analysis |
+| Gemini 2.5 Flash | Google | google/flash | Fast fallback option |
+| GPT-5.2 | OpenAI | openai/flagship | Latest flagship reasoning |
+| GPT-5 Mini | OpenAI | openai/mini | Balanced speed/quality |
+| GPT-5 Nano | OpenAI | openai/nano | Ultra-efficient, lowest cost |
+| GPT-4o | OpenAI | openai/4o | Legacy bridge |
+| o4-mini | OpenAI | openai/o-mini | Reasoning specialist |
+| Grok 3 | xAI | xai/grok | 1M context, strong reasoning |
 
 ---
 
@@ -645,10 +669,10 @@ The frontend implements WCAG 3.0 draft guidelines using the **APCA** (Advanced P
 
 | Primary | Fallback 1 | Fallback 2 | Fallback 3 |
 |---------|-----------|-----------|-----------|
-| Claude Opus 4.5 | Gemini 2.5 Pro | GPT-5 Mini | Grok 3 |
-| Gemini 2.5 Pro | Claude Opus 4.5 | GPT-5 Mini | Grok 3 |
-| GPT-5 Mini | Gemini 2.5 Flash | Gemini 2.5 Pro | Claude Opus 4.5 |
-| Grok 3 | Gemini 2.5 Pro | Claude Opus 4.5 | GPT-5 Mini |
+| Claude Opus 4.6 | Gemini 2.5 Pro | GPT-5.2 | Grok 3 |
+| Gemini 2.5 Pro | Claude Opus 4.6 | GPT-5.2 | Grok 3 |
+| GPT-5 Mini | Gemini 2.5 Flash | Gemini 2.5 Pro | Claude Opus 4.6 |
+| Grok 3 | Gemini 2.5 Pro | Claude Opus 4.6 | GPT-5.2 |
 
 ### Kill Switch API
 
@@ -708,11 +732,13 @@ Used in all 3 stages with pharma-grade binary classification:
 
 | Model | Direct ($/1M in/out) | Gateway ($/1M in/out) | Savings |
 |-------|---------------------|----------------------|---------|
-| Claude Opus 4.5 |  /  |  /  | ~40% |
-| Gemini 2.5 Pro | .25 /  | .75 /  | ~40% |
-| GPT-5 Mini | .50 /  | .90 / .60 | ~40% |
-| Grok 3 |  /  | .80 /  | ~40% |
-| Gemini 2.5 Flash | .15 / .50 | .09 / .10 | ~40% |
+| Claude Opus 4.6 | $5.0 / $25.0 | $3.0 / $15.0 | ~40% |
+| Claude Sonnet 4.6 | $3.0 / $15.0 | $1.8 / $9.0 | ~40% |
+| Gemini 2.5 Pro | $1.25 / $10.0 | $0.75 / $6.0 | ~40% |
+| GPT-5.2 | $1.25 / $10.0 | $0.75 / $6.0 | ~40% |
+| GPT-5 Mini | $0.25 / $2.0 | $0.15 / $1.2 | ~40% |
+| Grok 3 | $3.0 / $15.0 | $1.8 / $9.0 | ~40% |
+| Gemini 2.5 Flash | $0.3 / $2.5 | $0.18 / $1.5 | ~40% |
 
 ### Data Flow
 
@@ -946,7 +972,159 @@ Runs **before** every outbound LLM API call (in `openrouter.py`):
 
 ---
 
-## 15. Production Deployment
+## 15. Auto Model Sync
+
+### Overview
+
+The model sync system (`backend/model_sync.py`) automatically discovers and version-manages models from the Bayer myGenAssist API catalog. It ensures only the **latest version** per model family is available to the council.
+
+### Architecture
+
+```
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  AUTO MODEL SYNC                                                             │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  MyGenAssist API                        Model Sync Module
+  /api/v2/models                         (backend/model_sync.py)
+       │                                        │
+       │  64 models (full catalog)               │
+       ▼                                        │
+  ┌─────────────┐     httpx GET          ┌──────▼──────────────────────────────┐
+  │  API Catalog │ ──────────────────►   │  1. Filter: chat_completion only    │
+  │  (64 models) │                       │  2. Filter: status = available      │
+  └─────────────┘                        │  3. Filter: supports_tools = true   │
+                                         │  4. Exclude: Azure/PTU/batch/MGA    │
+                                         │  5. Classify: _FAMILY_RULES regex   │
+                                         │  6. Dedupe: keep highest version    │
+                                         │         per family                  │
+                                         │  7. Auto-pick defaults              │
+                                         └──────┬──────────────────────────────┘
+                                                │
+                                         11 live models (latest per family)
+                                                │
+                                         ┌──────▼──────────────────────────────┐
+                                         │  GET /api/models → live model list  │
+                                         │  + auto-computed council defaults   │
+                                         │                                     │
+                                         │  POST /api/models/sync → manual     │
+                                         │  GET /api/models/sync-status        │
+                                         └─────────────────────────────────────┘
+```
+
+### Family Classification
+
+| Family Key | Pattern Example | Version Extraction |
+|------------|----------------|-------------------|
+| `anthropic/opus` | `claude-opus-4.6` | (4, 6) |
+| `anthropic/sonnet` | `claude-sonnet-4.6` | (4, 6) |
+| `google/pro` | `gemini-2.5-pro` | (2, 5) |
+| `google/flash` | `gemini-2.5-flash` | (2, 5) |
+| `openai/flagship` | `gpt-5.2` | (5, 2) |
+| `openai/mini` | `gpt-5-mini` | (5, 0) |
+| `openai/nano` | `gpt-5-nano` | (5, 0) |
+| `openai/o-mini` | `o4-mini` | (4, 0) |
+| `openai/4o` | `gpt-4o` | (4, 0) |
+| `xai/grok` | `grok-3` | (3, 0) |
+
+### Exclusion Patterns
+
+| Pattern | Reason |
+|---------|--------|
+| `-azure$` | Azure-routed duplicates |
+| `-non-ptu$` | Non-PTU variants |
+| `^ptu-` | PTU infrastructure aliases |
+| `-batch$` | Batch-only models |
+| `-mga$` | Self-hosted MGA clones |
+| `^deepmind/` | Internal embedding/rerank |
+| `-onnx-` | ONNX runtime models |
+| `-YYYY-MM-DD$` | Date-stamped snapshots |
+| `^gpt-oss-` | Internal OSS fine-tunes |
+
+### Sync Lifecycle
+
+| Event | Timing | Behaviour |
+|-------|--------|-----------|
+| **Startup sync** | App boot (lifespan) | Immediate API fetch + filter |
+| **Periodic sync** | Every 30 minutes | Background `asyncio` loop |
+| **Manual sync** | `POST /api/models/sync` | On-demand via API or Settings UI |
+| **Failure** | Any sync error | Keep previous model list (graceful degradation) |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/models` | Live model list + auto-computed defaults |
+| `POST` | `/api/models/sync` | Trigger manual re-sync |
+| `GET` | `/api/models/sync-status` | Last sync time, model count, catalog size |
+
+---
+
+## 16. A2A Agent Cards
+
+### Overview
+
+The platform implements the **Agent-to-Agent (A2A) protocol v1.0 RC** for standardized agent discovery and interoperability.
+
+### Agent Card Discovery
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /.well-known/agent-card.json` | A2A standard discovery — main council agent card |
+| `GET /api/agent-cards` | List all 10 individual agent cards |
+| `GET /api/agent-cards/{agent_id}` | Get specific agent card by ID |
+| `GET /api/agent-cards-download` | Download full bundle (main + 10 agents) as JSON |
+
+### Card Structure (A2A v1.0 RC)
+
+Each agent card follows the A2A protocol schema:
+
+```json
+{
+  "name": "LLM Council Research Analyst",
+  "description": "Analyses topic coverage, data density...",
+  "url": "https://council.int.bayer.com",
+  "version": "1.0.0",
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false
+  },
+  "skills": [
+    {
+      "id": "topic-analysis",
+      "name": "Topic Coverage Analysis",
+      "description": "..."
+    }
+  ],
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["application/json"]
+}
+```
+
+### Card Inventory
+
+| # | Card File | Agent ID | Type |
+|---|-----------|----------|------|
+| 0 | `.well-known/agent-card.json` | `llm-council` | Main orchestrator |
+| 1 | `agents/research-analyst.json` | `research-analyst` | Core |
+| 2 | `agents/fact-checker.json` | `fact-checker` | Core |
+| 3 | `agents/risk-assessor.json` | `risk-assessor` | Core |
+| 4 | `agents/pattern-scout.json` | `pattern-scout` | Core |
+| 5 | `agents/insight-synthesizer.json` | `insight-synthesizer` | Core |
+| 6 | `agents/quality-auditor.json` | `quality-auditor` | Core |
+| 7 | `agents/citation-supervisor.json` | `citation-supervisor` | Core |
+| 8 | `agents/market-positioning.json` | `market-positioning` | VP-mode |
+| 9 | `agents/clinical-value.json` | `clinical-value` | VP-mode |
+| 10 | `agents/messaging-strategist.json` | `messaging-strategist` | VP-mode |
+
+### Frontend Integration
+
+- **Download button** in Settings panel → calls `/api/agent-cards-download`
+- Bundle saved as `llm-council-agent-cards.json` via browser download
+
+---
+
+## 17. Production Deployment
 
 ### Quick Start
 
@@ -996,4 +1174,4 @@ See [deploy/DEPLOY.md](deploy/DEPLOY.md) for:
 
 ---
 
-*LLM Council MGA v3.0 — Ideated by Anna Bredlich · Master mind by Vinod Das*
+*LLM Council MGA v3.2 — Ideated by Anna Bredlich · Master mind by Vinod Das*
