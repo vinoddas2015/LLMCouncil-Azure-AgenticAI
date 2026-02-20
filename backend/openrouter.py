@@ -18,6 +18,17 @@ from .security import redact_pii
 logger = logging.getLogger("llm_council.openrouter")
 
 
+def _sanitize_messages(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Scrub PII from message contents once (avoid redundant per-model calls)."""
+    return [
+        {
+            **msg,
+            "content": redact_pii(msg["content"]) if isinstance(msg.get("content"), str) else msg.get("content"),
+        }
+        for msg in messages
+    ]
+
+
 # ── Persistent HTTP connection pool ──────────────────────────────────
 # Reuse TCP connections + TLS sessions across all API calls within a
 # worker process.  Avoids 200-500ms TLS handshake overhead per request.
@@ -53,6 +64,7 @@ async def _raw_query_model(
     messages: List[Dict[str, str]],
     timeout: float = 120.0,
     web_search_enabled: bool = False,
+    _pre_sanitized: bool = False,
 ) -> Dict[str, Any]:
     """
     Low-level HTTP call to the API.  Raises on failure (no swallowing).
@@ -62,14 +74,7 @@ async def _raw_query_model(
         "Content-Type": "application/json",
     }
 
-    # ── PII Redaction: scrub sensitive data before external dispatch ──
-    sanitized_messages = [
-        {
-            **msg,
-            "content": redact_pii(msg["content"]) if isinstance(msg.get("content"), str) else msg.get("content"),
-        }
-        for msg in messages
-    ]
+    sanitized_messages = messages if _pre_sanitized else _sanitize_messages(messages)
 
     payload = {
         "model": model,
@@ -135,6 +140,7 @@ async def query_model(
     web_search_enabled: bool = False,
     session_id: Optional[str] = None,
     max_retries: int = 2,
+    _pre_sanitized: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """
     Query a single model with self-healing resilience:
@@ -149,6 +155,7 @@ async def query_model(
         web_search_enabled: Enable web search plugins
         session_id: Kill-switch session ID (None = no kill switch check)
         max_retries: Number of retry attempts
+        _pre_sanitized: If True, skip PII redaction (caller already sanitized)
 
     Returns:
         Response dict or None if all attempts failed
@@ -166,16 +173,19 @@ async def query_model(
         logger.warning(f"[query_model] Circuit OPEN for {model} — skipping")
         return None
 
+    sanitized = messages if _pre_sanitized else _sanitize_messages(messages)
+
     try:
         result = await retry_with_backoff(
             _raw_query_model,
             model,
-            messages,
+            sanitized,
             timeout,
             web_search_enabled,
+            True,  # _pre_sanitized — always True here, we sanitized above
             max_retries=max_retries,
-            base_delay=1.5,
-            max_delay=8.0,
+            base_delay=0.5,
+            max_delay=3.0,
             session_id=session_id,
         )
 
@@ -217,11 +227,15 @@ async def query_models_parallel(
     Returns:
         Dict mapping model → response (or None)
     """
+    # Sanitize PII once for the entire batch instead of N times per model
+    sanitized = _sanitize_messages(messages)
+
     tasks = [
         query_model(
-            model, messages,
+            model, sanitized,
             web_search_enabled=web_search_enabled,
             session_id=session_id,
+            _pre_sanitized=True,
         )
         for model in models
     ]

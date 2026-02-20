@@ -905,17 +905,24 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                 yield f"data: {json.dumps({'type': 'prompt_rejected', 'data': {'category': 'CONVERSATION_BLOCKED', 'message': 'This conversation has been closed due to a policy violation. Please start a **new conversation** with a question related to pharmaceutical sciences, clinical research, or life-science topics.'}})}\n\n"
                 return
 
-            guard_verdict = await evaluate_prompt(request.content or "")
+            # Run prompt guard and memory recall in parallel to avoid
+            # sequential pre-flight latency (guard LLM call can take 2-12s).
+            guard_task = asyncio.create_task(evaluate_prompt(request.content or ""))
+            memory_task = asyncio.create_task(pre_stage1_agent(augmented_content, conversation_id))
+            guard_verdict, memory_gate = await asyncio.gather(guard_task, memory_task)
+
             if not guard_verdict.allowed:
-                # Mark conversation as blocked so no follow-ups are accepted
                 conversation["blocked"] = True
                 conversation["blocked_reason"] = guard_verdict.category
                 storage.save_conversation(user_id, conversation)
-                # Store the user message so the rejection is visible in history
                 storage_content_early = request.content or ""
                 storage.add_user_message(user_id, conversation_id, storage_content_early)
                 yield f"data: {json.dumps({'type': 'prompt_rejected', 'data': {'category': guard_verdict.category, 'message': guard_verdict.message}})}\n\n"
                 return
+
+            if memory_gate.get("memory_context"):
+                augmented_content = memory_gate["augmented_query"]
+            yield f"data: {json.dumps({'type': 'memory_recall', 'data': {k: v for k, v in memory_gate.items() if k != 'memory_context' and k != 'augmented_query'}})}\n\n"
 
             # Build user message content for storage (include attachment info)
             storage_content = request.content
@@ -937,12 +944,6 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
             if is_first_message:
                 title_task = asyncio.create_task(generate_conversation_title(request.content))
 
-            # ── Pre-Stage 1 Orchestrator Agent: memory recall ──
-            memory_gate = await pre_stage1_agent(augmented_content, conversation_id)
-            if memory_gate.get("memory_context"):
-                augmented_content = memory_gate["augmented_query"]
-            yield f"data: {json.dumps({'type': 'memory_recall', 'data': {k: v for k, v in memory_gate.items() if k != 'memory_context' and k != 'augmented_query'}})}\n\n"
-
             # Stage 1: Collect responses with incremental progress
             # Instead of waiting for all models to finish before emitting
             # any data, we fire individual tasks and yield progress events
@@ -960,13 +961,17 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
             if session_id and kill_switch.is_session_killed(session_id):
                 raise KillSwitchError(f"Session {session_id} killed before Stage 1")
 
-            # Fire all model queries as individual tasks
+            # Fire all model queries as individual tasks (max_retries=1
+            # since the self-healing fallback mechanism already substitutes
+            # a different model on failure — no need for 2 retries + 4.5s
+            # of backoff delay per failing model).
             pending_tasks = {}
             for model in s1_models:
                 task = asyncio.create_task(
                     query_model(model, s1_messages,
                                 web_search_enabled=web_search_enabled,
-                                session_id=session_id)
+                                session_id=session_id,
+                                max_retries=1)
                 )
                 pending_tasks[task] = model
 
