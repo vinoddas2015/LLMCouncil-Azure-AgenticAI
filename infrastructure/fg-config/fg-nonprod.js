@@ -7,7 +7,7 @@ module.exports = {
   fargateParameters: {
     cpu: "4096",
     memory: "10GB",
-    instanceCount: 1,
+    instanceCount: 2,
     healthCheckPath: "/health",
     healthCheckGracePeriod: 60,
     timeoutInSeconds: 1200,
