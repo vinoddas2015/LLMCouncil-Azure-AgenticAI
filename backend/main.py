@@ -41,6 +41,7 @@ from .orchestrator import (
     user_gate_agent,
 )
 from .agents import run_agent_team, enrich_stage3_citations
+from .openrouter import close_shared_client
 from .security import get_security_status
 from .infographics import extract_infographic, strip_infographic_block
 
@@ -108,6 +109,7 @@ async def lifespan(application):
     sync_task = asyncio.create_task(periodic_sync_loop())
     yield
     sync_task.cancel()
+    await close_shared_client()
 
 
 app = FastAPI(title="LLM Council API", lifespan=lifespan)

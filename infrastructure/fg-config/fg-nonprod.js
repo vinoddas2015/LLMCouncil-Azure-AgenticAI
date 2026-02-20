@@ -5,8 +5,8 @@ const accountId = process.env.AWS_ACCOUNT;
 module.exports = {
   name: appName,
   fargateParameters: {
-    cpu: "16384",
-    memory: "120GB",
+    cpu: "2048",
+    memory: "8GB",
     instanceCount: 2,
     healthCheckPath: "/health",
     healthCheckGracePeriod: 60,

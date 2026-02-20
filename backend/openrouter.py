@@ -18,6 +18,37 @@ from .security import redact_pii
 logger = logging.getLogger("llm_council.openrouter")
 
 
+# ── Persistent HTTP connection pool ──────────────────────────────────
+# Reuse TCP connections + TLS sessions across all API calls within a
+# worker process.  Avoids 200-500ms TLS handshake overhead per request.
+# httpx.AsyncClient is safe for concurrent use via asyncio.gather().
+_shared_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_shared_client() -> httpx.AsyncClient:
+    """Lazy-init a module-level httpx.AsyncClient with connection pooling."""
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            verify=False,
+            limits=httpx.Limits(
+                max_connections=40,
+                max_keepalive_connections=20,
+                keepalive_expiry=120,
+            ),
+            http2=True,
+        )
+    return _shared_client
+
+
+async def close_shared_client():
+    """Gracefully close the shared client (call on app shutdown)."""
+    global _shared_client
+    if _shared_client and not _shared_client.is_closed:
+        await _shared_client.aclose()
+        _shared_client = None
+
+
 async def _raw_query_model(
     model: str,
     messages: List[Dict[str, str]],
@@ -53,49 +84,49 @@ async def _raw_query_model(
     if web_search_enabled:
         payload["plugins"] = ["web_search_google"]
 
-    # Disable SSL verification for corporate environments (Bayer internal)
-    async with httpx.AsyncClient(timeout=timeout, verify=False) as client:
-        response = await client.post(
-            OPENROUTER_API_URL,
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
+    client = _get_shared_client()
+    response = await client.post(
+        OPENROUTER_API_URL,
+        headers=headers,
+        json=payload,
+        timeout=timeout,
+    )
+    response.raise_for_status()
 
-        data = response.json()
-        message = data["choices"][0]["message"]
+    data = response.json()
+    message = data["choices"][0]["message"]
 
-        # Extract token usage from API response
-        usage = data.get("usage", {})
+    # Extract token usage from API response
+    usage = data.get("usage", {})
 
-        # Handle multi-modal responses (Gemini may return text + image parts)
-        raw_content = message.get("content")
-        if isinstance(raw_content, list):
-            # Multi-part response: assemble text and inline base64 images
-            parts = []
-            for part in raw_content:
-                if isinstance(part, dict):
-                    if part.get("type") == "text":
-                        parts.append(part.get("text", ""))
-                    elif part.get("type") == "image_url":
-                        url = part.get("image_url", {}).get("url", "")
-                        if url:
-                            parts.append(f"\n\n![Generated Image]({url})\n\n")
-                elif isinstance(part, str):
-                    parts.append(part)
-            content = "".join(parts)
-        else:
-            content = raw_content
+    # Handle multi-modal responses (Gemini may return text + image parts)
+    raw_content = message.get("content")
+    if isinstance(raw_content, list):
+        # Multi-part response: assemble text and inline base64 images
+        parts = []
+        for part in raw_content:
+            if isinstance(part, dict):
+                if part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+                elif part.get("type") == "image_url":
+                    url = part.get("image_url", {}).get("url", "")
+                    if url:
+                        parts.append(f"\n\n![Generated Image]({url})\n\n")
+            elif isinstance(part, str):
+                parts.append(part)
+        content = "".join(parts)
+    else:
+        content = raw_content
 
-        return {
-            "content": content,
-            "reasoning_details": message.get("reasoning_details"),
-            "usage": {
-                "prompt_tokens": usage.get("prompt_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0),
-                "total_tokens": usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
-            },
-        }
+    return {
+        "content": content,
+        "reasoning_details": message.get("reasoning_details"),
+        "usage": {
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
+        },
+    }
 
 
 async def query_model(
