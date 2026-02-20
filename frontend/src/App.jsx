@@ -219,6 +219,15 @@ function App() {
           case 'stage1_start':
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.loading.stage1 = true;
+              msg.stage1Progress = { completed: 0, failed: 0, total: 0 };
+            }));
+            break;
+
+          case 'stage1_model_complete':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              if (!msg.stage1) msg.stage1 = [];
+              msg.stage1 = [...msg.stage1, event.data];
+              msg.stage1Progress = event.progress;
             }));
             break;
 
@@ -226,6 +235,7 @@ function App() {
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.stage1 = event.data;
               msg.loading.stage1 = false;
+              delete msg.stage1Progress;
             }));
             break;
 
