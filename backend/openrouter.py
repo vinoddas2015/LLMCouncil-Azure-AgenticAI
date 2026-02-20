@@ -36,7 +36,6 @@ def _get_shared_client() -> httpx.AsyncClient:
                 max_keepalive_connections=20,
                 keepalive_expiry=120,
             ),
-            http2=True,
         )
     return _shared_client
 
