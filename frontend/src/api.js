@@ -270,6 +270,7 @@ export const api = {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Accept': 'text/event-stream',
             'Connection': 'keep-alive',
           },
           body: JSON.stringify({ 

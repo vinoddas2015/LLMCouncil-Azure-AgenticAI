@@ -1146,9 +1146,11 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
         with_keepalive(event_generator(), interval=10),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "Pragma": "no-cache",
+            "Expires": "0",
         }
     )
 
