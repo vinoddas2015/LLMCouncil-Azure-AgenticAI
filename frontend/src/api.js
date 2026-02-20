@@ -73,8 +73,15 @@ async function getToken() {
 /**
  * Wrapper around fetch that automatically adds Authorization header to all requests.
  * This acts as an interceptor for authentication.
+ * 
+ * In LOCAL environment, authentication is skipped entirely.
  */
 async function fetchWithAuth(url, options = {}) {
+  // Skip authentication for local development
+  if (currentEnvironment === 'development') {
+    return fetch(url, options);
+  }
+  
   const token = await getToken();
   
   const headers = {

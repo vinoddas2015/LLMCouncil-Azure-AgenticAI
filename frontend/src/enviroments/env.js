@@ -5,14 +5,17 @@ const routePrefixProd = 'llm-council'
 
 const environments = {
     LOCAL: {
+        basename: "/",
         apiBaseUrl: "http://localhost:8001",
         authTokenRefreshUrl: `http://${domainNonProd}/${routePrefixNonProd}/auth-token-refresh`,
     },
     NONPROD: {
+        basename: `/${routePrefixNonProd}`,
         apiBaseUrl: `https://${domainNonProd}/llmc-api`,
         authTokenRefreshUrl: `https://${domainNonProd}/${routePrefixNonProd}/auth-token-refresh`,
     },
     PRODUCTION: {
+        basename: `/${routePrefixProd}`,
         apiBaseUrl: `https://${domainProd}/llmc-api`,
         authTokenRefreshUrl: `https://${domainProd}/${routePrefixProd}/auth-token-refresh`,
     }

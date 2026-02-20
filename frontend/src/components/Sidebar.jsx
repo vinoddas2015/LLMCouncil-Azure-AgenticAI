@@ -38,7 +38,7 @@ export default function Sidebar({
     <div className="sidebar" role="navigation" aria-label="Conversations">
       <div className="sidebar-header">
         <div className="logo-container">
-          <img src="/Logo_Bayer.jpg" alt="Bayer Logo" className="bayer-logo" />
+          <img src={`${import.meta.env.BASE_URL}Logo_Bayer.jpg`} alt="Bayer Logo" className="bayer-logo" />
           <h1>LLM Council</h1>
         </div>
         <div className="header-actions">
