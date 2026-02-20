@@ -289,9 +289,13 @@ function buildTree(conversation) {
       children: s1Children,
     });
   } else if (lastAssistant.loading?.stage1) {
+    const prog = lastAssistant.stage1Progress;
+    const progressLabel = prog && prog.completed > 0
+      ? `Stage 1: ${prog.completed}/${prog.total} models responded...`
+      : 'Stage 1: Collecting responses...';
     root.children.push({
       id: 'stage1-loading', type: 'stage1', icon: '⏳',
-      label: 'Stage 1: Collecting responses...', loading: true, children: [],
+      label: progressLabel, loading: true, children: [],
     });
   }
 

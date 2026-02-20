@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from . import storage
-from .council import run_full_council, generate_conversation_title, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, stage2_ca_validation_pass
+from .council import run_full_council, generate_conversation_title, build_conversation_context, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, stage2_ca_validation_pass
 from .config import OPENROUTER_API_KEY, AVAILABLE_MODELS, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL
 from .model_sync import sync_models, get_live_models, get_defaults, get_sync_status, periodic_sync_loop
 from .openrouter import query_model
@@ -26,8 +26,11 @@ from .resilience import (
     kill_switch,
     circuit_breaker,
     health_monitor,
+    resolve_fallback,
+    check_quorum,
     KillSwitchError,
     QuorumError,
+    MIN_STAGE1_QUORUM,
 )
 from .grounding import compute_response_grounding_scores, get_rubric_criteria, enhance_ca_with_validation
 from .skills import run_evidence_skills, format_citations_for_prompt
@@ -41,6 +44,7 @@ from .orchestrator import (
     user_gate_agent,
 )
 from .agents import run_agent_team, enrich_stage3_citations
+from .openrouter import close_shared_client
 from .security import get_security_status
 from .infographics import extract_infographic, strip_infographic_block
 
@@ -108,6 +112,7 @@ async def lifespan(application):
     sync_task = asyncio.create_task(periodic_sync_loop())
     yield
     sync_task.cancel()
+    await close_shared_client()
 
 
 app = FastAPI(title="LLM Council API", lifespan=lifespan)
@@ -900,17 +905,24 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                 yield f"data: {json.dumps({'type': 'prompt_rejected', 'data': {'category': 'CONVERSATION_BLOCKED', 'message': 'This conversation has been closed due to a policy violation. Please start a **new conversation** with a question related to pharmaceutical sciences, clinical research, or life-science topics.'}})}\n\n"
                 return
 
-            guard_verdict = await evaluate_prompt(request.content or "")
+            # Run prompt guard and memory recall in parallel to avoid
+            # sequential pre-flight latency (guard LLM call can take 2-12s).
+            guard_task = asyncio.create_task(evaluate_prompt(request.content or ""))
+            memory_task = asyncio.create_task(pre_stage1_agent(augmented_content, conversation_id))
+            guard_verdict, memory_gate = await asyncio.gather(guard_task, memory_task)
+
             if not guard_verdict.allowed:
-                # Mark conversation as blocked so no follow-ups are accepted
                 conversation["blocked"] = True
                 conversation["blocked_reason"] = guard_verdict.category
                 storage.save_conversation(user_id, conversation)
-                # Store the user message so the rejection is visible in history
                 storage_content_early = request.content or ""
                 storage.add_user_message(user_id, conversation_id, storage_content_early)
                 yield f"data: {json.dumps({'type': 'prompt_rejected', 'data': {'category': guard_verdict.category, 'message': guard_verdict.message}})}\n\n"
                 return
+
+            if memory_gate.get("memory_context"):
+                augmented_content = memory_gate["augmented_query"]
+            yield f"data: {json.dumps({'type': 'memory_recall', 'data': {k: v for k, v in memory_gate.items() if k != 'memory_context' and k != 'augmented_query'}})}\n\n"
 
             # Build user message content for storage (include attachment info)
             storage_content = request.content
@@ -932,18 +944,104 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
             if is_first_message:
                 title_task = asyncio.create_task(generate_conversation_title(request.content))
 
-            # ── Pre-Stage 1 Orchestrator Agent: memory recall ──
-            memory_gate = await pre_stage1_agent(augmented_content, conversation_id)
-            if memory_gate.get("memory_context"):
-                augmented_content = memory_gate["augmented_query"]
-            yield f"data: {json.dumps({'type': 'memory_recall', 'data': {k: v for k, v in memory_gate.items() if k != 'memory_context' and k != 'augmented_query'}})}\n\n"
-
-            # Stage 1: Collect responses (use augmented content with attachment info)
+            # Stage 1: Collect responses with incremental progress
+            # Instead of waiting for all models to finish before emitting
+            # any data, we fire individual tasks and yield progress events
+            # as each model completes — eliminating the multi-minute dead zone.
             yield f"data: {json.dumps({'type': 'stage1_start'})}\n\n"
-            stage1_results = await stage1_collect_responses(
-                augmented_content, user_council_models, conversation_history,
-                web_search_enabled, session_id=session_id,
-            )
+
+            from .config import COUNCIL_MODELS as _COUNCIL_MODELS
+
+            s1_models = user_council_models or _COUNCIL_MODELS
+            s1_context = build_conversation_context(conversation_history)
+            s1_query = f"{s1_context}Current question (follow-up): {augmented_content}" if s1_context else augmented_content
+            s1_messages = [{"role": "user", "content": s1_query}]
+
+            # Kill switch gate
+            if session_id and kill_switch.is_session_killed(session_id):
+                raise KillSwitchError(f"Session {session_id} killed before Stage 1")
+
+            # Fire all model queries as individual tasks (max_retries=1
+            # since the self-healing fallback mechanism already substitutes
+            # a different model on failure — no need for 2 retries + 4.5s
+            # of backoff delay per failing model).
+            pending_tasks = {}
+            for model in s1_models:
+                task = asyncio.create_task(
+                    query_model(model, s1_messages,
+                                web_search_enabled=web_search_enabled,
+                                session_id=session_id,
+                                max_retries=1)
+                )
+                pending_tasks[task] = model
+
+            stage1_results = []
+            s1_failed_models = []
+            s1_used_models = set(s1_models)
+            s1_total = len(s1_models)
+
+            while pending_tasks:
+                done, _ = await asyncio.wait(
+                    pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in done:
+                    model = pending_tasks.pop(task)
+                    try:
+                        response = task.result()
+                        if response is not None:
+                            result_item = {
+                                "model": model,
+                                "response": response.get('content', ''),
+                                "usage": response.get('usage'),
+                            }
+                            stage1_results.append(result_item)
+                            yield f"data: {json.dumps({'type': 'stage1_model_complete', 'data': result_item, 'progress': {'completed': len(stage1_results), 'failed': len(s1_failed_models), 'total': s1_total}})}\n\n"
+                        else:
+                            s1_failed_models.append(model)
+                    except Exception as e:
+                        logger.error(f"[Stage1] {model} raised: {e}")
+                        circuit_breaker.record_failure(model, str(e))
+                        s1_failed_models.append(model)
+
+            # Self-healing: attempt fallback models for any that failed
+            if s1_failed_models and len(stage1_results) < len(s1_models):
+                logger.info(f"[Stage1] {len(s1_failed_models)} model(s) failed, attempting fallbacks...")
+                for failed_model in s1_failed_models:
+                    if session_id and kill_switch.is_session_killed(session_id):
+                        raise KillSwitchError(f"Session {session_id} killed during Stage 1 fallback")
+                    fallback = resolve_fallback(failed_model, s1_used_models)
+                    if fallback:
+                        s1_used_models.add(fallback)
+                        fb_response = await query_model(
+                            fallback, s1_messages,
+                            web_search_enabled=web_search_enabled,
+                            session_id=session_id,
+                        )
+                        if fb_response is not None:
+                            result_item = {
+                                "model": f"{fallback} (fallback for {failed_model})",
+                                "response": fb_response.get('content', ''),
+                                "usage": fb_response.get('usage'),
+                            }
+                            stage1_results.append(result_item)
+                            health_monitor.log_healing_action("stage1_fallback_success", {
+                                "failed_model": failed_model, "fallback_model": fallback,
+                            })
+                            yield f"data: {json.dumps({'type': 'stage1_model_complete', 'data': result_item, 'progress': {'completed': len(stage1_results), 'failed': len(s1_failed_models), 'total': s1_total}})}\n\n"
+                        else:
+                            health_monitor.log_healing_action("stage1_fallback_failed", {
+                                "failed_model": failed_model, "fallback_model": fallback,
+                            })
+
+            # Quorum check
+            if not check_quorum(stage1_results, "Stage 1", MIN_STAGE1_QUORUM):
+                health_monitor.log_healing_action("stage1_quorum_failure", {
+                    "successful": len(stage1_results), "required": MIN_STAGE1_QUORUM,
+                })
+                raise QuorumError(
+                    f"Stage 1 quorum not met: got {len(stage1_results)}, need {MIN_STAGE1_QUORUM}"
+                )
+
             # Record Stage 1 token usage
             for r in stage1_results:
                 cost_tracker.record("stage1", r["model"], r.get("usage"))
@@ -1144,9 +1242,11 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
         with_keepalive(event_generator(), interval=10),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "Pragma": "no-cache",
+            "Expires": "0",
         }
     )
 

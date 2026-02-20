@@ -18,11 +18,53 @@ from .security import redact_pii
 logger = logging.getLogger("llm_council.openrouter")
 
 
+def _sanitize_messages(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Scrub PII from message contents once (avoid redundant per-model calls)."""
+    return [
+        {
+            **msg,
+            "content": redact_pii(msg["content"]) if isinstance(msg.get("content"), str) else msg.get("content"),
+        }
+        for msg in messages
+    ]
+
+
+# ── Persistent HTTP connection pool ──────────────────────────────────
+# Reuse TCP connections + TLS sessions across all API calls within a
+# worker process.  Avoids 200-500ms TLS handshake overhead per request.
+# httpx.AsyncClient is safe for concurrent use via asyncio.gather().
+_shared_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_shared_client() -> httpx.AsyncClient:
+    """Lazy-init a module-level httpx.AsyncClient with connection pooling."""
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            verify=False,
+            limits=httpx.Limits(
+                max_connections=40,
+                max_keepalive_connections=20,
+                keepalive_expiry=120,
+            ),
+        )
+    return _shared_client
+
+
+async def close_shared_client():
+    """Gracefully close the shared client (call on app shutdown)."""
+    global _shared_client
+    if _shared_client and not _shared_client.is_closed:
+        await _shared_client.aclose()
+        _shared_client = None
+
+
 async def _raw_query_model(
     model: str,
     messages: List[Dict[str, str]],
     timeout: float = 120.0,
     web_search_enabled: bool = False,
+    _pre_sanitized: bool = False,
 ) -> Dict[str, Any]:
     """
     Low-level HTTP call to the API.  Raises on failure (no swallowing).
@@ -32,14 +74,7 @@ async def _raw_query_model(
         "Content-Type": "application/json",
     }
 
-    # ── PII Redaction: scrub sensitive data before external dispatch ──
-    sanitized_messages = [
-        {
-            **msg,
-            "content": redact_pii(msg["content"]) if isinstance(msg.get("content"), str) else msg.get("content"),
-        }
-        for msg in messages
-    ]
+    sanitized_messages = messages if _pre_sanitized else _sanitize_messages(messages)
 
     payload = {
         "model": model,
@@ -53,49 +88,49 @@ async def _raw_query_model(
     if web_search_enabled:
         payload["plugins"] = ["web_search_google"]
 
-    # Disable SSL verification for corporate environments (Bayer internal)
-    async with httpx.AsyncClient(timeout=timeout, verify=False) as client:
-        response = await client.post(
-            OPENROUTER_API_URL,
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
+    client = _get_shared_client()
+    response = await client.post(
+        OPENROUTER_API_URL,
+        headers=headers,
+        json=payload,
+        timeout=timeout,
+    )
+    response.raise_for_status()
 
-        data = response.json()
-        message = data["choices"][0]["message"]
+    data = response.json()
+    message = data["choices"][0]["message"]
 
-        # Extract token usage from API response
-        usage = data.get("usage", {})
+    # Extract token usage from API response
+    usage = data.get("usage", {})
 
-        # Handle multi-modal responses (Gemini may return text + image parts)
-        raw_content = message.get("content")
-        if isinstance(raw_content, list):
-            # Multi-part response: assemble text and inline base64 images
-            parts = []
-            for part in raw_content:
-                if isinstance(part, dict):
-                    if part.get("type") == "text":
-                        parts.append(part.get("text", ""))
-                    elif part.get("type") == "image_url":
-                        url = part.get("image_url", {}).get("url", "")
-                        if url:
-                            parts.append(f"\n\n![Generated Image]({url})\n\n")
-                elif isinstance(part, str):
-                    parts.append(part)
-            content = "".join(parts)
-        else:
-            content = raw_content
+    # Handle multi-modal responses (Gemini may return text + image parts)
+    raw_content = message.get("content")
+    if isinstance(raw_content, list):
+        # Multi-part response: assemble text and inline base64 images
+        parts = []
+        for part in raw_content:
+            if isinstance(part, dict):
+                if part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+                elif part.get("type") == "image_url":
+                    url = part.get("image_url", {}).get("url", "")
+                    if url:
+                        parts.append(f"\n\n![Generated Image]({url})\n\n")
+            elif isinstance(part, str):
+                parts.append(part)
+        content = "".join(parts)
+    else:
+        content = raw_content
 
-        return {
-            "content": content,
-            "reasoning_details": message.get("reasoning_details"),
-            "usage": {
-                "prompt_tokens": usage.get("prompt_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0),
-                "total_tokens": usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
-            },
-        }
+    return {
+        "content": content,
+        "reasoning_details": message.get("reasoning_details"),
+        "usage": {
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
+        },
+    }
 
 
 async def query_model(
@@ -105,6 +140,7 @@ async def query_model(
     web_search_enabled: bool = False,
     session_id: Optional[str] = None,
     max_retries: int = 2,
+    _pre_sanitized: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """
     Query a single model with self-healing resilience:
@@ -119,6 +155,7 @@ async def query_model(
         web_search_enabled: Enable web search plugins
         session_id: Kill-switch session ID (None = no kill switch check)
         max_retries: Number of retry attempts
+        _pre_sanitized: If True, skip PII redaction (caller already sanitized)
 
     Returns:
         Response dict or None if all attempts failed
@@ -136,16 +173,19 @@ async def query_model(
         logger.warning(f"[query_model] Circuit OPEN for {model} — skipping")
         return None
 
+    sanitized = messages if _pre_sanitized else _sanitize_messages(messages)
+
     try:
         result = await retry_with_backoff(
             _raw_query_model,
             model,
-            messages,
+            sanitized,
             timeout,
             web_search_enabled,
+            True,  # _pre_sanitized — always True here, we sanitized above
             max_retries=max_retries,
-            base_delay=1.5,
-            max_delay=8.0,
+            base_delay=0.5,
+            max_delay=3.0,
             session_id=session_id,
         )
 
@@ -187,11 +227,15 @@ async def query_models_parallel(
     Returns:
         Dict mapping model → response (or None)
     """
+    # Sanitize PII once for the entire batch instead of N times per model
+    sanitized = _sanitize_messages(messages)
+
     tasks = [
         query_model(
-            model, messages,
+            model, sanitized,
             web_search_enabled=web_search_enabled,
             session_id=session_id,
+            _pre_sanitized=True,
         )
         for model in models
     ]
