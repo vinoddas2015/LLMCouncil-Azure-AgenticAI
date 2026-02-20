@@ -119,7 +119,7 @@ app = FastAPI(title="LLM Council API", lifespan=lifespan)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Log incoming requests with user profile info (excluding /health endpoint)."""
+    """Log incoming requests with all headers except authorization (excluding /health endpoint)."""
     
     async def dispatch(self, request: Request, call_next):
         # Skip logging for health endpoint (used by ECS)
@@ -129,26 +129,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Log endpoint
         logger.info(f"[Request] {request.method} {request.url.path}")
         
-        # Check for user profile header (common headers: x-user-profile, x-user-id, x-forwarded-user, etc.)
-        user_profile_headers = [
-            "x-user-profile",
-            "x-user-id", 
-            "x-forwarded-user",
-            "x-remote-user",
-            "x-authenticated-user",
-        ]
+        # Log all headers except authorization
+        filtered_headers = {}
+        for header_name, header_value in request.headers.items():
+            if header_name.lower() not in ["authorization", "auth", "token"]:
+                filtered_headers[header_name] = header_value
         
-        user_profile_found = False
-        for header_name in user_profile_headers:
-            header_value = request.headers.get(header_name)
-            if header_value:
-                # Log that we found the header without exposing the full value
-                logger.info(f"[Request] User profile header found: {header_name} (value length: {len(header_value)} chars)")
-                user_profile_found = True
-                break
-        
-        if not user_profile_found:
-            logger.info("[Request] No user profile header found in request")
+        logger.info(f"[Request] Headers: {json.dumps(filtered_headers, indent=2)}")
         
         # Continue processing the request
         response = await call_next(request)
