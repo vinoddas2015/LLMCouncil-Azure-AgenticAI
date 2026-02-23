@@ -1,8 +1,10 @@
 #!/usr/bin/env pwsh
 # ============================================================
-# LLM Council MGA - Azure Cosmos DB Provisioning Script
+# LLM Council MGA - Azure Data Provisioning Script
+# Cosmos DB + Azure Blob Storage in the same resource group
 # ============================================================
-# Reference: https://learn.microsoft.com/en-us/cli/azure/cosmosdb?view=azure-cli-latest
+# Reference: https://learn.microsoft.com/en-us/cli/azure/cosmosdb
+#            https://learn.microsoft.com/en-us/cli/azure/storage
 #
 # Usage:
 #   .\deploy\setup_cosmos.ps1                          # uses defaults
@@ -19,6 +21,8 @@ param(
     [string]$ConversationsCtr = "conversations",
     [string]$MemoryCtr       = "memory",
     [string]$SkillsCtr       = "skills",
+    [string]$StorageAccount  = "llmcouncilmga",
+    [string]$BlobContainer   = "conversations",
     [int]   $MaxThroughput   = 1000,
     [switch]$FreeTier,
     [switch]$Teardown,
@@ -52,6 +56,10 @@ if ($Teardown) {
     Write-Cmd "az cosmosdb delete -n $AccountName -g $ResourceGroup --yes"
     if (-not $DryRun) { az cosmosdb delete -n $AccountName -g $ResourceGroup --yes 2>$null }
 
+    Write-Step "Tearing down Storage Account"
+    Write-Cmd "az storage account delete -n $StorageAccount -g $ResourceGroup --yes"
+    if (-not $DryRun) { az storage account delete -n $StorageAccount -g $ResourceGroup --yes 2>$null }
+
     Write-OK "Teardown complete"
     return
 }
@@ -72,7 +80,7 @@ if (-not $account) {
 Write-OK ("Subscription: " + $account.name + " (" + $account.id + ")")
 
 # -- 1. Resource Group -----------------------------------------
-Write-Step "1/7 - Resource Group"
+Write-Step "1/9 - Resource Group"
 $rgExists = az group exists --name $ResourceGroup 2>$null
 if ($rgExists -eq "true") {
     Write-OK "Resource group '$ResourceGroup' already exists"
@@ -86,7 +94,7 @@ if ($rgExists -eq "true") {
 }
 
 # -- 2. Cosmos DB Account --------------------------------------
-Write-Step "2/7 - Cosmos DB Account"
+Write-Step "2/9 - Cosmos DB Account"
 
 $nameExists = az cosmosdb check-name-exists --name $AccountName 2>$null
 if ($nameExists -eq "true") {
@@ -119,7 +127,7 @@ if ($nameExists -eq "true") {
 }
 
 # -- 3. SQL Database -------------------------------------------
-Write-Step "3/7 - SQL Database"
+Write-Step "3/9 - SQL Database"
 
 $dbExists = az cosmosdb sql database exists `
     --account-name $AccountName `
@@ -141,7 +149,7 @@ if ($dbExists -eq "true") {
 }
 
 # -- 4. Conversations Container --------------------------------
-Write-Step "4/7 - Conversations Container"
+Write-Step "4/9 - Conversations Container"
 
 $ctrExists = az cosmosdb sql container exists `
     --account-name $AccountName `
@@ -169,7 +177,7 @@ if ($ctrExists -eq "true") {
 }
 
 # -- 5. Memory Container ---------------------------------------
-Write-Step "5/7 - Memory Container"
+Write-Step "5/9 - Memory Container"
 
 $memExists = az cosmosdb sql container exists `
     --account-name $AccountName `
@@ -197,7 +205,7 @@ if ($memExists -eq "true") {
 }
 
 # -- 6. Skills Container ----------------------------------------
-Write-Step "6/7 - Skills Container"
+Write-Step "6/9 - Skills Container"
 
 $skillsExists = az cosmosdb sql container exists `
     --account-name $AccountName `
@@ -224,8 +232,60 @@ if ($skillsExists -eq "true") {
     Write-OK $okMsg
 }
 
-# -- 7. Retrieve Keys -----------------------------------------
-Write-Step "7/7 - Connection Details"
+# -- 7. Storage Account ----------------------------------------
+Write-Step "7/9 - Storage Account"
+
+$storageExists = az storage account check-name --name $StorageAccount --output json 2>$null | ConvertFrom-Json
+if ($storageExists.nameAvailable -eq $false -and $storageExists.reason -eq "AlreadyExists") {
+    # Verify it is in our RG
+    $stInfo = az storage account show --name $StorageAccount --resource-group $ResourceGroup --output json 2>$null | ConvertFrom-Json
+    if ($stInfo) {
+        Write-OK "Storage account '$StorageAccount' already exists in $ResourceGroup"
+    } else {
+        Write-Warn "Storage account '$StorageAccount' exists globally but not in $ResourceGroup - name taken"
+    }
+} else {
+    Write-Cmd "az storage account create --name $StorageAccount --sku Standard_LRS --kind StorageV2"
+    if (-not $DryRun) {
+        az storage account create `
+            --name $StorageAccount `
+            --resource-group $ResourceGroup `
+            --location $Location `
+            --sku Standard_LRS `
+            --kind StorageV2 `
+            --min-tls-version TLS1_2 `
+            --allow-blob-public-access false `
+            --output none
+        if ($LASTEXITCODE -ne 0) { throw "Failed to create storage account" }
+    }
+    Write-OK "Created storage account '$StorageAccount' [Standard_LRS, StorageV2, TLS 1.2]"
+}
+
+# -- 8. Blob Container -----------------------------------------
+Write-Step "8/9 - Blob Container ($BlobContainer)"
+
+$blobExists = az storage container exists `
+    --name $BlobContainer `
+    --account-name $StorageAccount `
+    --auth-mode login `
+    --output json 2>$null | ConvertFrom-Json
+if ($blobExists.exists -eq $true) {
+    Write-OK "Blob container '$BlobContainer' already exists"
+} else {
+    Write-Cmd "az storage container create --name $BlobContainer --account-name $StorageAccount"
+    if (-not $DryRun) {
+        az storage container create `
+            --name $BlobContainer `
+            --account-name $StorageAccount `
+            --auth-mode login `
+            --output none
+        if ($LASTEXITCODE -ne 0) { throw "Failed to create blob container" }
+    }
+    Write-OK "Created blob container '$BlobContainer'"
+}
+
+# -- 9. Retrieve Keys -----------------------------------------
+Write-Step "9/9 - Connection Details"
 
 if (-not $DryRun) {
     $keys = az cosmosdb keys list `
@@ -252,9 +312,19 @@ if (-not $DryRun) {
     Write-Host "  COSMOS_MEMORY_CONTAINER=$MemoryCtr" -ForegroundColor White
     Write-Host "  COSMOS_SKILLS_CONTAINER=$SkillsCtr" -ForegroundColor White
     Write-Host ""
+
+    # Storage Account connection string
+    $storageConn = az storage account show-connection-string `
+        --name $StorageAccount `
+        --resource-group $ResourceGroup `
+        --output tsv 2>$null
+
+    Write-Host "  AZURE_STORAGE_CONNECTION_STRING=$storageConn" -ForegroundColor White
+    Write-Host "  AZURE_STORAGE_CONTAINER=$BlobContainer" -ForegroundColor White
+    Write-Host ""
 } else {
     Write-Warn "DryRun - skipping key retrieval"
 }
 
 Write-Host ""
-Write-Host "[DONE] Cosmos DB provisioning complete!" -ForegroundColor Green
+Write-Host "[DONE] Cosmos DB + Storage Account provisioning complete!" -ForegroundColor Green
