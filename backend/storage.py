@@ -1,11 +1,11 @@
-"""Conversation storage — dual-mode: local files or S3.
+"""Conversation storage — dual-mode: local files or Azure Blob Storage.
 
-Cloud users  → S3  (key: conversations/{user_id}/{conversation_id}.json)
+Cloud users  → Azure Blob Storage (container: conversations/{user_id}/{conversation_id}.json)
 Local dev    → files (path: data/conversations/local-user/{conversation_id}.json)
 
 The active backend is chosen per-call based on user_id:
   user_id == "local-user"  → file backend
-  anything else            → S3 backend
+  anything else            → Azure Blob Storage backend
 """
 
 import json
@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from .config import DATA_DIR, S3_BUCKET_NAME, S3_CONVERSATIONS_PREFIX
+from .config import DATA_DIR, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER, BLOB_CONVERSATIONS_PREFIX
 from .security import encrypt_data, decrypt_data, is_encryption_enabled
 
 logger = logging.getLogger(__name__)
@@ -40,82 +40,85 @@ def _validate_user_id(user_id: str) -> str:
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
-# ║  S3 Backend                                                         ║
+# ║  Azure Blob Storage Backend                                         ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
-_s3_client = None
+_blob_service_client = None
 
 
-def _get_s3():
-    """Lazy-initialised boto3 S3 client (created once per process)."""
-    global _s3_client
-    if _s3_client is None:
-        import boto3
-        _s3_client = boto3.client("s3")
-    return _s3_client
+def _get_blob_service():
+    """Lazy-initialised Azure Blob Storage client (created once per process)."""
+    global _blob_service_client
+    if _blob_service_client is None:
+        from azure.storage.blob import BlobServiceClient
+        _blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+    return _blob_service_client
 
 
-def _s3_key(user_id: str, conversation_id: str) -> str:
-    return f"{S3_CONVERSATIONS_PREFIX}/{user_id}/{conversation_id}.json"
+def _get_container_client():
+    """Get the container client for conversations."""
+    return _get_blob_service().get_container_client(AZURE_STORAGE_CONTAINER)
 
 
-def _s3_user_prefix(user_id: str) -> str:
-    return f"{S3_CONVERSATIONS_PREFIX}/{user_id}/"
+def _blob_name(user_id: str, conversation_id: str) -> str:
+    return f"{BLOB_CONVERSATIONS_PREFIX}/{user_id}/{conversation_id}.json"
 
 
-def _s3_put(user_id: str, conversation_id: str, data: Dict[str, Any]):
-    _get_s3().put_object(
-        Bucket=S3_BUCKET_NAME,
-        Key=_s3_key(user_id, conversation_id),
-        Body=json.dumps(data, indent=2).encode("utf-8"),
-        ContentType="application/json",
-        ServerSideEncryption="AES256",
+def _blob_user_prefix(user_id: str) -> str:
+    return f"{BLOB_CONVERSATIONS_PREFIX}/{user_id}/"
+
+
+def _blob_put(user_id: str, conversation_id: str, data: Dict[str, Any]):
+    container = _get_container_client()
+    container.upload_blob(
+        name=_blob_name(user_id, conversation_id),
+        data=json.dumps(data, indent=2).encode("utf-8"),
+        overwrite=True,
+        content_settings={"content_type": "application/json"},
     )
 
 
-def _s3_get(user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
+def _blob_get(user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
     try:
-        resp = _get_s3().get_object(
-            Bucket=S3_BUCKET_NAME,
-            Key=_s3_key(user_id, conversation_id),
-        )
-        return json.loads(resp["Body"].read().decode("utf-8"))
-    except _get_s3().exceptions.NoSuchKey:
+        container = _get_container_client()
+        blob = container.get_blob_client(_blob_name(user_id, conversation_id))
+        data = blob.download_blob().readall().decode("utf-8")
+        return json.loads(data)
+    except Exception:
         return None
 
 
-def _s3_delete(user_id: str, conversation_id: str) -> bool:
-    key = _s3_key(user_id, conversation_id)
+def _blob_delete(user_id: str, conversation_id: str) -> bool:
     try:
-        _get_s3().head_object(Bucket=S3_BUCKET_NAME, Key=key)
+        container = _get_container_client()
+        blob = container.get_blob_client(_blob_name(user_id, conversation_id))
+        blob.delete_blob()
+        return True
     except Exception:
         return False
-    _get_s3().delete_object(Bucket=S3_BUCKET_NAME, Key=key)
-    return True
 
 
-def _s3_list(user_id: str) -> List[Dict[str, Any]]:
-    """List all conversations for a user from S3 (metadata only)."""
-    s3 = _get_s3()
-    prefix = _s3_user_prefix(user_id)
+def _blob_list(user_id: str) -> List[Dict[str, Any]]:
+    """List all conversations for a user from Azure Blob Storage (metadata only)."""
+    container = _get_container_client()
+    prefix = _blob_user_prefix(user_id)
     conversations = []
-    paginator = s3.get_paginator("list_objects_v2")
 
-    for page in paginator.paginate(Bucket=S3_BUCKET_NAME, Prefix=prefix):
-        for obj in page.get("Contents", []):
-            if not obj["Key"].endswith(".json"):
-                continue
-            try:
-                resp = s3.get_object(Bucket=S3_BUCKET_NAME, Key=obj["Key"])
-                data = json.loads(resp["Body"].read().decode("utf-8"))
-                conversations.append({
-                    "id": data["id"],
-                    "created_at": data["created_at"],
-                    "title": data.get("title", "New Conversation"),
-                    "message_count": len(data["messages"]),
-                })
-            except Exception as e:
-                logger.warning(f"Skipping corrupt S3 object {obj['Key']}: {e}")
+    for blob in container.list_blobs(name_starts_with=prefix):
+        if not blob.name.endswith(".json"):
+            continue
+        try:
+            blob_client = container.get_blob_client(blob.name)
+            raw = blob_client.download_blob().readall().decode("utf-8")
+            data = json.loads(raw)
+            conversations.append({
+                "id": data["id"],
+                "created_at": data["created_at"],
+                "title": data.get("title", "New Conversation"),
+                "message_count": len(data["messages"]),
+            })
+        except Exception as e:
+            logger.warning(f"Skipping corrupt blob {blob.name}: {e}")
 
     conversations.sort(key=lambda x: x["created_at"], reverse=True)
     return conversations
@@ -191,14 +194,14 @@ def _put(user_id: str, conversation_id: str, data: Dict[str, Any]):
     if _is_local(uid):
         _file_put(uid, conversation_id, data)
     else:
-        _s3_put(uid, conversation_id, data)
+        _blob_put(uid, conversation_id, data)
 
 
 def _get(user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
     uid = _validate_user_id(user_id)
     if _is_local(uid):
         return _file_get(uid, conversation_id)
-    return _s3_get(uid, conversation_id)
+    return _blob_get(uid, conversation_id)
 
 
 def create_conversation(user_id: str, conversation_id: str) -> Dict[str, Any]:
@@ -228,7 +231,7 @@ def list_conversations(user_id: str) -> List[Dict[str, Any]]:
     uid = _validate_user_id(user_id)
     if _is_local(uid):
         return _file_list(uid)
-    return _s3_list(uid)
+    return _blob_list(uid)
 
 
 def add_user_message(user_id: str, conversation_id: str, content: str):
@@ -297,4 +300,4 @@ def delete_conversation(user_id: str, conversation_id: str) -> bool:
     uid = _validate_user_id(user_id)
     if _is_local(uid):
         return _file_delete(uid, conversation_id)
-    return _s3_delete(uid, conversation_id)
+    return _blob_delete(uid, conversation_id)

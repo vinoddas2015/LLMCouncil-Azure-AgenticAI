@@ -3,10 +3,16 @@
 import httpx
 import json
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 os.environ['SSL_CERT_FILE'] = ''
 
-KEY = "REDACTED_VERTEX_API_KEY"
-PROJECT = "pbeat04059418-qa-0173-ai-hub-r"
+KEY = os.getenv("VERTEX_API_KEY") or os.getenv("GOOGLE_API_KEY")
+if not KEY:
+    raise RuntimeError("VERTEX_API_KEY or GOOGLE_API_KEY not set. Add one to your .env file.")
+
+PROJECT = os.getenv("VERTEX_PROJECT", "pbeat04059418-qa-0173-ai-hub-r")
 HEADERS = {"x-goog-api-key": KEY, "Content-Type": "application/json"}
 
 BODY = {"contents": [{"role": "user", "parts": [{"text": "Say hello in one word"}]}]}

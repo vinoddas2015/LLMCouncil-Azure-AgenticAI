@@ -21,8 +21,9 @@ python-dotenv>=1.0.0,<2.0.0
 # Security — encryption at rest
 cryptography>=43.0.0,<45.0.0
 
-# AWS SDK (S3 conversation storage in cloud)
-boto3>=1.35.0
+# Azure SDK (Blob Storage conversation storage in cloud)
+azure-storage-blob>=12.19.0
+azure-identity>=1.15.0
 
 # ── Testing (optional) ──────────────────────────────────────
 # pytest>=8.0.0

@@ -38,14 +38,14 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - `parse_ranking_from_text()`: Extracts "FINAL RANKING:" section, handles both numbered lists and plain format
 - `calculate_aggregate_rankings()`: Computes average rank position across all peer evaluations
 
-**`storage.py`** — Dual-Mode Conversation Storage (S3 + Local Files)
-- **Cloud users** → S3 bucket (`S3_BUCKET_NAME` env var, key: `conversations/{user_id}/{conversation_id}.json`)
+**`storage.py`** — Dual-Mode Conversation Storage (Azure Blob Storage + Local Files)
+- **Cloud users** → Azure Blob Storage (`AZURE_STORAGE_CONNECTION_STRING` env var, blob: `conversations/{user_id}/{conversation_id}.json`)
 - **Local dev** (`user_id == "local-user"`) → file-based at `data/conversations/local-user/{conversation_id}.json`
 - `user_id` is extracted from the `user-id` HTTP header (injected by reverse proxy in cloud, hardcoded as `local-user` in dev)
 - Every public function takes `user_id` as its first parameter
-- S3 objects use AES-256 server-side encryption; local files use the custom `encrypt_data`/`decrypt_data` from `security.py`
+- Azure Blob Storage uses server-side encryption; local files use the custom `encrypt_data`/`decrypt_data` from `security.py`
 - Path traversal protection: rejects `user_id` containing `/`, `\`, or `..`
-- boto3 S3 client is lazy-initialised (one per process) to avoid import cost in local dev
+- Azure BlobServiceClient is lazy-initialised (one per process) to avoid import cost in local dev
 - Each conversation: `{id, created_at, messages[]}`
 - Assistant messages contain: `{role, stage1, stage2, stage3}`
 - Note: metadata (label_to_model, aggregate_rankings) is NOT persisted to storage, only returned via API
@@ -195,15 +195,15 @@ This strict format allows reliable parsing while still getting thoughtful evalua
 - Users see explanation that original evaluation used anonymous labels
 - This prevents bias while maintaining transparency
 
-### User-ID Data Isolation & S3 Storage
-- **Cloud**: conversations stored in S3 bucket (`${AppName}-conversations-${Environment}`) under key `conversations/{user_id}/{conversation_id}.json`
+### User-ID Data Isolation & Azure Blob Storage
+- **Cloud**: conversations stored in Azure Blob Storage container under blob path `conversations/{user_id}/{conversation_id}.json`
 - **Local dev**: file-based storage at `data/conversations/local-user/` (detected by `user_id == "local-user"`)
 - The `user-id` HTTP header is injected by the reverse proxy in cloud deployments
 - In local development, `frontend/src/api.js` sends `user-id: local-user` automatically
 - `get_user_id` FastAPI dependency (in `main.py`) extracts/validates the header on every conversation endpoint
 - Path traversal attacks are blocked: `user_id` values containing `/`, `\`, or `..` are rejected with HTTP 400
-- S3 bucket has versioning enabled, AES-256 encryption, and all public access blocked
-- `S3_BUCKET_NAME` env var must be set in ECS task definition for cloud deployments
+- Azure Blob Storage uses server-side encryption and private container access
+- `AZURE_STORAGE_CONNECTION_STRING` env var must be set in Container Apps for cloud deployments
 
 ### Error Handling Philosophy
 - Continue with successful responses if some models fail (graceful degradation)

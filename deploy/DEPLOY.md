@@ -21,20 +21,7 @@ The memory backend is pluggable via the `MEMORY_BACKEND` environment variable:
 |------------|-------------|----------------------------------|
 | Local JSON | `local`     | Dev, single-instance             |
 | Redis      | `redis`     | Multi-instance, low-latency      |
-| DynamoDB   | `dynamodb`  | AWS serverless, auto-scaling     |
 | Cosmos DB  | `cosmosdb`  | Azure, global distribution       |
-
-## AWS Deployment (ECS / Fargate)
-
-```bash
-# Build & push to ECR
-aws ecr get-login-password | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
-docker build -t llm-council .
-docker tag llm-council:latest <account>.dkr.ecr.<region>.amazonaws.com/llm-council:latest
-docker push <account>.dkr.ecr.<region>.amazonaws.com/llm-council:latest
-
-# Deploy with ECS task definition (set MEMORY_BACKEND=dynamodb)
-```
 
 ## Azure Deployment (Container Apps)
 
@@ -123,7 +110,7 @@ spec:
 
 ## Scaling Considerations
 
-- **Horizontal**: Use Redis/DynamoDB/CosmosDB backend for shared memory across instances
+- **Horizontal**: Use Redis/CosmosDB backend for shared memory across instances
 - **Memory Store**: TF-IDF index is rebuilt on startup — Redis provides instant warm-start
 - **Data Volume**: Mount persistent volume for local backend, or use managed database
 - **Health Check**: `/api/health` endpoint available for load balancer probes

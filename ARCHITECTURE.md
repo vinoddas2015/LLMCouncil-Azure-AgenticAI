@@ -528,7 +528,7 @@ The `agent_team_complete` event carries the combined result of all 12 agents, re
 | **Grounding** | backend/grounding.py | 5-rubric hybrid Verbalized + Synthetic grounding score |
 | **Resilience** | backend/resilience.py | Kill switch, circuit breaker, exponential backoff retry, fallback chains, quorum |
 | **Memory Manager** | backend/memory.py | Semantic, Episodic, Procedural tiers + MemoryManager facade |
-| **Memory Storage** | backend/memory_store.py | Cloud-agnostic storage abstraction (JSON, Redis, DynamoDB, CosmosDB) |
+| **Memory Storage** | backend/memory_store.py | Cloud-agnostic storage abstraction (JSON, Redis, CosmosDB) |
 | **Orchestrator** | backend/orchestrator.py | 4 async stage-gate agents (pre-S1, post-S2, post-S3, user gate) |
 | **Token Tracking** | backend/token_tracking.py | Per-model cost tracking, gateway vs direct pricing, SessionCostTracker |
 | **Storage** | backend/storage.py | JSON-based conversation persistence with optional Fernet encryption at rest |
@@ -627,7 +627,7 @@ The frontend implements WCAG 3.0 draft guidelines using the **APCA** (Advanced P
 |-----------|---------|
 | Bayer myGenAssist | Enterprise LLM gateway (~40% cost savings) |
 | JSON file storage | Default persistence (pluggable) |
-| Redis / DynamoDB / CosmosDB | Production storage backends |
+| Redis / CosmosDB | Production storage backends |
 | Server-Sent Events | Real-time streaming |
 
 ### LLM Models (via myGenAssist — Auto-Synced)
@@ -828,7 +828,6 @@ Used in all 3 stages with pharma-grade binary classification:
 |---------|-------------|----------|
 | Local JSON | MEMORY_BACKEND=local | Development |
 | Redis | MEMORY_BACKEND=redis | Multi-instance |
-| DynamoDB | MEMORY_BACKEND=dynamodb | AWS serverless |
 | Cosmos DB | MEMORY_BACKEND=cosmosdb | Azure global |
 
 ### Memory API
@@ -1195,8 +1194,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8001 --workers 4
 ### Deployment Options
 
 See [deploy/DEPLOY.md](deploy/DEPLOY.md) for:
-- **AWS** — ECS/Fargate + S3 + DynamoDB
-- **Azure** — Container Apps + Blob + Cosmos DB
+- **Azure** — Container Apps + Blob Storage + Cosmos DB
 - **GCP** — Cloud Run + GCS + Firestore
 - **Kubernetes** — Helm chart + HPA
 

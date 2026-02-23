@@ -99,7 +99,7 @@ Pharma-grade evaluation in all 3 stages using binary classification metrics:
 - **Prompt Enhancement** — Automatic prompt improvement before council submission
 - **File Attachments** — PDF, PPTX, XLSX, DOCX support (up to 10MB)
 - **Conversation Management** — Full CRUD, export to markdown, multi-turn follow-ups
-- **Cloud-Agnostic Storage** — Pluggable backend (Local JSON, Redis, DynamoDB, Cosmos DB)
+- **Cloud-Agnostic Storage** — Pluggable backend (Local JSON, Redis, Cosmos DB)
 
 ### Models (Auto-Synced)
 
@@ -314,10 +314,10 @@ Events emitted during `POST /api/conversations/{id}/stream`:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `MGA_API_KEY` | Yes | Bayer myGenAssist API key (`mga-*`) |
-| `MEMORY_BACKEND` | No | Storage backend: `local` (default), `redis`, `dynamodb`, `cosmosdb` |
+| `MEMORY_BACKEND` | No | Storage backend: `local` (default), `redis`, `cosmosdb` |
 | `REDIS_URL` | If Redis | Redis connection URL |
-| `AWS_REGION` | If DynamoDB | AWS region for DynamoDB |
 | `COSMOS_CONNECTION_STRING` | If CosmosDB | Azure Cosmos DB connection string |
+| `AZURE_STORAGE_CONNECTION_STRING` | If cloud | Azure Blob Storage connection string |
 
 ### Build for Production
 
@@ -348,7 +348,6 @@ CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001", "--wo
 ### Deployment Options
 
 See [deploy/DEPLOY.md](deploy/DEPLOY.md) for detailed guides covering:
-- **AWS** — ECS/Fargate + S3 + DynamoDB
 - **Azure** — Container Apps + Blob Storage + Cosmos DB
 - **GCP** — Cloud Run + GCS + Firestore
 - **Kubernetes** — Helm chart with horizontal autoscaling
@@ -465,7 +464,7 @@ LLMCouncilMGA/
 ├── tests/                          # Test suite
 │   └── test_memory_pipeline.py     # 42 memory pipeline tests
 ├── deploy/                         # Deployment guides
-│   └── DEPLOY.md                   # AWS / Azure / GCP / K8s
+│   └── DEPLOY.md                   # Azure / GCP / K8s
 ├── ARCHITECTURE.md                 # Full system architecture
 ├── CONTRIBUTING.md                 # Contribution guidelines
 ├── requirements.txt                # Python dependencies
@@ -485,7 +484,7 @@ LLMCouncilMGA/
 | **HTTP Client** | httpx (async) | 0.27+ |
 | **Streaming** | Server-Sent Events (SSE) | — |
 | **Evidence APIs** | OpenFDA, ClinicalTrials.gov, PubMed, arXiv, Google Patents, Wikipedia, ORCID | Public REST |
-| **Storage** | JSON files (pluggable: Redis, DynamoDB, CosmosDB) | — |
+| **Storage** | JSON files (pluggable: Redis, CosmosDB) | — |
 | **Testing (Backend)** | pytest, pytest-asyncio | 9.x, 1.x |
 | **Testing (Frontend)** | Vitest, @testing-library/react, @testing-library/jest-dom, @testing-library/user-event | Latest |
 | **LLM Gateway** | Bayer myGenAssist | Enterprise |

@@ -72,9 +72,10 @@ OPENROUTER_API_URL = os.getenv(
 # Data directory for local-dev conversation storage (file-based fallback)
 DATA_DIR = "data/conversations"
 
-# S3 bucket for cloud conversation storage (set via ECS env / .env)
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "")
-S3_CONVERSATIONS_PREFIX = "conversations"
+# Azure Blob Storage for cloud conversation storage (set via Container Apps env / .env)
+AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
+AZURE_STORAGE_CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER", "conversations")
+BLOB_CONVERSATIONS_PREFIX = "conversations"
 
 
 def get_all_available_models():

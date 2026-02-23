@@ -3,7 +3,7 @@ Cloud-agnostic memory store abstraction.
 
 Provides a pluggable storage backend for the council's 3-tier memory system
 (Semantic, Episodic, Procedural).  Ships with a local JSON-file backend that
-requires zero infrastructure; swap in Redis / DynamoDB / CosmosDB / PostgreSQL
+requires zero infrastructure; swap in Redis / CosmosDB / PostgreSQL
 via the abstract base class for production deployments.
 
 Directory layout (local backend):
