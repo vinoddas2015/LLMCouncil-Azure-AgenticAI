@@ -4,7 +4,7 @@ import httpx
 import asyncio
 import logging
 from typing import List, Dict, Any, Optional
-from .config import OPENROUTER_API_KEY, OPENROUTER_API_URL
+from .config import OPENROUTER_API_KEY, OPENROUTER_API_URL, is_google_model, strip_google_prefix
 from .resilience import (
     kill_switch,
     circuit_breaker,
@@ -68,7 +68,15 @@ async def _raw_query_model(
 ) -> Dict[str, Any]:
     """
     Low-level HTTP call to the API.  Raises on failure (no swallowing).
+    Routes google/* models to Google AI Studio, everything else to Bayer myGenAssist.
     """
+    # ── Google AI Studio routing ──
+    if is_google_model(model):
+        from .google_provider import query_google_model
+        raw_model = strip_google_prefix(model)
+        return await query_google_model(raw_model, messages, timeout, web_search_enabled)
+
+    # ── Bayer myGenAssist (default) ──
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",

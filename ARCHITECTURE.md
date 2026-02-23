@@ -67,9 +67,9 @@
   │  ┌───▼───┐  ┌──▼──────┐  ┌───▼──────┐  ┌───▼────────┐ ┌──▼──────────────┐    │
   │  │Council│  │ Skills  │  │Resilience│  │Orchestrator│ │ Token Tracking  │    │
   │  │3-Stage│  │Evidence │  │Kill+CB+  │  │4 Stage-Gate│ │ Cost Calculator │    │
-  │  │       │  │15 APIs  │  │Retry+    │  │  Agents    │ │                 │    │
-  │  │Verbal.│  │7 core + │  │Fallback  │  │            │ │ Gateway vs      │    │
-  │  │Samplng│  │8 web    │  │Quorum    │  │            │ │ Direct Pricing  │    │
+  │  │       │  │28 APIs  │  │Retry+    │  │  Agents    │ │                 │    │
+  │  │Verbal.│  │12 core +│  │Fallback  │  │            │ │ Gateway vs      │    │
+  │  │Samplng│  │16 web   │  │Quorum    │  │            │ │ Direct Pricing  │    │
   │  └───┬───┘  └────┬────┘  └──────────┘  └────────────┘ └─────────────────┘    │
   │      │           │                                                              │
   │  ┌───▼───────────▼──────────────────────────────────────────┐                   │
@@ -92,9 +92,9 @@
   │                                                                                  │
   │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐               │
   │  │  Model Sync      │  │  Agent Team      │  │  A2A Agent Cards │               │
-  │  │  Auto-discover   │  │  10 specialists  │  │  .well-known/    │               │
-  │  │  Family dedup    │  │  7 core + 3 VP   │  │  agent-card.json │               │
-  │  │  30-min refresh  │  │  asyncio.gather  │  │  + 10 individual │               │
+  │  │  Auto-discover   │  │  12 specialists  │  │  .well-known/    │               │
+  │  │  Family dedup    │  │  9 core + 3 VP   │  │  agent-card.json │               │
+  │  │  30-min refresh  │  │  asyncio.gather  │  │  + 12 individual │               │
   │  └──────────────────┘  └──────────────────┘  └──────────────────┘               │
   └──────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -243,19 +243,32 @@ The skills module (backend/skills.py) retrieves real-time pharmaceutical evidenc
 | 5 | **WHO ATC/DDD** | who.int | Drug classification, ATC codes | 12s |
 | 6 | **UniProt** | uniprot.org | Protein / drug-target data (human) | 12s |
 | 7 | **ChEMBL** | ebi.ac.uk/chembl | Compound bioactivity & clinical phase | 12s |
+| 8 | **KEGG** | rest.kegg.jp | Metabolic pathways, drug interactions, enzyme targets | 12s |
+| 9 | **Reactome** | reactome.org/ContentService | Biological pathways, pathway hierarchy | 12s |
+| 10 | **RxNorm** | rxnav.nlm.nih.gov | Drug normalization, interactions, NDC codes | 12s |
+| 11 | **STRING-DB** | string-db.org | Protein-protein interaction networks & scores | 12s |
+| 12 | **Hubble (Bayer)** | search.hubble.int.bayer.com | Bayer internal enterprise search | 12s |
 
 **Web Search Skills (active when web_search_enabled=true):**
 
 | # | Skill | API | Data Retrieved | Timeout |
 |---|-------|-----|----------------|---------|
-| 8 | **Semantic Scholar** | api.semanticscholar.org | AI-curated scientific papers + abstracts | 15s |
-| 9 | **CrossRef** | api.crossref.org | Journal article metadata & DOI links | 15s |
-| 10 | **Europe PMC** | ebi.ac.uk/europepmc | Full-text open access literature | 15s |
-| 11 | **DuckDuckGo Scientific** | duckduckgo.com | Web search filtered for .gov / .edu / journals | 15s |
-| 12 | **arXiv** | export.arxiv.org | Scientific preprints (physics, biology, CS) | 15s |
-| 13 | **Google Patents** | patents.google.com | Patent claims and invention descriptions | 15s |
-| 14 | **Wikipedia** | en.wikipedia.org | Encyclopaedic context and background | 12s |
-| 15 | **ORCID** | pub.orcid.org | Researcher profiles and publication records | 15s |
+| 12 | **Semantic Scholar** | api.semanticscholar.org | AI-curated scientific papers + abstracts | 15s |
+| 13 | **CrossRef** | api.crossref.org | Journal article metadata & DOI links | 15s |
+| 14 | **Europe PMC** | ebi.ac.uk/europepmc | Full-text open access literature | 15s |
+| 15 | **DuckDuckGo Scientific** | duckduckgo.com | Web search filtered for .gov / .edu / journals | 15s |
+| 16 | **arXiv** | export.arxiv.org | Scientific preprints (physics, biology, CS) | 15s |
+| 17 | **Google Patents** | patents.google.com | Patent claims and invention descriptions | 15s |
+| 18 | **Wikipedia** | en.wikipedia.org | Encyclopaedic context and background | 12s |
+| 19 | **ORCID** | pub.orcid.org | Researcher profiles and publication records | 15s |
+| 20 | **OpenAlex** | api.openalex.org | Open scholarly metadata, citation counts, concepts | 15s |
+| 21 | **Unpaywall** | api.unpaywall.org | Legal open-access PDF/HTML full-text links | 12s |
+| 22 | **Elsevier/Scopus** | api.elsevier.com | Premium journal abstracts and citation data | 15s |
+| 23 | **bioRxiv** | api.biorxiv.org | Biology preprints — date-range + keyword filter | 15s |
+| 24 | **medRxiv** | api.biorxiv.org | Health sciences preprints | 15s |
+| 25 | **OECD.AI** | wp.oecd.ai | AI policy, regulation & governance (WP REST API) | 15s |
+| 26 | **Endpoints News** | endpts.com/feed | Biopharma industry news (RSS 2.0) | 12s |
+| 27 | **Doctor Penguin** | doctorpenguin.substack.com/feed | Healthcare + AI newsletter (Substack RSS) | 12s |
 
 ### Architecture
 
@@ -307,6 +320,19 @@ The chairman references evidence using tags that the frontend converts to clicka
 | [PAT-1] | Google Patents | Links to patent |
 | [WIKI-1] | Wikipedia | Links to article |
 | [ORC-1] | ORCID | Links to researcher profile |
+| [KG-1] | KEGG | Links to pathway/drug interaction |
+| [RC-1] | Reactome | Links to biological pathway |
+| [RX-1] | RxNorm | Links to drug normalization entry |
+| [STR-1] | STRING-DB | Links to protein interaction network |
+| [OA-1] | OpenAlex | Links to open scholarly record |
+| [UPW-1] | Unpaywall | Links to open-access full text |
+| [ELS-1] | Elsevier/Scopus | Links to journal abstract |
+| [HUB-1] | Hubble (Bayer) | Links to internal document |
+| [BRX-1] | bioRxiv | Links to biology preprint |
+| [MRX-1] | medRxiv | Links to health sciences preprint |
+| [OECD-1] | OECD.AI | Links to AI policy article |
+| [EPTS-1] | Endpoints News | Links to biopharma news |
+| [DPNG-1] | Doctor Penguin | Links to healthcare AI newsletter |
 
 ### Frontend Rendering
 
@@ -393,7 +419,7 @@ SciMarkdown is used in **Stage1.jsx**, **Stage2.jsx**, **Stage3.jsx**, and **Cha
 
 ## 4.5 Agent Team — Post-Pipeline Intelligence
 
-After the 3-stage council pipeline completes, a team of **10 specialised agents** analyses the results in parallel and produces structured signals for the **Prompt Atlas Intelligence Dashboard**.
+After the 3-stage council pipeline completes, a team of **12 specialised agents** analyses the results in parallel and produces structured signals for the **Prompt Atlas Intelligence Dashboard**.
 
 ### Agent Roster
 
@@ -406,6 +432,8 @@ After the 3-stage council pipeline completes, a team of **10 specialised agents*
 | **Insight Synthesizer** | 💡 | Cross-model analysis, novel connections, evidence gap detection |
 | **Quality Auditor** | 📊 | Rubric scores, response completeness, cost efficiency, actionability |
 | **Citation Supervisor** | 🔗 | Reference validation, PubMed link enrichment, orphan tag & DOI detection |
+| **Skills Manager** | 🧰 | Skill pipeline health, diversity analysis, performance benchmarking |
+| **Memory Orchestrator** | 🧠 | 3-tier memory health, drift detection, CA trend analysis |
 | **Market Positioning** | 📈 | VP-mode: competitive landscape, market gap analysis |
 | **Clinical Value** | 🏥 | VP-mode: clinical differentiation, value proposition |
 | **Messaging Strategist** | 💬 | VP-mode: key messages, stakeholder communication |
@@ -445,12 +473,12 @@ session_start → memory_recall → stage1 → evidence → stage2 → memory_ga
   → ca_validation_complete → memory_learning → complete
 ```
 
-The `agent_team_complete` event carries the combined result of all 10 agents, rendered by the Prompt Atlas dashboard.
+The `agent_team_complete` event carries the combined result of all 12 agents, rendered by the Prompt Atlas dashboard.
 
 ### Architecture Principles
 
 - **Pure async, stateless** — Each agent is an `async` function; no side effects
-- **Parallel execution** — All 10 agents run concurrently via `asyncio.gather`
+- **Parallel execution** — All 12 agents run concurrently via `asyncio.gather`
 - **Non-fatal** — Agent failures are caught and logged; the pipeline continues
 - **Structured output** — Every signal has severity, kind, title, detail — no free-form text
 - **Scalable** — Designed for horizontal scaling (serverless-compatible)
@@ -473,7 +501,7 @@ The `agent_team_complete` event carries the combined result of all 10 agents, re
 | Capability | Description |
 |-----------|-------------|
 | **Consensus-Driven** | 4+ models must agree through blind peer review |
-| **Citation-Grounded** | Real-time evidence from 15 APIs (FDA, ClinicalTrials, PubMed, arXiv, Patents, Wikipedia, ORCID, and more) |
+| **Citation-Grounded** | Real-time evidence from 28 APIs (FDA, ClinicalTrials, PubMed, EMA, WHO ATC, UniProt, ChEMBL, KEGG, Reactome, RxNorm, STRING-DB, Hubble, Semantic Scholar, CrossRef, Europe PMC, arXiv, Patents, Wikipedia, ORCID, OpenAlex, Unpaywall, Elsevier, bioRxiv, medRxiv, OECD.AI, Endpoints News, Doctor Penguin, and more) |
 | **Infographics** | Auto-generated visual summaries: metrics, comparisons, process steps, highlights |
 | **Auto Model Sync** | Live catalog from MyGenAssist API — family version dedup, 30-min refresh |
 | **A2A Agent Cards** | Agent-to-Agent protocol v1.0 RC compliant discovery for all 10 agents |
@@ -495,7 +523,7 @@ The `agent_team_complete` event carries the combined result of all 10 agents, re
 |-----------|------|---------|
 | **API Layer** | backend/main.py | FastAPI endpoints, CORS, SSE streaming, session management, prompt guard gate, A2A agent card endpoints |
 | **Council Orchestrator** | backend/council.py | 3-stage pipeline, Verbalized Sampling, RUBRIC+CLAIMS+RANKING, chairman prompt with 10 guidelines (incl. infographic directive) |
-| **Evidence Skills** | backend/skills.py | 15 evidence APIs (7 core + 8 web-search), deduplication, citation formatting |
+| **Evidence Skills** | backend/skills.py | 28 evidence APIs (12 core + 16 web-search), deduplication, citation formatting |
 | **LLM Client** | backend/openrouter.py | Async httpx calls to Bayer myGenAssist API, Gemini multi-modal support (text + image), PII redaction before dispatch |
 | **Grounding** | backend/grounding.py | 5-rubric hybrid Verbalized + Synthetic grounding score |
 | **Resilience** | backend/resilience.py | Kill switch, circuit breaker, exponential backoff retry, fallback chains, quorum |
@@ -507,7 +535,7 @@ The `agent_team_complete` event carries the combined result of all 10 agents, re
 | **Security** | backend/security.py | Fernet encryption at rest (AES-128-CBC), PII redaction (9 pattern types), security status reporting |
 | **Prompt Guard** | backend/prompt_guard.py | Pre-stage suitability gate: 6 rejection categories (off-topic, harmful, illegal, PII, injection, trivial) + LLM fallback |
 | **Infographics** | backend/infographics.py | Infographic JSON extraction from chairman responses, auto-extraction fallback, validation & cleaning |
-| **Agent Team** | backend/agents.py | 10 specialised post-pipeline agents: 7 core (Research Analyst, Fact Checker, Risk Assessor, Pattern Scout, Insight Synthesizer, Quality Auditor, Citation Supervisor) + 3 VP-mode (Market Positioning, Clinical Value, Messaging Strategist) — run in parallel via `asyncio.gather`, emit structured signals for the Prompt Atlas dashboard |
+| **Agent Team** | backend/agents.py | 12 specialised post-pipeline agents: 9 core (Research Analyst, Fact Checker, Risk Assessor, Pattern Scout, Insight Synthesizer, Quality Auditor, Citation Supervisor, Skills Manager, Memory Orchestrator) + 3 VP-mode (Market Positioning, Clinical Value, Messaging Strategist) — run in parallel via `asyncio.gather`, emit structured signals for the Prompt Atlas dashboard |
 | **Model Sync** | backend/model_sync.py | Auto-discover models from MyGenAssist /api/v2/models, family classification, version deduplication, periodic 30-min refresh, graceful degradation to static config |
 | **Config** | backend/config.py | Static model fallback definitions, API settings, base URLs |
 
@@ -524,7 +552,7 @@ The `agent_team_complete` event carries the combined result of all 10 agents, re
 | **InfographicPanel** | InfographicPanel.jsx | Visual summary: key metrics grid, comparison table, process steps flow, highlight cards (success/warning/info/danger) |
 | **GroundingScore** | GroundingScore.jsx | Circular SVG gauge + expandable criteria bars |
 | **TokenBurndown** | TokenBurndown.jsx | Cost/token dashboard, gateway savings display |
-| **PromptAtlas** | PromptAtlas3D.jsx | Intelligence Dashboard: 10-agent signals + CSS decision tree — tabbed view with Agent Team cards (signals/patterns/risks/insights), WCAG 3.0 ARIA (complementary landmark, tablist, keyboard-operable cards) |
+| **PromptAtlas** | PromptAtlas3D.jsx | Intelligence Dashboard: 12-agent signals + CSS decision tree — tabbed view with Agent Team cards (signals/patterns/risks/insights), WCAG 3.0 ARIA (complementary landmark, tablist, keyboard-operable cards) |
 | **MemoryPanel** | MemoryPanel.jsx | 3-tier memory browser, learn/unlearn/delete |
 | **LearnUnlearn** | LearnUnlearn.jsx | Inline bar — auto-learned (green) vs pending (amber) |
 | **KillSwitch** | KillSwitch.jsx | Emergency stop (session + global halt + release) |

@@ -12,6 +12,7 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
   const [error, setError] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -44,6 +45,7 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
       const data = await api.getModels();
       setModels(data.models);
       setDefaults(data.defaults);
+      setGoogleEnabled(!!data.google_enabled);
       
       // Set initial selections from preferences or defaults
       if (preferences.council_models && preferences.council_models.length > 0) {
@@ -135,15 +137,20 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
             <div className="settings-section">
               <h3>🏛️ Council Members</h3>
               <p className="settings-description">
-                Models are auto-synced from MyGenAssist — latest versions only.
+                Select models to deliberate on your queries. Latest versions are auto-synced.
                 {syncStatus?.last_sync && (
                   <span className="sync-info"> Last sync: {new Date(syncStatus.last_sync).toLocaleTimeString()}
-                    · {syncStatus.model_count} models (from {syncStatus.catalog_size} in catalog)
+                    · {syncStatus.model_count} models
                   </span>
                 )}
               </p>
+
+              {/* Bayer myGenAssist models */}
+              <h4 className="provider-heading">
+                <span className="provider-badge bayer">Bayer</span> myGenAssist
+              </h4>
               <div className="model-list">
-                {models.map(model => (
+                {models.filter(m => m.provider !== 'google').map(model => (
                   <label key={model.id} className="model-checkbox">
                     <input
                       type="checkbox"
@@ -162,6 +169,31 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
                   </label>
                 ))}
               </div>
+
+              {/* Google AI Studio models */}
+              {googleEnabled && models.some(m => m.provider === 'google') && (
+                <>
+                  <h4 className="provider-heading">
+                    <span className="provider-badge google">Google</span> AI Studio — Direct
+                  </h4>
+                  <div className="model-list">
+                    {models.filter(m => m.provider === 'google').map(model => (
+                      <label key={model.id} className="model-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={selectedCouncil.includes(model.id)}
+                          onChange={() => handleCouncilToggle(model.id)}
+                        />
+                        <span className="model-info">
+                          <span className="model-name">{model.name}</span>
+                          <span className="model-description">{model.description}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+
               {selectedCouncil.length < 2 && (
                 <div className="settings-warning">
                   ⚠️ Select at least 2 council members for meaningful peer rankings.
@@ -186,6 +218,7 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
                     <span className="model-info">
                       <span className="model-name">
                         {model.name}
+                        {model.provider === 'google' && <span className="provider-tag google">Google</span>}
                         {model.family && model.family !== 'other' && (
                           <span className="model-family-tag">{model.family}</span>
                         )}

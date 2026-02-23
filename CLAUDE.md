@@ -100,7 +100,7 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - SSE pipeline includes `ca_validation_complete` event (with enhanced grounding_scores) after Stage 3 and `agent_team_complete` event after cost_summary
 
 **`agents.py`** — Agent Team (Post-Pipeline Intelligence)
-- 7 specialised async agents that analyse council output in parallel:
+- 12 specialised async agents (9 core + 3 VP-mode) that analyse council output in parallel:
   - 🔬 Research Analyst — topic coverage, data density, evidence breadth
   - 🛡️ Fact Checker — grounding validation, hallucination detection (TP/FP/FN)
   - ⚠️ Risk Assessor — safety signals, regulatory compliance flags
@@ -108,6 +108,11 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
   - 💡 Insight Synthesizer — cross-model analysis, novel connections, evidence gaps
   - 📊 Quality Auditor — rubric scores, completeness, cost efficiency
   - 🔗 Citation Supervisor — validates REFERENCES section, enriches plain-text refs with PubMed links, detects orphan tags & DOIs
+  - 🧰 Skills Manager — monitors 28-skill evidence pipeline health, diversity analysis, performance benchmarking
+  - 🧠 Memory Orchestrator — orchestrates 3-tier memory (Semantic/Episodic/Procedural), drift detection, CA trend analysis
+  - 📈 Market Positioning — VP-mode: competitive landscape & differentiation
+  - 🏥 Clinical Value — VP-mode: clinical evidence strength & safety profile
+  - 📣 Messaging Strategist — VP-mode: communication strategy & audience targeting
 - `enrich_stage3_citations()` — utility called in SSE pipeline BEFORE `stage3_complete` emission; auto-wraps italic article titles in PubMed search links, linkifies DOIs/PMIDs, and handles bare URLs
 - `run_agent_team()` orchestrates all agents via `asyncio.gather` (non-fatal)
 - Each agent returns `{agent_id, role, icon, summary, confidence, signals[], metadata, timestamp}`

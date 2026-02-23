@@ -404,6 +404,56 @@
   line-height: 1.6;
 }
 
+/* ── Provider Section Headings ── */
+.provider-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-default);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+
+.provider-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 4px;
+  color: #fff;
+}
+
+.provider-badge.bayer {
+  background: #10a37f;
+}
+
+.provider-badge.google {
+  background: #4285f4;
+}
+
+.provider-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  margin-left: 6px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  border-radius: 3px;
+  vertical-align: middle;
+  line-height: 1.6;
+}
+
+.provider-tag.google {
+  background: #4285f4;
+  color: #fff;
+}
+
 /* ── Sync Info Text ── */
 .sync-info {
   font-size: 0.78rem;

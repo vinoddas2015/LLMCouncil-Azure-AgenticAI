@@ -331,7 +331,11 @@ export default function ChatInterface({
                   {msg.loading?.stage2 && (
                     <div className="stage-loading">
                       <div className="spinner"></div>
-                      <span>Running Stage 2: Peer rankings...</span>
+                      <span>
+                        {msg.loading.stage2_total > 0
+                          ? `Running Stage 2: ${msg.loading.stage2_completed} of ${msg.loading.stage2_total} peer rankings received...`
+                          : 'Running Stage 2: Peer rankings...'}
+                      </span>
                     </div>
                   )}
                   {msg.stage2 && (

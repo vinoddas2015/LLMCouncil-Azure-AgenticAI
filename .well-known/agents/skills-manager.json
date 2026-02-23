@@ -1,0 +1,41 @@
+{
+  "name": "Skills Manager",
+  "description": "Monitors and orchestrates the 28-skill evidence retrieval pipeline. Tracks skill health, coverage, performance benchmarks, evidence diversity, and MedCPT reranker status. Provides recommendations for skill configuration.",
+  "url": "https://llmcouncil.bayer.com/.well-known/agents/skills-manager.json",
+  "provider": {
+    "organization": "Bayer AG — LLM Council",
+    "url": "https://llmcouncil.bayer.com"
+  },
+  "version": "1.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "skills": [
+    {
+      "id": "skill-health-monitoring",
+      "name": "Skill Health Monitoring",
+      "description": "Tracks which of the 22 evidence skills (11 core + 11 web) returned results, which failed silently, and provides coverage metrics."
+    },
+    {
+      "id": "evidence-diversity-analysis",
+      "name": "Evidence Diversity Analysis",
+      "description": "Analyses citation source types, identifies single-source concentrations, and recommends enabling web search for broader coverage."
+    },
+    {
+      "id": "performance-benchmarking",
+      "name": "Performance Benchmarking",
+      "description": "Monitors per-skill latency, identifies bottleneck skills, and tracks MedCPT neural reranker availability."
+    },
+    {
+      "id": "skill-registry",
+      "name": "Skill Registry",
+      "description": "Maintains canonical registry of all 22 skills with IDs, citation tags, and types (core/web). Used for health checks and coverage calculations."
+    }
+  ],
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "authentication": {
+    "schemes": ["bearer"]
+  }
+}

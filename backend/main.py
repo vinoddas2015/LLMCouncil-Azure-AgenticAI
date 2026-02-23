@@ -18,8 +18,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from . import storage
-from .council import run_full_council, generate_conversation_title, build_conversation_context, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, stage2_ca_validation_pass
-from .config import OPENROUTER_API_KEY, AVAILABLE_MODELS, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL
+from .council import run_full_council, generate_conversation_title, build_conversation_context, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, stage2_ca_validation_pass, parse_ranking_from_text, parse_rubric_scores, parse_claim_counts
+from .config import OPENROUTER_API_KEY, AVAILABLE_MODELS, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL, COUNCIL_MODELS, GOOGLE_API_KEY, is_google_model
 from .model_sync import sync_models, get_live_models, get_defaults, get_sync_status, periodic_sync_loop
 from .openrouter import query_model
 from .resilience import (
@@ -31,6 +31,7 @@ from .resilience import (
     KillSwitchError,
     QuorumError,
     MIN_STAGE1_QUORUM,
+    MIN_STAGE2_QUORUM,
 )
 from .grounding import compute_response_grounding_scores, get_rubric_criteria, enhance_ca_with_validation
 from .skills import run_evidence_skills, format_citations_for_prompt
@@ -260,20 +261,38 @@ async def health():
 
 @app.get("/api/models")
 async def get_available_models():
-    """Get list of available models — live from MyGenAssist API with auto-version-management."""
+    """Get list of available models — live from MyGenAssist API + Google AI Studio."""
     live = get_live_models()
     defaults = get_defaults()
     # Fallback to static config if sync hasn't populated yet
     if not live:
-        live = AVAILABLE_MODELS
+        from .config import get_all_available_models
+        live = get_all_available_models()
         defaults = {
             "council_models": DEFAULT_COUNCIL_MODELS,
             "chairman_model": DEFAULT_CHAIRMAN_MODEL,
         }
+
+    # Tag Bayer models with provider if missing
+    all_models = [
+        {**m, "provider": m.get("provider", "bayer")} for m in live
+    ]
+
     return {
-        "models": live,
+        "models": all_models,
         "defaults": defaults,
+        "google_enabled": bool(GOOGLE_API_KEY),
     }
+
+
+@app.get("/api/models/google")
+async def discover_google_models():
+    """Live discovery of available Google AI Studio models."""
+    if not GOOGLE_API_KEY:
+        return {"models": [], "error": "GOOGLE_API_KEY not configured in .env"}
+    from .google_provider import list_google_models
+    models = await list_google_models()
+    return {"models": models, "count": len(models)}
 
 
 @app.post("/api/models/sync")
@@ -905,13 +924,16 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                 yield f"data: {json.dumps({'type': 'prompt_rejected', 'data': {'category': 'CONVERSATION_BLOCKED', 'message': 'This conversation has been closed due to a policy violation. Please start a **new conversation** with a question related to pharmaceutical sciences, clinical research, or life-science topics.'}})}\n\n"
                 return
 
-            # Run prompt guard and memory recall in parallel to avoid
-            # sequential pre-flight latency (guard LLM call can take 2-12s).
+            # ── OPT-1: Prompt Guard ∥ Pre-Stage 1 Memory Recall ──────
+            # Fire both in parallel — memory recall is read-only so safe
+            # to discard if the guard rejects the prompt.
             guard_task = asyncio.create_task(evaluate_prompt(request.content or ""))
             memory_task = asyncio.create_task(pre_stage1_agent(augmented_content, conversation_id))
-            guard_verdict, memory_gate = await asyncio.gather(guard_task, memory_task)
 
+            guard_verdict = await guard_task
             if not guard_verdict.allowed:
+                memory_task.cancel()  # discard memory work
+                # Mark conversation as blocked so no follow-ups are accepted
                 conversation["blocked"] = True
                 conversation["blocked_reason"] = guard_verdict.category
                 storage.save_conversation(user_id, conversation)
@@ -920,6 +942,8 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                 yield f"data: {json.dumps({'type': 'prompt_rejected', 'data': {'category': guard_verdict.category, 'message': guard_verdict.message}})}\n\n"
                 return
 
+            # Guard passed — await memory recall result
+            memory_gate = await memory_task
             if memory_gate.get("memory_context"):
                 augmented_content = memory_gate["augmented_query"]
             yield f"data: {json.dumps({'type': 'memory_recall', 'data': {k: v for k, v in memory_gate.items() if k != 'memory_context' and k != 'augmented_query'}})}\n\n"
@@ -1052,18 +1076,122 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                 yield f"data: {json.dumps({'type': 'killed', 'message': 'Council session aborted by user.'})}\n\n"
                 return
 
-            # Stage 2: Collect rankings
-            # Also fire evidence retrieval in parallel with Stage 2
+            # ── OPT-3: Incremental Stage 2 — stream each ranking as it arrives ──
+            # Also fires evidence retrieval in parallel with Stage 2.
             yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
             evidence_task = asyncio.create_task(run_evidence_skills(augmented_content, web_search_enabled=web_search_enabled))
-            stage2_results, label_to_model = await stage2_collect_rankings(
-                augmented_content, stage1_results, user_council_models,
-                conversation_history, web_search_enabled, session_id=session_id,
-            )
+
+            # Build Stage 2 prompt (same logic as stage2_collect_rankings but inline)
+            _s2_models = user_council_models or COUNCIL_MODELS
+            _s2_labels = [chr(65 + i) for i in range(len(stage1_results))]
+            label_to_model = {
+                f"Response {label}": result['model']
+                for label, result in zip(_s2_labels, stage1_results)
+            }
+            _s2_context = build_conversation_context(conversation_history)
+            _s2_context_note = f"\nNote: This is a follow-up question in an ongoing conversation.\n{_s2_context}\n" if _s2_context else ""
+            _s2_responses_text = "\n\n".join([
+                f"Response {label}:\n{result['response']}"
+                for label, result in zip(_s2_labels, stage1_results)
+            ])
+            _s2_ranking_prompt = f"""You are a pharmaceutical domain expert evaluating different responses to the following question:
+{_s2_context_note}
+Question: {augmented_content}
+
+Here are the responses from different models (anonymized):
+
+{_s2_responses_text}
+
+═══════════════════════════════════════════════════════════
+PART 1 — RUBRIC EVALUATION (Verbalized Sampling)
+═══════════════════════════════════════════════════════════
+For EACH response, provide a score from 0 to 10 on each criterion below.
+After each score, give a brief justification (1-2 sentences).
+
+Criteria:
+  • Relevancy (0-10): How directly and completely the response addresses the original question
+  • Faithfulness (0-10): Factual accuracy, absence of hallucinations, grounded in evidence
+  • Context Recall (0-10): Coverage of key concepts, dimensions, and nuances raised across all responses
+  • Output Quality (0-10): Clarity, structure, depth, readability, and overall coherence
+  • Consensus (0-10): Would other domain experts broadly agree with the claims made?
+
+Format EXACTLY as follows for each response:
+
+RUBRIC Response X:
+  Relevancy: <score>/10 — <justification>
+  Faithfulness: <score>/10 — <justification>
+  Context Recall: <score>/10 — <justification>
+  Output Quality: <score>/10 — <justification>
+  Consensus: <score>/10 — <justification>
+
+═══════════════════════════════════════════════════════════
+PART 2 — CLAIM CLASSIFICATION (Pharma Safety)
+═══════════════════════════════════════════════════════════
+For EACH response, classify its major claims in pharmaceutical context:
+  TP (True Positive)  = Correct, verifiable claim relevant to the question
+  FP (False Positive) = Incorrect, misleading, or hallucinated claim
+  FN (False Negative) = Important information the response FAILED to mention
+
+Format EXACTLY as follows for each response:
+
+CLAIMS Response X:
+  TP: <count> — <brief summary of correct claims>
+  FP: <count> — <brief summary of incorrect/hallucinated claims, or "None detected">
+  FN: <count> — <brief summary of important omissions, or "None detected">
+
+═══════════════════════════════════════════════════════════
+PART 3 — FINAL RANKING
+═══════════════════════════════════════════════════════════
+Based on your rubric evaluation and claim analysis above, provide
+your final ranking from best to worst.
+
+IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
+- Start with the line "FINAL RANKING:" (all caps, with colon)
+- Then list the responses from best to worst as a numbered list
+- Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
+
+Now provide your complete evaluation:"""
+            _s2_messages = [{"role": "user", "content": _s2_ranking_prompt}]
+
+            _s2_tasks = {
+                asyncio.create_task(
+                    query_model(m, _s2_messages, web_search_enabled=web_search_enabled, session_id=session_id)
+                ): m
+                for m in _s2_models
+            }
+            stage2_results = []
+            _s2_pending = set(_s2_tasks.keys())
+            _s2_total = len(_s2_models)
+
+            while _s2_pending:
+                done, _s2_pending = await asyncio.wait(_s2_pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    model_name = _s2_tasks[task]
+                    try:
+                        resp = task.result()
+                        if resp is not None:
+                            full_text = resp.get('content', '')
+                            parsed = parse_ranking_from_text(full_text)
+                            rubric = parse_rubric_scores(full_text)
+                            claims = parse_claim_counts(full_text)
+                            result_item = {
+                                "model": model_name,
+                                "ranking": full_text,
+                                "parsed_ranking": parsed,
+                                "rubric_scores": rubric,
+                                "claim_counts": claims,
+                                "usage": resp.get('usage'),
+                            }
+                            stage2_results.append(result_item)
+                            cost_tracker.record("stage2", model_name, resp.get('usage'))
+                            yield f"data: {json.dumps({'type': 'stage2_model_response', 'data': result_item, 'progress': {'completed': len(stage2_results), 'total': _s2_total}})}\n\n"
+                    except Exception as e:
+                        logger.error(f"[Stage2-Incremental] {model_name} failed: {e}")
+
+            if len(stage2_results) < MIN_STAGE2_QUORUM:
+                raise QuorumError(f"Stage 2 quorum not met: got {len(stage2_results)}, need {MIN_STAGE2_QUORUM}")
+
             aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
-            # Record Stage 2 token usage
-            for r in stage2_results:
-                cost_tracker.record("stage2", r["model"], r.get("usage"))
             # Compute grounding scores
             grounding_scores = compute_response_grounding_scores(
                 stage2_results, label_to_model, aggregate_rankings
@@ -1073,18 +1201,15 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
             yield f"data: {json.dumps({'type': 'evidence_complete', 'data': evidence_bundle})}\n\n"
             yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'grounding_scores': grounding_scores}})}\n\n"
 
-            # ── Post-Stage 2 Orchestrator Agent: grounding evaluation ──
-            stage2_gate = await post_stage2_agent(
-                augmented_content, grounding_scores, aggregate_rankings
-            )
-            yield f"data: {json.dumps({'type': 'memory_gate', 'data': stage2_gate})}\n\n"
-
             # Kill switch check between stages
             if kill_switch.is_session_killed(session_id):
                 yield f"data: {json.dumps({'type': 'killed', 'message': 'Council session aborted by user.'})}\n\n"
                 return
 
-            # Stage 3: Synthesize final answer
+            # ── OPT-4: Post-Stage 2 ∥ Stage 3 Start ─────────────────
+            # Stage 3 does NOT depend on post_stage2_agent output.
+            # Fire Stage 3 + CA validation + post_stage2 ALL in parallel
+            # so the chairman LLM call starts immediately.
             yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
             evidence_text = format_citations_for_prompt(evidence_bundle)
 
@@ -1100,12 +1225,36 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                 )
             )
 
-            stage3_result = await stage3_synthesize_final(
-                augmented_content, stage1_results, stage2_results,
-                user_chairman_model, conversation_history, web_search_enabled,
-                session_id=session_id,
-                evidence_context=evidence_text,
+            # Fire Stage 3 as a task so it starts immediately
+            stage3_task = asyncio.create_task(
+                stage3_synthesize_final(
+                    augmented_content, stage1_results, stage2_results,
+                    user_chairman_model, conversation_history, web_search_enabled,
+                    session_id=session_id,
+                    evidence_context=evidence_text,
+                )
             )
+
+            # Fire post-Stage 2 agent in parallel (doesn't block Stage 3)
+            post_stage2_task = asyncio.create_task(
+                post_stage2_agent(
+                    augmented_content, grounding_scores, aggregate_rankings
+                )
+            )
+
+            # Await post-Stage 2 (fast memory lookup, emits SSE while Stage 3 runs)
+            stage2_gate = await post_stage2_task
+            yield f"data: {json.dumps({'type': 'memory_gate', 'data': stage2_gate})}\n\n"
+
+            # Kill switch check (cancel running tasks if killed)
+            if kill_switch.is_session_killed(session_id):
+                stage3_task.cancel()
+                ca_validation_task.cancel()
+                yield f"data: {json.dumps({'type': 'killed', 'message': 'Council session aborted by user.'})}\n\n"
+                return
+
+            # Await Stage 3 (already running in background)
+            stage3_result = await stage3_task
             # Record Stage 3 token usage
             cost_tracker.record("stage3", stage3_result.get("model", "unknown"), stage3_result.get("usage"))
 
@@ -1185,9 +1334,12 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
             cost_summary = cost_tracker.compute_summary()
             yield f"data: {json.dumps({'type': 'cost_summary', 'data': cost_summary})}\n\n"
 
-            # ── Agent Team Analysis ── run all 6 agents in parallel ──
-            try:
-                agent_team_result = await run_agent_team(
+            # ── OPT-5: Agent Team ∥ Post-Stage 3 Learning ─────────
+            # Both are independent of each other — fire in parallel.
+            overall_grounding = grounding_scores.get("overall_score", 0) / 100.0
+
+            agent_team_task = asyncio.create_task(
+                run_agent_team(
                     user_query=augmented_content,
                     stage1_results=stage1_results,
                     stage2_results=stage2_results,
@@ -1196,31 +1348,48 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                     grounding_scores=grounding_scores,
                     evidence_bundle=evidence_bundle,
                     cost_summary=cost_summary,
+                    web_search_enabled=web_search_enabled,
                 )
-                yield f"data: {json.dumps({'type': 'agent_team_complete', 'data': agent_team_result})}\n\n"
-                # Persist agent team data so reloaded conversations retain it
+            )
+            learning_task = asyncio.create_task(
+                post_stage3_agent(
+                    conversation_id=conversation_id,
+                    user_query=augmented_content,
+                    stage1_results=stage1_results,
+                    aggregate_rankings=aggregate_rankings,
+                    stage3_result=stage3_result,
+                    grounding_score=overall_grounding,
+                    cost_summary=cost_summary,
+                )
+            )
+
+            # Await both (whichever finishes first proceeds; both are fast)
+            agent_team_result = None
+            learning_gate = None
+            try:
+                agent_team_result, learning_gate = await asyncio.gather(
+                    agent_team_task, learning_task, return_exceptions=True
+                )
+            except Exception as e:
+                logger.warning(f"[Parallel post-pipeline] gather error: {e}")
+
+            # Emit agent team result
+            if agent_team_result and not isinstance(agent_team_result, Exception):
                 try:
+                    yield f"data: {json.dumps({'type': 'agent_team_complete', 'data': agent_team_result})}\n\n"
                     storage.update_last_message_metadata(
                         user_id, conversation_id, {"agent_team": agent_team_result}
                     )
                 except Exception:
                     logger.debug("Failed to persist agent_team metadata")
-            except Exception as e:
-                logger.warning(f"[AgentTeam] Non-fatal error: {e}")
+            elif isinstance(agent_team_result, Exception):
+                logger.warning(f"[AgentTeam] Non-fatal error: {agent_team_result}")
 
-            # ── Post-Stage 3 Orchestrator Agent: learning decision ──
-            # overall_score is 0–100 from grounding.py; orchestrator expects 0–1
-            overall_grounding = grounding_scores.get("overall_score", 0) / 100.0
-            learning_gate = await post_stage3_agent(
-                conversation_id=conversation_id,
-                user_query=augmented_content,
-                stage1_results=stage1_results,
-                aggregate_rankings=aggregate_rankings,
-                stage3_result=stage3_result,
-                grounding_score=overall_grounding,
-                cost_summary=cost_summary,
-            )
-            yield f"data: {json.dumps({'type': 'memory_learning', 'data': learning_gate})}\n\n"
+            # Emit learning decision
+            if learning_gate and not isinstance(learning_gate, Exception):
+                yield f"data: {json.dumps({'type': 'memory_learning', 'data': learning_gate})}\n\n"
+            elif isinstance(learning_gate, Exception):
+                logger.warning(f"[PostStage3] Non-fatal error: {learning_gate}")
 
             # Send completion event
             yield f"data: {json.dumps({'type': 'complete'})}\n\n"

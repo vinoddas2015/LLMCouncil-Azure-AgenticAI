@@ -24,7 +24,7 @@
 
 **LLM Council MGA** is an enterprise AI orchestration platform that consults a "council" of diverse Large Language Models to produce consensus-driven, high-confidence responses for pharmaceutical professionals. Every query passes through a **3-stage deliberation pipeline** — individual responses, anonymous peer review with **Verbalized Sampling** metrics, and chairman synthesis with **citation-grounded evidence** — producing answers that are more accurate, balanced, and verifiable than any single model alone.
 
-The platform integrates real-time evidence retrieval from **15 parallel skills** — 7 core APIs (OpenFDA, ClinicalTrials.gov, PubMed, EMA, WHO ATC, UniProt, ChEMBL) plus 8 web-search skills (Semantic Scholar, CrossRef, Europe PMC, DuckDuckGo Science, arXiv, Google Patents, Wikipedia, ORCID) — renders **scientific markdown** (2D/3D SMILES molecular structures, LaTeX math, GFM tables), generates **visual infographic summaries** (metric cards, comparisons, process flows, highlight takeaways), supports **Gemini multi-modal output** (text + images), and includes a **prompt suitability guard**, built-in **self-healing resilience**, **grounding score evaluation**, **token/cost tracking**, and a **three-tier memory management system**.
+The platform integrates real-time evidence retrieval from **28 parallel skills** — 12 core APIs (OpenFDA, ClinicalTrials.gov, PubMed, EMA, WHO ATC, UniProt, ChEMBL, KEGG, Reactome, RxNorm, STRING-DB, Hubble/Bayer) plus 16 web-search skills (Semantic Scholar, CrossRef, Europe PMC, DuckDuckGo Science, arXiv, Google Patents, Wikipedia, ORCID, OpenAlex, Unpaywall, Elsevier/Scopus, bioRxiv, medRxiv, OECD.AI, Endpoints News, Doctor Penguin) — renders **scientific markdown** (2D/3D SMILES molecular structures, LaTeX math, GFM tables), generates **visual infographic summaries** (metric cards, comparisons, process flows, highlight takeaways), supports **Gemini multi-modal output** (text + images), and includes a **prompt suitability guard**, built-in **self-healing resilience**, **grounding score evaluation**, **token/cost tracking**, and a **three-tier memory management system**.
 
 ---
 
@@ -36,7 +36,7 @@ The platform integrates real-time evidence retrieval from **15 parallel skills**
 |-------|-------------|
 | **Stage 1 — First Opinions** | Query sent to all council models independently; responses rendered with SciMarkdown |
 | **Stage 2 — Peer Review** | Each model anonymously ranks others using Verbalized Sampling (pharma-grade Correctness, Precision, Recall) |
-| **Stage 3 — Chairman Synthesis** | Chairman compiles citation-grounded final response with [FDA-L1], [CT-2], [PM-3], [SS-1], [CR-1], [EPMC-1], [AX-1], [PAT-1], [WIKI-1], [ORC-1] references, plus an auto-generated visual infographic summary |
+| **Stage 3 — Chairman Synthesis** | Chairman compiles citation-grounded final response with [FDA-L1], [CT-2], [PM-3], [SS-1], [CR-1], [EPMC-1], [AX-1], [PAT-1], [WIKI-1], [ORC-1], [KG-1], [RC-1], [RX-1], [STR-1], [HUB-1], [OA-1], [UPW-1], [ELS-1], [BRX-1], [MRX-1], [OECD-1], [EPTS-1], [DPNG-1] references, plus an auto-generated visual infographic summary |
 
 ### Prompt Suitability Guard
 - **Pre-Stage Gate** — Every prompt is evaluated before council stages fire, filtering trivial, harmful, illegal, PII, injection, and off-topic queries
@@ -45,9 +45,9 @@ The platform integrates real-time evidence retrieval from **15 parallel skills**
 - **Policy-Aligned Messages** — Polite rejection messages referencing Bayer's Responsible AI Policy
 
 ### Evidence & Citation System
-- **15 Parallel Evidence Skills** — 7 core APIs always fire: OpenFDA (drug labels/adverse events), ClinicalTrials.gov (active trials), PubMed (publications), EMA (European Medicines Agency), WHO ATC (drug classifications), UniProt (protein data), ChEMBL (bioactivity data)
-- **8 Web-Search Skills** (when Web Search enabled) — Semantic Scholar (academic papers, citation-weighted), CrossRef (DOI metadata), Europe PMC (open-access literature), DuckDuckGo Science (authoritative domain filter), arXiv (scientific preprints), Google Patents (patent search), Wikipedia (encyclopaedic context), ORCID (researcher profiles)
-- **Citation-Grounded Output** — Chairman references evidence as clickable [FDA-L1], [CT-2], [PM-3], [SS-1], [CR-1], [EPMC-1], [WEB-1], [AX-1], [PAT-1], [WIKI-1], [ORC-1] tags linking to source URLs
+- **28 Parallel Evidence Skills** — 12 core APIs always fire: OpenFDA (drug labels/adverse events), ClinicalTrials.gov (active trials), PubMed (publications), EMA (European Medicines Agency), WHO ATC (drug classifications), UniProt (protein data), ChEMBL (bioactivity data), KEGG (metabolic pathways/drug interactions), Reactome (biological pathways), RxNorm (drug normalization/interactions), STRING-DB (protein-protein interactions), Hubble (Bayer internal enterprise search)
+- **16 Web-Search Skills** (when Web Search enabled) — Semantic Scholar (academic papers, citation-weighted), CrossRef (DOI metadata), Europe PMC (open-access literature), DuckDuckGo Science (authoritative domain filter), arXiv (scientific preprints), Google Patents (patent search), Wikipedia (encyclopaedic context), ORCID (researcher profiles), OpenAlex (open scholarly metadata), Unpaywall (legal open-access full-text), Elsevier/Scopus (premium journal abstracts), bioRxiv (biology preprints), medRxiv (health sciences preprints), OECD.AI (AI policy observatory), Endpoints News (biopharma industry news), Doctor Penguin (healthcare + AI newsletter)
+- **Citation-Grounded Output** — Chairman references evidence as clickable [FDA-L1], [CT-2], [PM-3], [SS-1], [CR-1], [EPMC-1], [WEB-1], [AX-1], [PAT-1], [WIKI-1], [ORC-1], [KG-1], [RC-1], [RX-1], [STR-1], [HUB-1], [OA-1], [UPW-1], [ELS-1], [BRX-1], [MRX-1], [OECD-1], [EPTS-1], [DPNG-1] tags linking to source URLs
 - **Evidence Panel** — Collapsible sidebar showing all retrieved citations with source badges
 - **Benchmark Timing** — Per-skill execution time reported with evidence results
 
@@ -93,8 +93,8 @@ Pharma-grade evaluation in all 3 stages using binary classification metrics:
 - **Token & Cost Burndown** — Real-time tracking of token usage, cost per model/stage, gateway vs direct pricing with ~40% savings display
 - **Three-Tier Memory** — Semantic (domain knowledge), Episodic (deliberation history), Procedural (workflow patterns) with confidence-gated auto-learning
 - **Auto Model Sync** — Live catalog from MyGenAssist API, family-based version deduplication, 30-min periodic refresh, manual sync trigger
-- **A2A Agent Cards** — Agent-to-Agent protocol v1.0 RC compliant agent discovery and cards for all 10 agents
-- **10 Post-Pipeline Agents** — Research Analyst, Fact Checker, Risk Assessor, Pattern Scout, Insight Synthesizer, Quality Auditor, Citation Supervisor + 3 VP-mode agents
+- **A2A Agent Cards** — Agent-to-Agent protocol v1.0 RC compliant agent discovery and cards for all 12 agents
+- **12 Post-Pipeline Agents** — Research Analyst, Fact Checker, Risk Assessor, Pattern Scout, Insight Synthesizer, Quality Auditor, Citation Supervisor, Skills Manager, Memory Orchestrator + 3 VP-mode agents
 - **Decision Tree Visualization** — Interactive conversation flow (Root → Stage 1 → Stage 2 → Evidence → Stage 3) with click-to-expand nodes
 - **Prompt Enhancement** — Automatic prompt improvement before council submission
 - **File Attachments** — PDF, PPTX, XLSX, DOCX support (up to 10MB)
@@ -122,7 +122,7 @@ Models are **auto-discovered** from the Bayer myGenAssist API catalog at startup
 
 ### Agent Team (Post-Pipeline Intelligence)
 
-10 specialised agents analyse council output in parallel after Stage 3:
+12 specialised agents analyse council output in parallel after Stage 3:
 
 | Agent | Icon | Focus Area |
 |-------|------|------------|
@@ -133,6 +133,8 @@ Models are **auto-discovered** from the Bayer myGenAssist API catalog at startup
 | **Insight Synthesizer** | 💡 | Cross-model analysis, novel connections, evidence gaps |
 | **Quality Auditor** | 📊 | Rubric scores, completeness, cost efficiency |
 | **Citation Supervisor** | 🔗 | Reference validation, PubMed link enrichment, orphan tag detection |
+| **Skills Manager** | 🧰 | Skill pipeline health, diversity analysis, performance benchmarking |
+| **Memory Orchestrator** | 🧠 | 3-tier memory health, drift detection, CA trend analysis |
 | **Market Positioning** | 📈 | VP-mode: competitive landscape, market analysis |
 | **Clinical Value** | 🏥 | VP-mode: clinical differentiation, value proposition |
 | **Messaging Strategist** | 💬 | VP-mode: key messages, stakeholder communication |
@@ -140,7 +142,7 @@ Models are **auto-discovered** from the Bayer myGenAssist API catalog at startup
 ### A2A Agent Cards (Agent-to-Agent Protocol)
 
 - **A2A v1.0 RC compliant** — standard agent discovery at `/.well-known/agent-card.json`
-- **11 agent cards** — 1 main council card + 10 individual agent cards
+- **13 agent cards** — 1 main council card + 12 individual agent cards
 - **API discovery** — `GET /api/agent-cards` lists all, `GET /api/agent-cards/{id}` per agent
 - **Downloadable bundle** — `GET /api/agent-cards-download` or Settings panel button
 
@@ -155,7 +157,7 @@ Models are **auto-discovered** from the Bayer myGenAssist API catalog at startup
 │  + Vite 7.x  │────────────────────►│  ┌──────────┐  ┌──────────┐  ┌────────┐ │
 │              │                      │  │ Prompt   │  │ Evidence │  │ Memory │ │
 │  SciMarkdown │                      │  │ Guard ──►│  │ Skills   │  │ 3-Tier │ │
-│  + KaTeX     │                      │  │ Council  │  │(7+8 Web) │  │ System │ │
+│  + KaTeX     │                      │  │ Council  │  │(12+16Web)│  │ System │ │
 │              │                      │  │ 3-Stage  │  │          │  │        │ │
 │  Port 5173   │                      │  └─────┬────┘  └────┬─────┘  └───┬────┘ │
 └──────────────┘                      │        │            │            │       │
@@ -292,13 +294,13 @@ Events emitted during `POST /api/conversations/{id}/stream`:
 | `stage2_start` | S2 | Peer review initiated |
 | `stage2_ranking` | S2 | Per-model ranking data |
 | `stage2_complete` | S2 | Rankings + grounding score |
-| `evidence_complete` | S2→S3 | Citations from 7 core + 8 web-search skills with timing |
+| `evidence_complete` | S2→S3 | Citations from 12 core + 16 web-search skills with timing |
 | `infographic_complete` | Post-S3 | Structured infographic data (metrics, comparison, steps, highlights) |
 | `memory_gate` | Post-S2 | Grounding vs historical evaluation |
 | `stage3_start` | S3 | Chairman synthesis initiated |
 | `stage3_complete` | S3 | Final citation-grounded response |
 | `cost_summary` | Post-S3 | Token usage, gateway/direct costs, savings |
-| `agent_team_complete` | Post-S3 | 10-agent analysis signals (after cost_summary) |
+| `agent_team_complete` | Post-S3 | 12-agent analysis signals (after cost_summary) |
 | `ca_validation_complete` | Post-S3 | Enhanced grounding scores with Context Awareness |
 | `memory_learning` | Post-S3 | Learn/unlearn decision + tier IDs |
 | `complete` | End | Full metadata + timing |
@@ -401,10 +403,10 @@ LLMCouncilMGA/
 ├── backend/                        # FastAPI backend
 │   ├── main.py                     # App, routes, SSE streaming, A2A endpoints
 │   ├── council.py                  # 3-stage council (Verbalized Sampling)
-│   ├── agents.py                   # 10 post-pipeline agents (7 core + 3 VP-mode)
+│   ├── agents.py                   # 12 post-pipeline agents (9 core + 3 VP-mode)
 │   ├── model_sync.py               # Auto-sync models from MyGenAssist API
 │   ├── prompt_guard.py              # Prompt suitability guard (6-category filter)
-│   ├── skills.py                   # Evidence retrieval (15 skills: 7 core + 8 web)
+│   ├── skills.py                   # Evidence retrieval (28 skills: 12 core + 16 web)
 │   ├── infographics.py             # Infographic extraction from chairman output
 │   ├── grounding.py                # Hybrid grounding score computation
 │   ├── openrouter.py               # Async LLM API client (httpx)

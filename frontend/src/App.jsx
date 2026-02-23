@@ -242,6 +242,18 @@ function App() {
           case 'stage2_start':
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.loading.stage2 = true;
+              msg.loading.stage2_completed = 0;
+              msg.loading.stage2_total = 0;
+            }));
+            break;
+
+          case 'stage2_model_response':
+            // Incremental: display each ranking as it arrives
+            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+              if (!msg.stage2) msg.stage2 = [];
+              msg.stage2 = [...msg.stage2, event.data];
+              msg.loading.stage2_completed = event.progress?.completed || msg.stage2.length;
+              msg.loading.stage2_total = event.progress?.total || 0;
             }));
             break;
 

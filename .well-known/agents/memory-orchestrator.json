@@ -1,0 +1,46 @@
+{
+  "name": "Memory Orchestrator",
+  "description": "Monitors and orchestrates the three-tier memory system (Semantic, Episodic, Procedural). Tracks tier health, knowledge drift, learn/unlearn patterns, context awareness degradation, and learning readiness based on grounding scores.",
+  "url": "https://llmcouncil.bayer.com/.well-known/agents/memory-orchestrator.json",
+  "provider": {
+    "organization": "Bayer AG — LLM Council",
+    "url": "https://llmcouncil.bayer.com"
+  },
+  "version": "1.0.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "skills": [
+    {
+      "id": "tier-health-monitoring",
+      "name": "Tier Health Monitoring",
+      "description": "Monitors each memory tier (Semantic facts, Episodic deliberations, Procedural workflows) for active entries, unlearned entries, and growth trends."
+    },
+    {
+      "id": "knowledge-drift-detection",
+      "name": "Knowledge Drift Detection",
+      "description": "Detects high unlearn rates that may indicate knowledge quality issues or domain drift across memory tiers."
+    },
+    {
+      "id": "learning-readiness",
+      "name": "Learning Readiness Assessment",
+      "description": "Evaluates grounding scores against thresholds to determine if the current deliberation qualifies for automatic memory learning."
+    },
+    {
+      "id": "ca-trend-analysis",
+      "name": "Context Awareness Trend Analysis",
+      "description": "Analyses cross-session CA snapshots per model to detect catastrophic forgetting or declining self-awareness over time."
+    },
+    {
+      "id": "memory-recall-test",
+      "name": "Memory Recall Testing",
+      "description": "Tests memory retrieval for the current query, reporting how many prior Semantic/Episodic/Procedural hits were available for council augmentation."
+    }
+  ],
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "authentication": {
+    "schemes": ["bearer"]
+  }
+}

@@ -5,14 +5,22 @@ Each agent is a focused expert that analyses the council pipeline
 from a distinct perspective.  Agents run post-pipeline and produce
 structured insights that feed into the Prompt Atlas dashboard.
 
-Agent Roster
-────────────
-  🔬  Research Analyst    — Extracts key findings, data density, topic coverage
-  🛡️  Fact Checker        — Validates claims against evidence, detects hallucinations
-  ⚠️  Risk Assessor       — Evaluates safety signals, regulatory compliance flags
-  🔍  Pattern Scout       — Detects recurring themes, emerging signals across sessions
-  💡  Insight Synthesizer — Generates novel connections and strategic observations
-  📊  Quality Auditor     — Scores response quality, completeness, actionability
+Agent Roster (9 Core + 3 VP-mode)
+──────────────────────────────────
+  🔬  Research Analyst     — Extracts key findings, data density, topic coverage
+  🛡️  Fact Checker         — Validates claims against evidence, detects hallucinations
+  ⚠️  Risk Assessor        — Evaluates safety signals, regulatory compliance flags
+  🔍  Pattern Scout        — Detects recurring themes, emerging signals across sessions
+  💡  Insight Synthesizer  — Generates novel connections and strategic observations
+  📊  Quality Auditor      — Scores response quality, completeness, actionability
+  🔗  Citation Supervisor  — Validates references, enriches with PubMed/DOI links
+  🧰  Skills Manager       — Monitors 28-skill evidence pipeline health & diversity
+  🧠  Memory Orchestrator  — Orchestrates 3-tier memory (Semantic/Episodic/Procedural)
+
+VP-mode (activated for value-proposition queries):
+  🏷️  Market Positioning   — Competitive landscape & differentiation
+  🏥  Clinical Value       — Clinical evidence strength & safety profile
+  📣  Messaging Strategist — Communication strategy & audience targeting
 
 All agents are pure async functions — stateless per-request, horizontally
 scalable, and suitable for serverless deployment.
@@ -129,7 +137,7 @@ async def research_analyst_agent(
     s3_text = (stage3_result or {}).get("response", "")
     s3_words = len(s3_text.split())
     has_tables = "| " in s3_text and " | " in s3_text
-    has_refs = bool(re.search(r'\[(?:FDA|CT|PM|WEB|SS|CR|EPMC|AX|PAT|WIKI|ORC)-\w+\]', s3_text))
+    has_refs = bool(re.search(r'\[(?:FDA|CT|PM|EMA|WHO|UP|CB|KG|RC|RX|STR|HUB|WEB|SS|CR|EPMC|AX|PAT|WIKI|ORC|OA|UPW|ELS|BRX|MRX|OECD|EPTS|DPNG)-\w+\]', s3_text))
     has_math = "$" in s3_text or "\\(" in s3_text
     has_smiles = "```smiles" in s3_text
 
@@ -1321,7 +1329,7 @@ async def citation_supervisor_agent(
 
     # ── Check for inline citation tags ───────────────────────────────
     inline_tags = re.findall(
-        r'\[(?:FDA|CT|PM|EMA|WHO|UP|CB|SS|CR|EPMC|WEB|AX|PAT|WIKI|ORC)-\w+\]',
+        r'\[(?:FDA|CT|PM|EMA|WHO|UP|CB|KG|RC|RX|STR|HUB|SS|CR|EPMC|WEB|AX|PAT|WIKI|ORC|OA|UPW|ELS|BRX|MRX|OECD|EPTS|DPNG)-\w+\]',
         s3_text,
     )
     unique_tags = set(inline_tags)
@@ -1446,6 +1454,447 @@ async def citation_supervisor_agent(
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
+# ║  🧰 Skills Manager Agent                                           ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+# ── Skill registry (canonical list for health monitoring) ──────────
+CORE_SKILLS = [
+    {"id": "openfda",         "name": "OpenFDA",            "tag": "FDA",  "type": "core"},
+    {"id": "clinicaltrials",  "name": "ClinicalTrials.gov", "tag": "CT",   "type": "core"},
+    {"id": "pubmed",          "name": "PubMed",             "tag": "PM",   "type": "core"},
+    {"id": "ema",             "name": "EMA",                "tag": "EMA",  "type": "core"},
+    {"id": "who_atc",         "name": "WHO ATC",            "tag": "WHO",  "type": "core"},
+    {"id": "uniprot",         "name": "UniProt",            "tag": "UP",   "type": "core"},
+    {"id": "chembl",          "name": "ChEMBL",             "tag": "CB",   "type": "core"},
+    {"id": "kegg",            "name": "KEGG",               "tag": "KG",   "type": "core"},
+    {"id": "reactome",        "name": "Reactome",           "tag": "RC",   "type": "core"},
+    {"id": "rxnorm",          "name": "RxNorm",             "tag": "RX",   "type": "core"},
+    {"id": "string_db",       "name": "STRING-DB",          "tag": "STR",  "type": "core"},
+    {"id": "hubble",          "name": "Hubble",             "tag": "HUB",  "type": "core"},
+]
+
+WEB_SKILLS = [
+    {"id": "semantic_scholar", "name": "Semantic Scholar",  "tag": "SS",   "type": "web"},
+    {"id": "crossref",         "name": "CrossRef",          "tag": "CR",   "type": "web"},
+    {"id": "europe_pmc",       "name": "Europe PMC",        "tag": "EPMC", "type": "web"},
+    {"id": "duckduckgo_sci",   "name": "DuckDuckGo Sci",    "tag": "WEB",  "type": "web"},
+    {"id": "arxiv",            "name": "arXiv",             "tag": "AX",   "type": "web"},
+    {"id": "google_patents",   "name": "Google Patents",    "tag": "PAT",  "type": "web"},
+    {"id": "wikipedia",        "name": "Wikipedia",         "tag": "WIKI", "type": "web"},
+    {"id": "orcid",            "name": "ORCID",             "tag": "ORC",  "type": "web"},
+    {"id": "openalex",         "name": "OpenAlex",          "tag": "OA",   "type": "web"},
+    {"id": "unpaywall",        "name": "Unpaywall",         "tag": "UPW",  "type": "web"},
+    {"id": "elsevier",         "name": "Elsevier/Scopus",   "tag": "ELS",  "type": "web"},
+    {"id": "biorxiv",          "name": "bioRxiv",           "tag": "BRX",  "type": "web"},
+    {"id": "medrxiv",          "name": "medRxiv",           "tag": "MRX",  "type": "web"},
+    {"id": "oecd_ai",          "name": "OECD.AI",           "tag": "OECD", "type": "web"},
+    {"id": "endpoints_news",   "name": "Endpoints News",    "tag": "EPTS", "type": "web"},
+    {"id": "doctor_penguin",   "name": "Doctor Penguin",    "tag": "DPNG", "type": "web"},
+]
+
+ALL_SKILLS = CORE_SKILLS + WEB_SKILLS
+
+
+async def skills_manager_agent(
+    evidence_bundle: Optional[Dict[str, Any]] = None,
+    web_search_enabled: bool = False,
+) -> Dict[str, Any]:
+    """
+    🧰 Skills Manager — monitors skill health, coverage, and performance.
+
+    Analyses which skills returned results, which failed silently,
+    overall evidence diversity, and provides recommendations for
+    skill configuration improvements.
+    """
+    signals: List[Dict[str, Any]] = []
+
+    if not evidence_bundle:
+        return _agent_result(
+            agent_id="skills_manager",
+            role="Skills Manager",
+            icon="🧰",
+            signals=[_signal("quality", "warning", "No Evidence Bundle", "Skills were not executed for this query.")],
+            summary="No skills data available",
+            confidence=0.0,
+        )
+
+    skills_used = set(evidence_bundle.get("skills_used", []))
+    citations = evidence_bundle.get("citations", [])
+    benchmark = evidence_bundle.get("benchmark", {})
+    total_found = evidence_bundle.get("total_found", 0)
+    reranker_info = evidence_bundle.get("reranker", {})
+
+    # ── Skill Coverage Analysis ─────────────────────────────────────
+    expected_core = {s["name"] for s in CORE_SKILLS}
+    active_core = skills_used & expected_core
+    missing_core = expected_core - skills_used
+
+    if len(active_core) == len(expected_core):
+        signals.append(_signal(
+            "quality", "success",
+            f"All {len(expected_core)} Core Skills Active",
+            f"Every core evidence source returned results: {', '.join(sorted(active_core))}.",
+        ))
+    elif len(missing_core) <= 2:
+        signals.append(_signal(
+            "quality", "info",
+            f"{len(active_core)}/{len(expected_core)} Core Skills Active",
+            f"Silent failures on: {', '.join(sorted(missing_core))}. "
+            f"Query may not have relevant data in those sources.",
+        ))
+    else:
+        signals.append(_signal(
+            "quality", "warning",
+            f"Low Core Coverage: {len(active_core)}/{len(expected_core)}",
+            f"Multiple core skills returned no results: {', '.join(sorted(missing_core))}. "
+            f"Check API connectivity or query relevance.",
+        ))
+
+    # ── Web Search Coverage ─────────────────────────────────────────
+    if web_search_enabled:
+        expected_web = {s["name"] for s in WEB_SKILLS}
+        active_web = skills_used & expected_web
+        missing_web = expected_web - skills_used
+
+        if len(active_web) >= len(expected_web) - 2:
+            signals.append(_signal(
+                "quality", "success",
+                f"Web Search: {len(active_web)}/{len(expected_web)} Active",
+                f"Strong web coverage with {len(active_web)} sources.",
+            ))
+        else:
+            signals.append(_signal(
+                "quality", "info",
+                f"Web Search: {len(active_web)}/{len(expected_web)} Active",
+                f"Some web skills returned no results: {', '.join(sorted(missing_web))}.",
+            ))
+    else:
+        signals.append(_signal(
+            "quality", "info",
+            "Web Search Disabled",
+            f"{len(WEB_SKILLS)} additional web skills are available when web search is enabled.",
+        ))
+
+    # ── Evidence Diversity ──────────────────────────────────────────
+    source_types = set(c.get("source", "unknown") for c in citations)
+    if len(source_types) >= 5:
+        signals.append(_signal(
+            "insight", "success",
+            f"High Evidence Diversity: {len(source_types)} Sources",
+            f"Citations span {', '.join(sorted(source_types))} — strong multi-source grounding.",
+        ))
+    elif len(source_types) >= 3:
+        signals.append(_signal(
+            "insight", "info",
+            f"Moderate Diversity: {len(source_types)} Sources",
+            f"Evidence from: {', '.join(sorted(source_types))}.",
+        ))
+    elif total_found > 0:
+        signals.append(_signal(
+            "insight", "warning",
+            f"Low Diversity: {len(source_types)} Source(s)",
+            "Most evidence comes from a single source type — consider enabling web search.",
+        ))
+
+    # ── Performance Benchmarks ──────────────────────────────────────
+    total_ms = benchmark.get("total_ms", 0)
+    slowest_skill = ""
+    slowest_ms = 0
+    for key, val in benchmark.items():
+        if key.endswith("_ms") and key != "total_ms" and key != "medcpt_rerank_ms":
+            if val > slowest_ms:
+                slowest_ms = val
+                slowest_skill = key.replace("_ms", "").replace("_", " ").title()
+
+    if total_ms > 0:
+        if total_ms < 5000:
+            signals.append(_signal(
+                "quality", "success",
+                f"Fast Evidence Retrieval: {total_ms:.0f}ms",
+                f"All skills completed within {total_ms/1000:.1f}s.",
+            ))
+        elif total_ms < 15000:
+            signals.append(_signal(
+                "quality", "info",
+                f"Evidence Retrieval: {total_ms:.0f}ms",
+                f"Slowest skill: {slowest_skill} ({slowest_ms:.0f}ms).",
+            ))
+        else:
+            signals.append(_signal(
+                "quality", "warning",
+                f"Slow Evidence Retrieval: {total_ms:.0f}ms",
+                f"Bottleneck: {slowest_skill} ({slowest_ms:.0f}ms). Consider timeout tuning.",
+            ))
+
+    # ── Reranker Status ─────────────────────────────────────────────
+    if reranker_info.get("active"):
+        rerank_ms = reranker_info.get("latency_ms", 0)
+        signals.append(_signal(
+            "quality", "success",
+            f"MedCPT Reranker Active ({rerank_ms:.0f}ms)",
+            "Neural reranking improved citation relevance ordering.",
+        ))
+    else:
+        signals.append(_signal(
+            "quality", "info",
+            "Static Ranking (MedCPT Inactive)",
+            "Citations use per-source static relevance scores.",
+        ))
+
+    # ── Confidence ──────────────────────────────────────────────────
+    coverage_ratio = len(active_core) / max(len(expected_core), 1)
+    diversity_ratio = min(len(source_types) / 5.0, 1.0)
+    conf = 0.3 + coverage_ratio * 0.35 + diversity_ratio * 0.25 + (0.1 if reranker_info.get("active") else 0)
+
+    return _agent_result(
+        agent_id="skills_manager",
+        role="Skills Manager",
+        icon="🧰",
+        signals=signals,
+        summary=(
+            f"{len(skills_used)}/{len(ALL_SKILLS)} skills · "
+            f"{total_found} citations · {len(source_types)} source types · "
+            f"{total_ms:.0f}ms"
+        ),
+        confidence=min(1.0, conf),
+        metadata={
+            "total_skills": len(ALL_SKILLS),
+            "core_skills": len(CORE_SKILLS),
+            "web_skills": len(WEB_SKILLS),
+            "skills_active": sorted(skills_used),
+            "skills_silent": sorted(missing_core) if 'missing_core' in dir() else [],
+            "source_diversity": len(source_types),
+            "total_citations": total_found,
+            "total_latency_ms": total_ms,
+            "reranker_active": reranker_info.get("active", False),
+            "web_search_enabled": web_search_enabled,
+            "skill_registry": ALL_SKILLS,
+        },
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  🧠 Memory Orchestrator Agent                                      ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def memory_orchestrator_agent(
+    user_query: str,
+    stage3_result: Dict[str, Any],
+    grounding_scores: Dict[str, Any],
+    cost_summary: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    🧠 Memory Orchestrator — monitors and orchestrates the three memory tiers
+    (Semantic, Episodic, Procedural).
+
+    Analyses memory utilisation, detects knowledge drift, evaluates
+    learn/unlearn patterns, and provides health signals for each tier.
+    """
+    from .memory import get_memory_manager
+
+    signals: List[Dict[str, Any]] = []
+    mm = get_memory_manager()
+
+    # ── Gather memory statistics ────────────────────────────────────
+    try:
+        stats = mm.stats()
+    except Exception as e:
+        logger.warning(f"[MemoryOrchestrator] Stats error: {e}")
+        stats = {"semantic": {"total": 0, "active": 0, "unlearned": 0},
+                 "episodic": {"total": 0, "active": 0, "unlearned": 0},
+                 "procedural": {"total": 0, "active": 0, "unlearned": 0}}
+
+    sem = stats.get("semantic", {})
+    epi = stats.get("episodic", {})
+    proc = stats.get("procedural", {})
+
+    total_active = sem.get("active", 0) + epi.get("active", 0) + proc.get("active", 0)
+    total_unlearned = sem.get("unlearned", 0) + epi.get("unlearned", 0) + proc.get("unlearned", 0)
+    total_all = sem.get("total", 0) + epi.get("total", 0) + proc.get("total", 0)
+
+    # ── Tier Health: Semantic Memory ────────────────────────────────
+    if sem.get("active", 0) > 10:
+        signals.append(_signal(
+            "insight", "success",
+            f"Semantic Memory: {sem['active']} Active Facts",
+            "Rich domain knowledge base — council decisions benefit from accumulated facts.",
+        ))
+    elif sem.get("active", 0) > 0:
+        signals.append(_signal(
+            "insight", "info",
+            f"Semantic Memory: {sem['active']} Active Facts",
+            "Domain knowledge is accumulating. More deliberations will enrich the knowledge base.",
+        ))
+    else:
+        signals.append(_signal(
+            "insight", "warning",
+            "Semantic Memory Empty",
+            "No domain facts stored yet. Run council deliberations and approve 'Learn' to build knowledge.",
+        ))
+
+    # ── Tier Health: Episodic Memory ────────────────────────────────
+    if epi.get("active", 0) > 5:
+        signals.append(_signal(
+            "pattern", "success",
+            f"Episodic Memory: {epi['active']} Deliberations",
+            "Strong deliberation history — council can reference past decisions for consistency.",
+        ))
+    elif epi.get("active", 0) > 0:
+        signals.append(_signal(
+            "pattern", "info",
+            f"Episodic Memory: {epi['active']} Deliberations",
+            "Past deliberations recorded. History grows with each council session.",
+        ))
+    else:
+        signals.append(_signal(
+            "pattern", "info",
+            "Episodic Memory: Starting Fresh",
+            "No past deliberations stored. First council run — building session history.",
+        ))
+
+    # ── Tier Health: Procedural Memory ──────────────────────────────
+    if proc.get("active", 0) > 3:
+        signals.append(_signal(
+            "insight", "success",
+            f"Procedural Memory: {proc['active']} Workflows",
+            "Learned procedures available — council uses established workflows for similar tasks.",
+        ))
+    elif proc.get("active", 0) > 0:
+        signals.append(_signal(
+            "insight", "info",
+            f"Procedural Memory: {proc['active']} Workflows",
+            "Some learned procedures stored. Ask 'how-to' style queries to build more.",
+        ))
+    else:
+        signals.append(_signal(
+            "insight", "info",
+            "No Learned Procedures",
+            "No procedural patterns stored. Procedures are learned from 'how-to' queries with high grounding.",
+        ))
+
+    # ── Unlearned / Drift Detection ─────────────────────────────────
+    if total_unlearned > 0:
+        unlearn_ratio = total_unlearned / max(total_all, 1)
+        if unlearn_ratio > 0.3:
+            signals.append(_signal(
+                "risk", "warning",
+                f"High Unlearn Rate: {total_unlearned}/{total_all} ({unlearn_ratio:.0%})",
+                "Many memories have been unlearned — possible knowledge drift or quality issues.",
+            ))
+        else:
+            signals.append(_signal(
+                "risk", "info",
+                f"{total_unlearned} Unlearned Memories",
+                "Some memories were deprecated by user action — healthy knowledge curation.",
+            ))
+
+    # ── Memory Recall for Current Query ─────────────────────────────
+    try:
+        recalled = mm.recall_for_query(user_query, limit_per_tier=3)
+        recall_total = recalled.get("total", 0)
+        if recall_total > 0:
+            sem_hits = len(recalled.get("semantic", []))
+            epi_hits = len(recalled.get("episodic", []))
+            proc_hits = len(recalled.get("procedural", []))
+            signals.append(_signal(
+                "insight", "success",
+                f"Memory Augmentation: {recall_total} Retrieved",
+                f"Semantic: {sem_hits}, Episodic: {epi_hits}, Procedural: {proc_hits} — "
+                f"council was augmented with prior knowledge.",
+            ))
+        else:
+            signals.append(_signal(
+                "pattern", "info",
+                "No Prior Memory Retrieved",
+                "This query did not match any stored memories — answering from scratch.",
+            ))
+    except Exception as e:
+        logger.debug(f"[MemoryOrchestrator] Recall test: {e}")
+        signals.append(_signal(
+            "quality", "info",
+            "Memory Recall Unavailable",
+            "Could not test memory retrieval for the current query.",
+        ))
+
+    # ── Grounding → Learning Readiness ──────────────────────────────
+    overall_grounding = grounding_scores.get("overall_score", 0) / 100.0
+    if overall_grounding >= 0.6:
+        signals.append(_signal(
+            "quality", "success",
+            f"Learning Ready (Grounding: {overall_grounding:.0%})",
+            "Grounding score exceeds threshold — this deliberation qualifies for automatic learning.",
+        ))
+    elif overall_grounding >= 0.4:
+        signals.append(_signal(
+            "quality", "info",
+            f"Borderline Learning (Grounding: {overall_grounding:.0%})",
+            "Grounding is moderate — semantic facts may be stored but with lower confidence.",
+        ))
+    else:
+        signals.append(_signal(
+            "quality", "warning",
+            f"Too Low for Learning (Grounding: {overall_grounding:.0%})",
+            "Grounding score below threshold — this session will NOT auto-learn to prevent bad data.",
+        ))
+
+    # ── Context Awareness Trends ────────────────────────────────────
+    try:
+        ca_trends = mm.get_ca_trends_all_models(limit_per_model=5)
+        if ca_trends:
+            degrading_models = []
+            for model, snapshots in ca_trends.items():
+                if len(snapshots) >= 2:
+                    latest = snapshots[0].get("score") or snapshots[0].get("combined_score", 0)
+                    oldest = snapshots[-1].get("score") or snapshots[-1].get("combined_score", 0)
+                    if latest and oldest and (oldest - latest) > 0.15:
+                        degrading_models.append(model)
+            if degrading_models:
+                signals.append(_signal(
+                    "risk", "warning",
+                    f"CA Degradation Detected: {len(degrading_models)} Model(s)",
+                    f"Models showing declining self-awareness: {', '.join(degrading_models[:3])}. "
+                    f"May indicate catastrophic forgetting.",
+                ))
+            elif len(ca_trends) > 0:
+                signals.append(_signal(
+                    "pattern", "success",
+                    f"CA Tracking: {len(ca_trends)} Models Monitored",
+                    "Context awareness trends stable across tracked models.",
+                ))
+    except Exception as e:
+        logger.debug(f"[MemoryOrchestrator] CA trends: {e}")
+
+    # ── Confidence ──────────────────────────────────────────────────
+    has_memories = 1 if total_active > 0 else 0
+    has_trend = 1 if total_all > 5 else 0
+    conf = 0.3 + has_memories * 0.2 + has_trend * 0.15 + min(overall_grounding, 1.0) * 0.35
+
+    return _agent_result(
+        agent_id="memory_orchestrator",
+        role="Memory Orchestrator",
+        icon="🧠",
+        signals=signals,
+        summary=(
+            f"S:{sem.get('active', 0)} E:{epi.get('active', 0)} P:{proc.get('active', 0)} active · "
+            f"{total_unlearned} unlearned · grounding {overall_grounding:.0%}"
+        ),
+        confidence=min(1.0, conf),
+        metadata={
+            "tiers": {
+                "semantic": sem,
+                "episodic": epi,
+                "procedural": proc,
+            },
+            "total_active": total_active,
+            "total_unlearned": total_unlearned,
+            "total_memories": total_all,
+            "grounding_score": overall_grounding,
+            "learning_eligible": overall_grounding >= 0.5,
+        },
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
 # ║  Team Coordinator — Run All Agents                                  ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -1458,6 +1907,7 @@ async def run_agent_team(
     grounding_scores: Dict[str, Any],
     evidence_bundle: Optional[Dict[str, Any]] = None,
     cost_summary: Optional[Dict[str, Any]] = None,
+    web_search_enabled: bool = False,
 ) -> Dict[str, Any]:
     """
     Run all agent team members in parallel and aggregate their results.
@@ -1483,6 +1933,8 @@ async def run_agent_team(
         insight_synthesizer_agent(user_query, stage1_results, stage3_result, aggregate_rankings, evidence_bundle),
         quality_auditor_agent(stage1_results, stage2_results, stage3_result, cost_summary),
         citation_supervisor_agent(stage3_result, evidence_bundle),
+        skills_manager_agent(evidence_bundle, web_search_enabled),
+        memory_orchestrator_agent(user_query, stage3_result, grounding_scores, cost_summary),
     ]
 
     # ── VP-specialist agents (only in value_proposition mode) ──
