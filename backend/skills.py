@@ -52,9 +52,10 @@ import httpx
 import logging
 import os
 import re
+import uuid
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .reranker import rerank_citations
 
@@ -2288,7 +2289,7 @@ async def run_evidence_skills(
         f"{' [WEB SEARCH ON]' if web_search_enabled else ''}"
     )
 
-    return {
+    result_bundle = {
         "citations": [c.to_dict() for c in top],
         "skills_used": skills_used,
         "total_found": len(unique),
@@ -2300,6 +2301,57 @@ async def run_evidence_skills(
         },
         "benchmark": benchmarks,
     }
+
+    # ── Persist to Skills Store (fire-and-forget) ──────────────────
+    try:
+        from .skills_store import get_skills_store
+        store = get_skills_store()
+        run_id = str(uuid.uuid4())
+
+        # 1. Save full run bundle
+        store.save_full_run({
+            "id": run_id,
+            "query": user_query,
+            **result_bundle,
+        })
+
+        # 2. Per-skill execution records + health + citations + affinity
+        query_keywords = _extract_medical_keywords(user_query)
+        for source_name, cites in results.items():
+            bench_key = source_name.lower().replace(".", "").replace(" ", "_") + "_ms"
+            latency = benchmarks.get(bench_key, 0)
+            status = "ok" if cites else "empty"
+
+            # Execution record
+            store.save_execution(source_name, {
+                "run_id": run_id,
+                "query": user_query,
+                "citation_count": len(cites),
+                "latency_ms": latency,
+                "status": status,
+            })
+
+            # Rolling health update
+            store.update_health(source_name, {
+                "last_status": status,
+                "last_latency_ms": latency,
+                "last_query": user_query,
+                "last_citation_count": len(cites),
+            })
+
+            # Cache individual citations
+            for c in cites:
+                store.cache_citation(source_name, c.to_dict())
+
+            # Record keyword affinity
+            if cites and query_keywords:
+                store.record_affinity(source_name, query_keywords, len(cites))
+
+        logger.info(f"[SkillsStore] Persisted run {run_id} ({len(skills_used)} skills)")
+    except Exception as e:
+        logger.warning(f"[SkillsStore] Persistence failed (non-fatal): {e}")
+
+    return result_bundle
 
 
 def format_citations_for_prompt(evidence: Dict[str, Any]) -> str:

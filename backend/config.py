@@ -72,10 +72,18 @@ OPENROUTER_API_URL = os.getenv(
 # Data directory for local-dev conversation storage (file-based fallback)
 DATA_DIR = "data/conversations"
 
-# Azure Blob Storage for cloud conversation storage (set via Container Apps env / .env)
+# ── Azure Blob Storage (file attachments in cloud) ────────────────────────
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
 AZURE_STORAGE_CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER", "conversations")
 BLOB_CONVERSATIONS_PREFIX = "conversations"
+
+# ── Azure Cosmos DB (conversation history + memory in cloud) ──────────────
+COSMOS_ENDPOINT = os.getenv("COSMOS_ENDPOINT", "")
+COSMOS_KEY = os.getenv("COSMOS_KEY", "")
+COSMOS_DATABASE = os.getenv("COSMOS_DATABASE", "llm-council")
+COSMOS_CONVERSATIONS_CONTAINER = os.getenv("COSMOS_CONVERSATIONS_CONTAINER", "conversations")
+COSMOS_MEMORY_CONTAINER = os.getenv("COSMOS_MEMORY_CONTAINER", "memory")
+COSMOS_SKILLS_CONTAINER = os.getenv("COSMOS_SKILLS_CONTAINER", "skills")
 
 
 def get_all_available_models():
