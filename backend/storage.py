@@ -1,11 +1,14 @@
-"""Conversation storage — dual-mode: local files or Azure Blob Storage.
+"""Conversation storage — triple-mode: local files, Azure Blob, or Azure Cosmos DB.
 
-Cloud users  → Azure Blob Storage (container: conversations/{user_id}/{conversation_id}.json)
+Cloud users  → Azure Cosmos DB (database: llm-council, container: conversations)
+              Partition key: /user_id
+Blob fallback→ Azure Blob Storage (for file attachments, legacy)
 Local dev    → files (path: data/conversations/local-user/{conversation_id}.json)
 
 The active backend is chosen per-call based on user_id:
-  user_id == "local-user"  → file backend
-  anything else            → Azure Blob Storage backend
+  user_id == "local-user"  → file backend  (dev)
+  COSMOS_ENDPOINT set      → Cosmos DB     (cloud primary)
+  else Blob conn string    → Azure Blob    (cloud legacy fallback)
 """
 
 import json
@@ -15,7 +18,11 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from .config import DATA_DIR, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER, BLOB_CONVERSATIONS_PREFIX
+from .config import (
+    DATA_DIR,
+    AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER, BLOB_CONVERSATIONS_PREFIX,
+    COSMOS_ENDPOINT, COSMOS_KEY, COSMOS_DATABASE, COSMOS_CONVERSATIONS_CONTAINER,
+)
 from .security import encrypt_data, decrypt_data, is_encryption_enabled
 
 logger = logging.getLogger(__name__)
@@ -25,6 +32,11 @@ LOCAL_USER_ID = "local-user"
 
 def _is_local(user_id: str) -> bool:
     return user_id == LOCAL_USER_ID
+
+
+def _use_cosmos() -> bool:
+    """True when Cosmos DB is configured (preferred cloud backend)."""
+    return bool(COSMOS_ENDPOINT and COSMOS_KEY)
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -37,6 +49,82 @@ def _validate_user_id(user_id: str) -> str:
     if not uid or "/" in uid or "\\" in uid or ".." in uid:
         raise ValueError(f"Invalid user_id: {user_id!r}")
     return uid
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  Azure Cosmos DB Backend  (cloud primary)                           ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+_cosmos_client = None
+_cosmos_container = None
+
+
+def _get_cosmos_container():
+    """Lazy-initialised Cosmos DB container client (one per process)."""
+    global _cosmos_client, _cosmos_container
+    if _cosmos_container is None:
+        from azure.cosmos import CosmosClient, PartitionKey
+        _cosmos_client = CosmosClient(COSMOS_ENDPOINT, credential=COSMOS_KEY)
+        db = _cosmos_client.create_database_if_not_exists(id=COSMOS_DATABASE)
+        _cosmos_container = db.create_container_if_not_exists(
+            id=COSMOS_CONVERSATIONS_CONTAINER,
+            partition_key=PartitionKey(path="/user_id"),
+            offer_throughput=400,
+        )
+    return _cosmos_container
+
+
+def _cosmos_put(user_id: str, conversation_id: str, data: Dict[str, Any]):
+    """Upsert a conversation document into Cosmos DB."""
+    container = _get_cosmos_container()
+    doc = dict(data)
+    doc["id"] = conversation_id
+    doc["user_id"] = user_id
+    container.upsert_item(doc)
+
+
+def _cosmos_get(user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
+    """Read a single conversation from Cosmos DB."""
+    try:
+        container = _get_cosmos_container()
+        item = container.read_item(item=conversation_id, partition_key=user_id)
+        # Strip Cosmos system properties before returning
+        for key in ("_rid", "_self", "_etag", "_attachments", "_ts"):
+            item.pop(key, None)
+        return item
+    except Exception:
+        return None
+
+
+def _cosmos_delete(user_id: str, conversation_id: str) -> bool:
+    """Delete a conversation from Cosmos DB."""
+    try:
+        container = _get_cosmos_container()
+        container.delete_item(item=conversation_id, partition_key=user_id)
+        return True
+    except Exception:
+        return False
+
+
+def _cosmos_list(user_id: str) -> List[Dict[str, Any]]:
+    """List all conversations for a user (metadata only) from Cosmos DB."""
+    container = _get_cosmos_container()
+    query = (
+        "SELECT c.id, c.created_at, c.title, ARRAY_LENGTH(c.messages) AS message_count "
+        "FROM c WHERE c.user_id = @uid"
+    )
+    params = [{"name": "@uid", "value": user_id}]
+    items = list(container.query_items(
+        query=query,
+        parameters=params,
+        enable_cross_partition_query=False,
+    ))
+    # Sort newest first
+    items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    for item in items:
+        item.setdefault("title", "New Conversation")
+        item.setdefault("message_count", 0)
+    return items
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -193,6 +281,8 @@ def _put(user_id: str, conversation_id: str, data: Dict[str, Any]):
     uid = _validate_user_id(user_id)
     if _is_local(uid):
         _file_put(uid, conversation_id, data)
+    elif _use_cosmos():
+        _cosmos_put(uid, conversation_id, data)
     else:
         _blob_put(uid, conversation_id, data)
 
@@ -201,6 +291,8 @@ def _get(user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
     uid = _validate_user_id(user_id)
     if _is_local(uid):
         return _file_get(uid, conversation_id)
+    if _use_cosmos():
+        return _cosmos_get(uid, conversation_id)
     return _blob_get(uid, conversation_id)
 
 
@@ -231,6 +323,8 @@ def list_conversations(user_id: str) -> List[Dict[str, Any]]:
     uid = _validate_user_id(user_id)
     if _is_local(uid):
         return _file_list(uid)
+    if _use_cosmos():
+        return _cosmos_list(uid)
     return _blob_list(uid)
 
 
@@ -300,4 +394,6 @@ def delete_conversation(user_id: str, conversation_id: str) -> bool:
     uid = _validate_user_id(user_id)
     if _is_local(uid):
         return _file_delete(uid, conversation_id)
+    if _use_cosmos():
+        return _cosmos_delete(uid, conversation_id)
     return _blob_delete(uid, conversation_id)

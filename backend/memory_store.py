@@ -200,6 +200,110 @@ class LocalJSONBackend(MemoryStoreBackend):
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
+# ║  Azure Cosmos DB backend (cloud production)                         ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+class CosmosDBBackend(MemoryStoreBackend):
+    """
+    Stores memory documents in Azure Cosmos DB (NoSQL API).
+
+    Container : configurable (default 'memory')
+    Partition : /collection  (semantic | episodic | procedural)
+    Document  : {"id": key, "collection": collection, ...doc fields}
+    """
+
+    def __init__(self, endpoint: str, key: str, database: str, container_name: str = "memory"):
+        from azure.cosmos import CosmosClient, PartitionKey
+        self._client = CosmosClient(endpoint, credential=key)
+        db = self._client.create_database_if_not_exists(id=database)
+        self._container = db.create_container_if_not_exists(
+            id=container_name,
+            partition_key=PartitionKey(path="/collection"),
+            offer_throughput=400,
+        )
+
+    def put(self, collection: str, key: str, doc: Dict[str, Any]) -> None:
+        item = dict(doc)
+        item["id"] = key
+        item["collection"] = collection
+        self._container.upsert_item(item)
+
+    def get(self, collection: str, key: str) -> Optional[Dict[str, Any]]:
+        try:
+            item = self._container.read_item(item=key, partition_key=collection)
+            for k in ("_rid", "_self", "_etag", "_attachments", "_ts"):
+                item.pop(k, None)
+            return item
+        except Exception:
+            return None
+
+    def delete(self, collection: str, key: str) -> bool:
+        try:
+            self._container.delete_item(item=key, partition_key=collection)
+            return True
+        except Exception:
+            return False
+
+    def list_keys(self, collection: str) -> List[str]:
+        query = "SELECT c.id FROM c WHERE c.collection = @coll"
+        params = [{"name": "@coll", "value": collection}]
+        items = list(self._container.query_items(
+            query=query, parameters=params, enable_cross_partition_query=False,
+        ))
+        return [item["id"] for item in items]
+
+    def query(self, collection: str, filters: Dict[str, Any],
+              limit: int = 50) -> List[Dict[str, Any]]:
+        conditions = ["c.collection = @coll"]
+        params: list = [{"name": "@coll", "value": collection}]
+        idx = 0
+        for fk, fv in filters.items():
+            pname = f"@f{idx}"
+            conditions.append(f"c.{fk} = {pname}")
+            params.append({"name": pname, "value": fv})
+            idx += 1
+        sql = f"SELECT TOP {int(limit)} * FROM c WHERE " + " AND ".join(conditions)
+        items = list(self._container.query_items(
+            query=sql, parameters=params, enable_cross_partition_query=False,
+        ))
+        for item in items:
+            for k in ("_rid", "_self", "_etag", "_attachments", "_ts"):
+                item.pop(k, None)
+        return items
+
+    def search(self, collection: str, query_text: str,
+               limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Full-text search via Cosmos DB CONTAINS (case-insensitive).
+
+        Searches across a set of common text fields. For production-scale search
+        consider enabling Cosmos DB full-text indexing or Azure AI Search.
+        """
+        terms = [t.lower() for t in re.findall(r"[a-z0-9]{2,}", query_text.lower())]
+        if not terms:
+            return []
+        # Build OR conditions across known text fields
+        field_names = ["content", "summary", "insight", "text", "title", "description"]
+        contains_clauses = []
+        for term in terms[:5]:  # Cap to avoid overly long queries
+            for fn in field_names:
+                contains_clauses.append(f"CONTAINS(LOWER(c.{fn} ?? ''), '{term}')")
+        where_clause = " OR ".join(contains_clauses)
+        sql = (
+            f"SELECT TOP {int(limit)} * FROM c "
+            f"WHERE c.collection = @coll AND ({where_clause})"
+        )
+        params = [{"name": "@coll", "value": collection}]
+        items = list(self._container.query_items(
+            query=sql, parameters=params, enable_cross_partition_query=False,
+        ))
+        for item in items:
+            for k in ("_rid", "_self", "_etag", "_attachments", "_ts"):
+                item.pop(k, None)
+        return items
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
 # ║  Singleton accessor                                                 ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -207,10 +311,24 @@ _backend_instance: Optional[MemoryStoreBackend] = None
 
 
 def get_memory_backend() -> MemoryStoreBackend:
-    """Return the active memory store backend (lazy-init local JSON)."""
+    """Return the active memory store backend (lazy-init).
+
+    Priority:
+      1. Cosmos DB — if COSMOS_ENDPOINT + COSMOS_KEY are set
+      2. Local JSON — file-based fallback for dev
+    """
     global _backend_instance
     if _backend_instance is None:
-        _backend_instance = LocalJSONBackend()
+        from .config import COSMOS_ENDPOINT, COSMOS_KEY, COSMOS_DATABASE, COSMOS_MEMORY_CONTAINER
+        if COSMOS_ENDPOINT and COSMOS_KEY:
+            _backend_instance = CosmosDBBackend(
+                endpoint=COSMOS_ENDPOINT,
+                key=COSMOS_KEY,
+                database=COSMOS_DATABASE,
+                container_name=COSMOS_MEMORY_CONTAINER,
+            )
+        else:
+            _backend_instance = LocalJSONBackend()
     return _backend_instance
 
 

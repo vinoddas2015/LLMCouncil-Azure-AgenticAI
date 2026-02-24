@@ -38,15 +38,19 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - `parse_ranking_from_text()`: Extracts "FINAL RANKING:" section, handles both numbered lists and plain format
 - `calculate_aggregate_rankings()`: Computes average rank position across all peer evaluations
 
-**`storage.py`** — Dual-Mode Conversation Storage (Azure Blob Storage + Local Files)
-- **Cloud users** → Azure Blob Storage (`AZURE_STORAGE_CONNECTION_STRING` env var, blob: `conversations/{user_id}/{conversation_id}.json`)
+**`storage.py`** — Triple-Mode Conversation Storage (Cosmos DB + Azure Blob + Local Files)
+- **Cloud users (primary)** → Azure Cosmos DB (`COSMOS_ENDPOINT` + `COSMOS_KEY` env vars)
+  - Database: `llm-council`, Container: `conversations`, Partition key: `/user_id`
+  - Auto-creates database and container on first use (`create_if_not_exists`)
+- **Cloud users (legacy fallback)** → Azure Blob Storage (when Cosmos is not configured)
 - **Local dev** (`user_id == "local-user"`) → file-based at `data/conversations/local-user/{conversation_id}.json`
+- Backend selection priority: local-user → Cosmos DB → Blob Storage
 - `user_id` is extracted from the `user-id` HTTP header (injected by reverse proxy in cloud, hardcoded as `local-user` in dev)
 - Every public function takes `user_id` as its first parameter
-- Azure Blob Storage uses server-side encryption; local files use the custom `encrypt_data`/`decrypt_data` from `security.py`
+- Cosmos DB documents include `user_id` field for partition routing; system props (`_rid`, `_etag`, etc.) are stripped on read
 - Path traversal protection: rejects `user_id` containing `/`, `\`, or `..`
-- Azure BlobServiceClient is lazy-initialised (one per process) to avoid import cost in local dev
-- Each conversation: `{id, created_at, messages[]}`
+- Cosmos client is lazy-initialised (one per process)
+- Each conversation: `{id, user_id, created_at, messages[]}`
 - Assistant messages contain: `{role, stage1, stage2, stage3}`
 - Note: metadata (label_to_model, aggregate_rankings) is NOT persisted to storage, only returned via API
 
@@ -195,15 +199,20 @@ This strict format allows reliable parsing while still getting thoughtful evalua
 - Users see explanation that original evaluation used anonymous labels
 - This prevents bias while maintaining transparency
 
-### User-ID Data Isolation & Azure Blob Storage
-- **Cloud**: conversations stored in Azure Blob Storage container under blob path `conversations/{user_id}/{conversation_id}.json`
+### User-ID Data Isolation & Azure Cosmos DB
+- **Cloud (primary)**: conversations stored in Azure Cosmos DB, partitioned by `user_id` for per-user isolation
+  - Database: `llm-council`, Container: `conversations`, Partition key: `/user_id`
+  - Env vars: `COSMOS_ENDPOINT`, `COSMOS_KEY`, `COSMOS_DATABASE`, `COSMOS_CONVERSATIONS_CONTAINER`
+- **Cloud (legacy)**: Azure Blob Storage fallback when Cosmos is not configured
 - **Local dev**: file-based storage at `data/conversations/local-user/` (detected by `user_id == "local-user"`)
 - The `user-id` HTTP header is injected by the reverse proxy in cloud deployments
 - In local development, `frontend/src/api.js` sends `user-id: local-user` automatically
 - `get_user_id` FastAPI dependency (in `main.py`) extracts/validates the header on every conversation endpoint
 - Path traversal attacks are blocked: `user_id` values containing `/`, `\`, or `..` are rejected with HTTP 400
-- Azure Blob Storage uses server-side encryption and private container access
-- `AZURE_STORAGE_CONNECTION_STRING` env var must be set in Container Apps for cloud deployments
+- Cosmos DB provides built-in encryption at rest and per-partition data isolation
+- **Memory management**: also uses Cosmos DB (container: `memory`, partition: `/collection`) when configured
+  - `CosmosDBBackend` in `memory_store.py` implements the `MemoryStoreBackend` ABC
+  - Falls back to `LocalJSONBackend` (file-based) when Cosmos is not configured
 
 ### Error Handling Philosophy
 - Continue with successful responses if some models fail (graceful degradation)
