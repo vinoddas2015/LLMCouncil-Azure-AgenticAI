@@ -224,14 +224,14 @@ const Mol3DViewer = memo(function Mol3DViewer({ smiles }) {
     };
   }, [smiles]);
 
-  // Handle resize
+  // Handle resize — only re-attach when viewer status changes
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer) return;
+    if (!viewer || status !== 'ready') return;
     const handleResize = () => { try { viewer.resize(); viewer.render(); } catch (_) {} };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  });
+  }, [status]);
 
   return (
     <div className="mol3d-container">
@@ -471,29 +471,42 @@ function SciTable({ children, ...props }) {
  * Optional props:
  *   extraComponents — object of component overrides merged with defaults
  */
-export default function SciMarkdown({ children, extraComponents = {} }) {
-  const components = {
-    code: CodeBlock,
-    img: FigureImage,
-    table: SciTable,
-    // External links in new tab
-    a: ({ href, children: kids, title, ...rest }) => (
-      <a href={href} target="_blank" rel="noopener noreferrer" title={title} {...rest}>
-        {kids}
-      </a>
-    ),
-    ...extraComponents,
-  };
+/* ── Hoisted plugin arrays (stable references — never re-created) ─ */
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
+const REHYPE_PLUGINS = [rehypeRaw, rehypeKatex];
+
+/** Default link opener — opens all links in new tab */
+const ExternalLink = ({ href, children: kids, title, ...rest }) => (
+  <a href={href} target="_blank" rel="noopener noreferrer" title={title} {...rest}>
+    {kids}
+  </a>
+);
+
+/** Default components map (stable reference when no extraComponents) */
+const DEFAULT_COMPONENTS = {
+  code: CodeBlock,
+  img: FigureImage,
+  table: SciTable,
+  a: ExternalLink,
+};
+
+const SciMarkdown = memo(function SciMarkdown({ children, extraComponents }) {
+  // Only create a merged components object when extraComponents is provided
+  const components = extraComponents
+    ? { ...DEFAULT_COMPONENTS, ...extraComponents }
+    : DEFAULT_COMPONENTS;
 
   return (
     <div className="sci-markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeRaw, rehypeKatex]}
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
         components={components}
       >
         {children || ''}
       </ReactMarkdown>
     </div>
   );
-}
+});
+
+export default SciMarkdown;

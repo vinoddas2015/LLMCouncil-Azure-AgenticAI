@@ -9,10 +9,49 @@
  */
 
 import { config, currentEnvironment } from './enviroments/env.js';
+import { apiTokenRequest } from './authConfig.js';
 
 const API_BASE = config.apiBaseUrl;
 const AUTH_TOKEN_REFRESH_URL = config.authTokenRefreshUrl;
 const TOKEN_STORAGE_KEY = 'LLM-COUNCIL-TOKEN-INFO';
+
+/**
+ * Get the MSAL instance (lazy import to avoid circular deps).
+ * Only used in Azure environment.
+ */
+let _msalInstance = null;
+function getMsalInstance() {
+  if (!_msalInstance) {
+    // Dynamic import from main.jsx (already initialised)
+    _msalInstance = import('./main.jsx').then(m => m.msalInstance);
+  }
+  return _msalInstance;
+}
+
+/**
+ * Acquire an access token from MSAL for the backend API.
+ * Uses silent acquisition first, falls back to interactive popup.
+ */
+async function getMsalToken() {
+  const msal = await getMsalInstance();
+  if (!msal) throw new Error('MSAL not initialised');
+
+  const account = msal.getActiveAccount();
+  if (!account) throw new Error('No active account — please sign in');
+
+  try {
+    const response = await msal.acquireTokenSilent({
+      ...apiTokenRequest,
+      account,
+    });
+    return response.accessToken;
+  } catch (err) {
+    // Silent failed (token expired, consent needed) — try interactive
+    console.warn('[MSAL] Silent token acquisition failed, trying popup:', err);
+    const response = await msal.acquireTokenPopup(apiTokenRequest);
+    return response.accessToken;
+  }
+}
 
 console.log(`[API] Running in ${currentEnvironment} mode, API_BASE: ${API_BASE}`);
 
@@ -84,6 +123,18 @@ async function fetchWithAuth(url, options = {}) {
       headers: { ...options.headers, 'user-id': 'local-user' },
     });
   }
+
+  // Azure deployment: use MSAL to get Entra ID access token
+  if (currentEnvironment === 'azure') {
+    const token = await getMsalToken();
+    return fetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+  }
   
   const token = await getToken();
   
@@ -106,6 +157,23 @@ async function fetchWithAuth(url, options = {}) {
 export function getUserId() {
   if (currentEnvironment === 'development') {
     return 'local-user';
+  }
+  // Azure: extract user ID from MSAL active account
+  if (currentEnvironment === 'azure') {
+    try {
+      // MSAL stores account data in sessionStorage
+      for (const key of Object.keys(sessionStorage)) {
+        if (key.includes('activeAccount') || key.includes('.idtoken')) {
+          try {
+            const val = JSON.parse(sessionStorage.getItem(key));
+            // prefer username (UPN/email), fallback to oid
+            if (val?.username) return val.username;
+            if (val?.oid) return val.oid;
+          } catch { /* skip */ }
+        }
+      }
+    } catch { /* ignore */ }
+    return 'azure-user'; // fallback
   }
   try {
     const stored = sessionStorage.getItem(TOKEN_STORAGE_KEY);

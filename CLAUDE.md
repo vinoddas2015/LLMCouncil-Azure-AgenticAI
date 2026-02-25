@@ -43,6 +43,9 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
   - Database: `llm-council`, Container: `conversations`, Partition key: `/user_id`
   - Auto-creates database and container on first use (`create_if_not_exists`)
 - **Cloud users (legacy fallback)** → Azure Blob Storage (when Cosmos is not configured)
+  - Storage account: `llmcouncilmga` in `rg-llmcouncil`
+  - 4 dedicated containers: `conversations`, `attachments`, `memory`, `skills`
+  - Env vars: `AZURE_BLOB_CONVERSATIONS_CONTAINER`, `AZURE_BLOB_ATTACHMENTS_CONTAINER`, `AZURE_BLOB_MEMORY_CONTAINER`, `AZURE_BLOB_SKILLS_CONTAINER`
 - **Local dev** (`user_id == "local-user"`) → file-based at `data/conversations/local-user/{conversation_id}.json`
 - Backend selection priority: local-user → Cosmos DB → Blob Storage
 - `user_id` is extracted from the `user-id` HTTP header (injected by reverse proxy in cloud, hardcoded as `local-user` in dev)
@@ -102,6 +105,15 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - POST `/api/conversations/{id}/message` returns metadata in addition to stages
 - Metadata includes: label_to_model mapping and aggregate_rankings
 - SSE pipeline includes `ca_validation_complete` event (with enhanced grounding_scores) after Stage 3 and `agent_team_complete` event after cost_summary
+- **Entra ID SSO**: when `ENTRA_SSO_ENABLED=true`, all endpoints require a valid JWT Bearer token via `backend/auth.py`
+
+**`auth.py`** — Entra ID JWT Validation
+- Downloads JWKS from `https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys`
+- Validates RS256 tokens: issuer, audience (`ENTRA_CLIENT_ID`), expiry, `kid` matching
+- `validate_token()` returns decoded claims or raises `HTTPException(401)`
+- `get_current_user` FastAPI dependency: extracts Bearer token, validates, returns claims
+- Enabled/disabled via `ENTRA_SSO_ENABLED` env var (disabled in local dev by default)
+- Env vars: `ENTRA_SSO_ENABLED`, `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`
 
 **`agents.py`** — Agent Team (Post-Pipeline Intelligence)
 - 12 specialised async agents (9 core + 3 VP-mode) that analyse council output in parallel:
@@ -124,19 +136,40 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 
 ### Frontend Structure (`frontend/src/`)
 
+**`authConfig.js`** — MSAL Configuration
+- Configures `@azure/msal-browser` PublicClientApplication
+- Authority: `https://login.microsoftonline.com/{tenantId}`
+- Client ID: `a73fe3b0-6f94-4093-ba33-441d25772636` (App Reg: `llmcouncil-agents`)
+- SPA Redirect URIs: `http://localhost:5173`, `https://llmcouncil-frontend.azurewebsites.net`
+- Login scopes: `openid`, `profile`, `email`
+
+**`main.jsx`**
+- Wraps `<App />` in `<MsalProvider>` for Entra ID SSO
+- MSAL initialisation is async (`msalInstance.initialize()`)
+
 **`App.jsx`**
 - Main orchestration: manages conversations list and current conversation
 - Handles message sending and metadata storage
+- **SSO gating**: when `VITE_ENV=azure`, renders login screen until Entra ID authentication completes
+- **RAF-batched SSE updates**: replaces `flushSync` — coalesces 20+ SSE events into ~1-2 React renders per frame
+- **Deduplicated `loadConversations`**: guard ref prevents parallel fetches on `title_complete` + `complete` events
 - Important: metadata is stored in the UI state for display but not persisted to backend JSON
 
 **`components/ChatInterface.jsx`**
 - Multiline textarea (3 rows, resizable)
 - Enter to send, Shift+Enter for new line
 - User messages wrapped in markdown-content class for padding
+- **Code-split Stage imports**: Stage1/Stage2/Stage3 loaded via `React.lazy()` with `<Suspense>` boundaries
+
+**`components/SciMarkdown.jsx`** — Scientific Markdown Renderer
+- `React.memo` wrapped — prevents re-parsing on parent re-renders
+- `REMARK_PLUGINS` and `REHYPE_PLUGINS` arrays hoisted to module scope (stable references)
+- `DEFAULT_COMPONENTS` object hoisted; only merges when `extraComponents` is provided
+- Mol3DViewer resize handler uses `[status]` dependency array (fixes memory leak)
 
 **`components/Stage1.jsx`**
 - Tab view of individual model responses
-- ReactMarkdown rendering with markdown-content wrapper
+- `React.memo` wrapped, tab labels memoized with `useMemo`
 
 **`components/Stage2.jsx`**
 - **Critical Feature**: Tab view showing RAW evaluation text from each model
@@ -144,10 +177,17 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - Shows "Extracted Ranking" below each evaluation so users can validate parsing
 - Aggregate rankings shown with average position and vote count
 - Explanatory text clarifies that boldface model names are for readability only
+- `React.memo` wrapped, `deAnonymizedText` memoized with `useMemo`
 
 **`components/Stage3.jsx`**
 - Final synthesized answer from chairman
 - Green-tinted background (#f0fff0) to highlight conclusion
+- `React.memo` wrapped, `linkifyCitations` memoized with `useMemo` (avoids 15+ regex passes per render)
+- `CITATION_LINK_COMPONENTS` hoisted to module scope
+
+**`components/GroundingScore.jsx`**
+- Circular grounding score bubble with per-criteria breakdown
+- `React.memo` wrapped
 
 **ThemeContext.jsx**
 - React context providing `theme` ('dark'|'light'), `toggleTheme()`, `setTheme()`
@@ -204,6 +244,8 @@ This strict format allows reliable parsing while still getting thoughtful evalua
   - Database: `llm-council`, Container: `conversations`, Partition key: `/user_id`
   - Env vars: `COSMOS_ENDPOINT`, `COSMOS_KEY`, `COSMOS_DATABASE`, `COSMOS_CONVERSATIONS_CONTAINER`
 - **Cloud (legacy)**: Azure Blob Storage fallback when Cosmos is not configured
+  - Storage account: `llmcouncilmga`, 4 containers: `conversations`, `attachments`, `memory`, `skills`
+  - Env vars: `AZURE_BLOB_CONVERSATIONS_CONTAINER`, `AZURE_BLOB_ATTACHMENTS_CONTAINER`, `AZURE_BLOB_MEMORY_CONTAINER`, `AZURE_BLOB_SKILLS_CONTAINER`
 - **Local dev**: file-based storage at `data/conversations/local-user/` (detected by `user_id == "local-user"`)
 - The `user-id` HTTP header is injected by the reverse proxy in cloud deployments
 - In local development, `frontend/src/api.js` sends `user-id: local-user` automatically
@@ -227,6 +269,11 @@ This strict format allows reliable parsing while still getting thoughtful evalua
 
 ## Important Implementation Details
 
+### Python Runtime
+- **Python 3.13.5** (`C:\Python313\python.exe`), venv at `myenv/`
+- Backend dependencies: `PyJWT[crypto]` for Entra ID JWT validation (RS256)
+- Run backend: `python -m backend.main` from project root
+
 ### Relative Imports
 All backend modules use relative imports (e.g., `from .config import ...`) not absolute imports. This is critical for Python's module system to work correctly when running as `python -m backend.main`.
 
@@ -240,6 +287,44 @@ All ReactMarkdown components must be wrapped in `<div className="markdown-conten
 
 ### Model Configuration
 Models are hardcoded in `backend/config.py`. Chairman can be same or different from council members. The current default is Gemini as chairman per user preference.
+
+## Performance Optimizations
+
+### SSE Stream Rendering (P0 — Critical Path)
+- **RAF-batched state updates**: `flushSync` replaced with `requestAnimationFrame` batching in `App.jsx`
+  - `batchedStreamUpdate()` chains updater functions into a single ref
+  - Single RAF callback flushes all pending updaters in one `setCurrentConversation` call
+  - Collapses 20+ SSE events per frame into ~1-2 React renders
+  - Cleanup on unmount via `cancelAnimationFrame`
+- **SciMarkdown memoization**: `React.memo` wrapper prevents re-parsing all visible markdown on every state change
+  - `REMARK_PLUGINS` / `REHYPE_PLUGINS` arrays hoisted to module scope (stable identity)
+  - `DEFAULT_COMPONENTS` hoisted; component merge only when `extraComponents` provided
+- **linkifyCitations memoization**: `useMemo` in Stage3 keyed on `[response, citations]` avoids 15+ regex passes per render
+
+### Component Memoization (P1)
+- `Stage1`, `Stage2`, `Stage3`, `GroundingScore` all wrapped in `React.memo`
+- `deAnonymizedText` in Stage2 memoized via `useMemo` keyed on `[rankings, activeTab, labelToModel]`
+- Tab labels memoized in Stage1/Stage2 with `useMemo`
+- `loadConversations` deduplicated with guard ref (`loadingConvsRef`)
+
+### Code Splitting (P2)
+- **Vite manual chunks** in `vite.config.js`:
+  - `3dmol` (561 KB) — heavy 3D molecule viewer, loaded on demand
+  - `katex` (267 KB) — LaTeX math rendering
+  - `markdown` (322 KB) — react-markdown + remark/rehype plugins
+  - `msal` (221 KB) — Azure authentication library
+- **React.lazy** for Stage1/Stage2/Stage3 in `ChatInterface.jsx`
+  - Each Stage loaded only when first rendered (with `<Suspense>` fallback)
+  - Stage1: 0.8 KB, Stage2: 9.5 KB, Stage3: 6.4 KB — negligible lazy overhead
+
+### Hardware / GPU Acceleration (P2)
+- **`.messages-container`**: `will-change: scroll-position` + `transform: translateZ(0)` + `contain: layout style`
+  - Promotes scroll container to dedicated GPU compositing layer
+  - Eliminates paint jank on long conversations during SSE streaming
+- **`.message-group`**: `contain: content`
+  - Each message composited independently — only newly-arriving messages paint
+  - Previous messages served from GPU texture cache
+- Mol3DViewer resize handler: `[status]` dependency array fixes event listener leak
 
 ## Common Gotchas
 
@@ -274,6 +359,8 @@ Reusable test utilities in `src/__tests__/a11y-utils.js`:
 - WCAG 3.0 accessibility + Day/Night mode ✅ (done)
 - RAGAS-aligned grounding metrics (F1, Precision=Faithfulness, Recall=Context Recall) ✅ (done)
 - Context Awareness / Catastrophic Forgetting detection via self-review ✅ (done)
+- Entra ID SSO (MSAL frontend + JWT backend) ✅ (done)
+- Frontend performance optimisation (RAF batching, memo, code splitting, GPU accel) ✅ (done)
 - Model performance analytics over time
 - Custom ranking criteria (not just accuracy/insight)
 - Support for reasoning models (o1, etc.) with special handling
@@ -301,3 +388,64 @@ Frontend: Display with tabs + validation UI
 ```
 
 The entire flow is async/parallel where possible to minimize latency.
+
+## Azure CLI Login
+
+**Always use these steps for `az login`:**
+1. Set `$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"` (Bayer corporate proxy intercepts TLS with self-signed cert)
+2. Run `az login`
+3. Select subscription **AZS1799_codingagent4clinical** (`24cbffca-ac7d-4f7f-9da9-88f62339afe9`) — this is the project's subscription, always use it
+4. If subscription selection was skipped or wrong, run: `az account set --subscription "24cbffca-ac7d-4f7f-9da9-88f62339afe9"`
+5. Ignore the GHH tenant MFA error and Asklepios tenant warning — they are irrelevant
+
+## Azure Deployment Architecture
+
+### Infrastructure
+- **Resource Group**: `rg-llmcouncil` (East US)
+- **App Service Plan**: `asp-llmcouncil` (Linux, S2 Standard tier, shared by both apps)
+- **Backend**: `llmcouncil-backend.azurewebsites.net` — Python/FastAPI, Gunicorn
+- **Frontend**: `llmcouncil-frontend.azurewebsites.net` — Node.js 24 LTS, Express 5 SPA server
+- **Bayer Policy**: All webapps MUST use `--https-only true` (RequestDisallowedByPolicy otherwise)
+
+### Frontend Deployment (`frontend/`)
+
+**Key Files:**
+- `server.js` — Express 5 SPA server (serves `dist/` static files with SPA fallback)
+- `.env.azure` — `VITE_ENV=azure` for Vite build
+- `src/enviroments/env.js` — AZURE environment config pointing to backend URL
+
+**Build & Deploy Process:**
+1. Build: `cd frontend && npx vite build --mode azure` (creates `dist/`)
+2. Create staging dir with: `server.js`, `package.json` (express only), `dist/`, `node_modules/`
+3. Create ZIP using .NET `ZipFile` API with **forward slashes** (critical — `Compress-Archive` uses backslashes which break on Linux)
+4. Deploy: `az webapp deploy --name llmcouncil-frontend --resource-group rg-llmcouncil --src-path <zip> --type zip`
+
+**App Settings:**
+- `SCM_DO_BUILD_DURING_DEPLOYMENT=false` (Oryx build disabled — we deploy pre-built)
+- `WEBSITE_NODE_DEFAULT_VERSION=~24`
+- Startup command: `node server.js`
+
+**Critical Gotchas:**
+- **Express 5 Wildcards**: Express 5 uses path-to-regexp v8 — bare `*` wildcards are invalid. Use `/{*path}` instead of `*` for SPA fallback routes.
+- **ZIP Path Separators**: PowerShell `Compress-Archive` creates ZIPs with Windows backslash separators (`\`). Linux App Service `rsync` fails with `Invalid argument (22)` on these paths. Must use .NET `ZipFile` API with explicit `Replace('\', '/')`.
+- **PowerShell Pipe Character**: When passing values containing `|` (like `NODE|24-lts`) to `az`, use the `az --%` stop-parsing token.
+- **Include node_modules**: Since `SCM_DO_BUILD_DURING_DEPLOYMENT=false`, run `npm install --omit=dev` in staging before zipping.
+
+### Frontend API Integration
+- `api.js` detects `VITE_ENV=azure` and routes API calls to `https://llmcouncil-backend.azurewebsites.net`
+- Sends `user-id: azure-user` header for user identification
+- Backend CORS is `allow_origins=["*"]` (permissive for now)
+
+### Entra ID SSO (Azure Deployment)
+- **Frontend** (`@azure/msal-browser` + `@azure/msal-react`):
+  - `authConfig.js` configures MSAL PublicClientApplication
+  - `main.jsx` wraps `<App>` in `<MsalProvider>`
+  - `api.js` acquires Bearer tokens via `acquireTokenSilent` (auto-refresh)
+  - `App.jsx` gates UI behind `useIsAuthenticated()` when `VITE_ENV=azure`
+- **Backend** (`backend/auth.py` + `PyJWT[crypto]`):
+  - Downloads JWKS from Entra ID; validates RS256 JWT (iss, aud, exp, kid)
+  - `get_current_user` FastAPI dependency injected on all API routes when enabled
+  - Toggle: `ENTRA_SSO_ENABLED=true/false` env var
+- **App Registration**: `llmcouncil-agents` (Client ID: `a73fe3b0-6f94-4093-ba33-441d25772636`)
+  - SPA Redirect URIs: `http://localhost:5173`, `https://llmcouncil-frontend.azurewebsites.net`
+- **Backend App Settings**: `ENTRA_SSO_ENABLED=true`, `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`

@@ -72,9 +72,16 @@ OPENROUTER_API_URL = os.getenv(
 # Data directory for local-dev conversation storage (file-based fallback)
 DATA_DIR = "data/conversations"
 
-# ── Azure Blob Storage (file attachments in cloud) ────────────────────────
+# ── Azure Blob Storage (dedicated containers per data type) ───────────────
+# Storage account: llmcouncilmga  |  Resource group: rg-llmcouncil
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
-AZURE_STORAGE_CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER", "conversations")
+AZURE_BLOB_CONVERSATIONS_CONTAINER = os.getenv("AZURE_BLOB_CONVERSATIONS_CONTAINER", "conversations")
+AZURE_BLOB_ATTACHMENTS_CONTAINER  = os.getenv("AZURE_BLOB_ATTACHMENTS_CONTAINER", "attachments")
+AZURE_BLOB_MEMORY_CONTAINER       = os.getenv("AZURE_BLOB_MEMORY_CONTAINER", "memory")
+AZURE_BLOB_SKILLS_CONTAINER       = os.getenv("AZURE_BLOB_SKILLS_CONTAINER", "skills")
+
+# Backward-compat aliases (used by storage.py blob fallback)
+AZURE_STORAGE_CONTAINER = AZURE_BLOB_CONVERSATIONS_CONTAINER
 BLOB_CONVERSATIONS_PREFIX = "conversations"
 
 # ── Azure Cosmos DB (conversation history + memory in cloud) ──────────────
@@ -84,6 +91,17 @@ COSMOS_DATABASE = os.getenv("COSMOS_DATABASE", "llm-council")
 COSMOS_CONVERSATIONS_CONTAINER = os.getenv("COSMOS_CONVERSATIONS_CONTAINER", "conversations")
 COSMOS_MEMORY_CONTAINER = os.getenv("COSMOS_MEMORY_CONTAINER", "memory")
 COSMOS_SKILLS_CONTAINER = os.getenv("COSMOS_SKILLS_CONTAINER", "skills")
+
+# ── Entra ID (Azure AD) SSO — JWT validation ─────────────────────────────
+# These are used by the backend to validate Bearer tokens issued by MSAL.
+ENTRA_TENANT_ID = os.getenv("ENTRA_TENANT_ID", "fcb2b37b-5da0-466b-9b83-0014b67a7c78")
+ENTRA_CLIENT_ID = os.getenv("ENTRA_CLIENT_ID", "a73fe3b0-6f94-4093-ba33-441d25772636")
+ENTRA_AUTHORITY = f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}"
+ENTRA_ISSUER = f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/v2.0"
+ENTRA_JWKS_URI = f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/discovery/v2.0/keys"
+ENTRA_AUDIENCE = f"api://{ENTRA_CLIENT_ID}"
+# Set to False to skip JWT validation (local dev / testing)
+ENTRA_SSO_ENABLED = os.getenv("ENTRA_SSO_ENABLED", "false").lower() in ("1", "true", "yes")
 
 
 def get_all_available_models():

@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react';
 import SciMarkdown from './SciMarkdown';
 import './Stage3.css';
 
@@ -209,14 +210,28 @@ function linkifyCitations(text, citations) {
   return result;
 }
 
-export default function Stage3({ finalResponse, evidence }) {
+/** Stable extraComponents for SciMarkdown — hoisted outside render */
+const CITATION_LINK_COMPONENTS = {
+  a: ({ href, children, title, ...props }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" title={title} className="citation-link" {...props}>
+      {children}
+    </a>
+  ),
+};
+
+const Stage3 = memo(function Stage3({ finalResponse, evidence }) {
+  // Memoize the expensive 15+ regex-pass citation linkification
+  const citations = evidence?.citations || [];
+  const linkedResponse = useMemo(
+    () => linkifyCitations(finalResponse?.response, citations),
+    [finalResponse?.response, citations]
+  );
+
   if (!finalResponse) {
     return null;
   }
 
-  const citations = evidence?.citations || [];
   const benchmark = evidence?.benchmark || {};
-  const linkedResponse = linkifyCitations(finalResponse.response, citations);
 
   return (
     <div className="stage stage3">
@@ -231,15 +246,7 @@ export default function Stage3({ finalResponse, evidence }) {
           )}
         </div>
         <div className="final-text markdown-content">
-          <SciMarkdown
-            extraComponents={{
-              a: ({ href, children, title, ...props }) => (
-                <a href={href} target="_blank" rel="noopener noreferrer" title={title} className="citation-link" {...props}>
-                  {children}
-                </a>
-              ),
-            }}
-          >
+          <SciMarkdown extraComponents={CITATION_LINK_COMPONENTS}>
             {linkedResponse}
           </SciMarkdown>
         </div>
@@ -275,4 +282,6 @@ export default function Stage3({ finalResponse, evidence }) {
       </div>
     </div>
   );
-}
+});
+
+export default Stage3;

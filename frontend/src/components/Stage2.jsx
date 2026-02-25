@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import { useState, memo, useMemo } from 'react';
 import SciMarkdown from './SciMarkdown';
 import GroundingScore from './GroundingScore';
 import './Stage2.css';
+
+/** Extract short model name from "provider/model" */
+const shortName = (model) => model.split('/')[1] || model;
 
 function deAnonymizeText(text, labelToModel) {
   if (!labelToModel) return text;
@@ -9,14 +12,28 @@ function deAnonymizeText(text, labelToModel) {
   let result = text;
   // Replace each "Response X" with the actual model name
   Object.entries(labelToModel).forEach(([label, model]) => {
-    const modelShortName = model.split('/')[1] || model;
+    const modelShortName = shortName(model);
     result = result.replace(new RegExp(label, 'g'), `**${modelShortName}**`);
   });
   return result;
 }
 
-export default function Stage2({ rankings, labelToModel, aggregateRankings, groundingScores }) {
+const Stage2 = memo(function Stage2({ rankings, labelToModel, aggregateRankings, groundingScores }) {
   const [activeTab, setActiveTab] = useState(0);
+
+  // Memoize tab labels
+  const tabLabels = useMemo(
+    () => rankings?.map((r) => shortName(r.model)) ?? [],
+    [rankings]
+  );
+
+  // Memoize the expensive regex-based de-anonymization per active tab
+  const deAnonymizedText = useMemo(
+    () => rankings?.[activeTab]
+      ? deAnonymizeText(rankings[activeTab].ranking, labelToModel)
+      : '',
+    [rankings, activeTab, labelToModel]
+  );
 
   if (!rankings || rankings.length === 0) {
     return null;
@@ -33,13 +50,13 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, grou
       </p>
 
       <div className="tabs">
-        {rankings.map((rank, index) => (
+        {tabLabels.map((label, index) => (
           <button
             key={index}
             className={`tab ${activeTab === index ? 'active' : ''}`}
             onClick={() => setActiveTab(index)}
           >
-            {rank.model.split('/')[1] || rank.model}
+            {label}
           </button>
         ))}
       </div>
@@ -50,7 +67,7 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, grou
         </div>
         <div className="ranking-content markdown-content">
           <SciMarkdown>
-            {deAnonymizeText(rankings[activeTab].ranking, labelToModel)}
+            {deAnonymizedText}
           </SciMarkdown>
         </div>
 
@@ -62,7 +79,7 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, grou
               {rankings[activeTab].parsed_ranking.map((label, i) => (
                 <li key={i}>
                   {labelToModel && labelToModel[label]
-                    ? labelToModel[label].split('/')[1] || labelToModel[label]
+                    ? shortName(labelToModel[label])
                     : label}
                 </li>
               ))}
@@ -82,7 +99,7 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, grou
               <div key={index} className="aggregate-item">
                 <span className="rank-position">#{index + 1}</span>
                 <span className="rank-model">
-                  {agg.model.split('/')[1] || agg.model}
+                  {shortName(agg.model)}
                 </span>
                 <span className="rank-score">
                   Avg: {agg.average_rank.toFixed(2)}
@@ -100,4 +117,6 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, grou
       )}
     </div>
   );
-}
+});
+
+export default Stage2;

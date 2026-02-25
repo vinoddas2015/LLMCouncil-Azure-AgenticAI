@@ -18,6 +18,11 @@ const environments = {
         basename: `/${routePrefixProd}`,
         apiBaseUrl: `https://${domainProd}/llmc-api`,
         authTokenRefreshUrl: `https://${domainProd}/${routePrefixProd}/auth-token-refresh`,
+    },
+    AZURE: {
+        basename: "/",
+        apiBaseUrl: "https://llmcouncil-backend.azurewebsites.net",
+        authTokenRefreshUrl: "",
     }
 }
 
@@ -38,6 +43,7 @@ function getEnvironmentConfig() {
         'development': 'LOCAL',
         'nonprod': 'NONPROD',
         'production': 'PRODUCTION',
+        'azure': 'AZURE',
     };
     
     const envKey = envMap[viteEnv.toLowerCase()] || 'LOCAL';

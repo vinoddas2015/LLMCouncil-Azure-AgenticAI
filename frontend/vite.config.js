@@ -5,6 +5,19 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: process.env.PUBLIC_URL || '/',
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split heavy libraries into separate cacheable chunks
+          '3dmol': ['3dmol'],
+          'katex': ['katex', 'rehype-katex', 'remark-math'],
+          'markdown': ['react-markdown', 'remark-gfm', 'rehype-raw'],
+          'msal': ['@azure/msal-browser', '@azure/msal-react'],
+        },
+      },
+    },
+  },
   test: {
     globals: true,
     environment: 'jsdom',

@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { flushSync } from 'react-dom';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useIsAuthenticated, useMsal } from '@azure/msal-react';
+import { InteractionStatus } from '@azure/msal-browser';
 import Sidebar from './components/Sidebar';
 import ChatInterface from './components/ChatInterface';
 import Settings from './components/Settings';
@@ -7,6 +8,8 @@ import KillSwitch from './components/KillSwitch';
 import MemoryPanel from './components/MemoryPanel';
 import PromptAtlas3D from './components/PromptAtlas3D';
 import { api } from './api';
+import { currentEnvironment } from './enviroments/env.js';
+import { loginRequest } from './authConfig.js';
 import './App.css';
 
 // Load preferences from localStorage
@@ -32,6 +35,52 @@ const savePreferences = (prefs) => {
 };
 
 function App() {
+  // ── Azure SSO: gate the UI behind authentication ──────────────────
+  const needsAuth = currentEnvironment === 'azure';
+  const isAuthenticated = needsAuth ? useIsAuthenticated() : true;
+  const { instance: msalInstance, inProgress } = needsAuth ? useMsal() : { instance: null, inProgress: 'none' };
+
+  const handleLogin = () => {
+    if (msalInstance) {
+      msalInstance.loginRedirect(loginRequest);
+    }
+  };
+
+  const handleLogout = () => {
+    if (msalInstance) {
+      msalInstance.logoutRedirect({ postLogoutRedirectUri: window.location.origin });
+    }
+  };
+
+  // Show login screen while MSAL is loading or user is not authenticated
+  if (needsAuth && inProgress !== InteractionStatus.None) {
+    return (
+      <div className="auth-loading">
+        <div className="auth-loading-spinner" />
+        <p>Authenticating with Bayer Entra ID...</p>
+      </div>
+    );
+  }
+
+  if (needsAuth && !isAuthenticated) {
+    return (
+      <div className="auth-login-screen">
+        <div className="auth-login-card">
+          <h1>🏛️ LLM Council</h1>
+          <p>Sign in with your Bayer CWID to access the LLM Council.</p>
+          <button className="auth-login-button" onClick={handleLogin}>
+            Sign in with Microsoft
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Authenticated app ─────────────────────────────────────────────
+  return <AuthenticatedApp handleLogout={needsAuth ? handleLogout : null} />;
+}
+
+function AuthenticatedApp({ handleLogout }) {
   const [conversations, setConversations] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [currentConversation, setCurrentConversation] = useState(null);
@@ -42,6 +91,56 @@ function App() {
   const [atlasWidth, setAtlasWidth] = useState(480);
   const [preferences, setPreferences] = useState(loadPreferences);
   const [activeSessionId, setActiveSessionId] = useState(null);
+
+  // ── RAF-batched state updater (replaces flushSync) ────────────
+  // Queues state updates and flushes them all in a single animation
+  // frame, collapsing 20+ SSE events into ~1-2 React renders.
+  const pendingUpdateRef = useRef(null);
+  const rafIdRef = useRef(null);
+
+  const batchedStreamUpdate = useCallback((updater) => {
+    // Chain updaters: each one receives the result of the previous
+    if (pendingUpdateRef.current) {
+      const prev = pendingUpdateRef.current;
+      pendingUpdateRef.current = (state) => updater(prev(state));
+    } else {
+      pendingUpdateRef.current = updater;
+    }
+
+    // Schedule a single RAF flush
+    if (!rafIdRef.current) {
+      rafIdRef.current = requestAnimationFrame(() => {
+        const finalUpdater = pendingUpdateRef.current;
+        pendingUpdateRef.current = null;
+        rafIdRef.current = null;
+        if (finalUpdater) {
+          setCurrentConversation(finalUpdater);
+        }
+      });
+    }
+  }, []);
+
+  // Cleanup RAF on unmount
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+    };
+  }, []);
+
+  // Deduplicated loadConversations with guard ref
+  const loadingConvsRef = useRef(false);
+  const loadConversations = useCallback(async () => {
+    if (loadingConvsRef.current) return;
+    loadingConvsRef.current = true;
+    try {
+      const convs = await api.listConversations();
+      setConversations(convs);
+    } catch (error) {
+      console.error('Failed to load conversations:', error);
+    } finally {
+      loadingConvsRef.current = false;
+    }
+  }, []);
 
   // Load conversations on mount
   useEffect(() => {
@@ -55,14 +154,7 @@ function App() {
     }
   }, [currentConversationId]);
 
-  const loadConversations = async () => {
-    try {
-      const convs = await api.listConversations();
-      setConversations(convs);
-    } catch (error) {
-      console.error('Failed to load conversations:', error);
-    }
-  };
+  // (loadConversations is defined above as a useCallback)
 
   const loadConversation = async (id) => {
     try {
@@ -171,12 +263,9 @@ function App() {
         return { ...prev, messages };
       };
 
-      // Wrap state updates in flushSync so the UI re-renders immediately
-      // on each stream event. Without this, React batches updates in production
-      // and the UI stays frozen until the stream completes.
-      const streamUpdate = (updater) => {
-        flushSync(() => setCurrentConversation(updater));
-      };
+      // Use RAF-batched updater to coalesce rapid SSE events into fewer
+      // React renders (replaces flushSync which forced synchronous paints).
+      const streamUpdate = batchedStreamUpdate;
 
       // Create a partial assistant message that will be updated progressively
       const assistantMessage = {
@@ -249,7 +338,7 @@ function App() {
 
           case 'stage2_model_response':
             // Incremental: display each ranking as it arrives
-            setCurrentConversation((prev) => cloneLastMsg(prev, msg => {
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
               if (!msg.stage2) msg.stage2 = [];
               msg.stage2 = [...msg.stage2, event.data];
               msg.loading.stage2_completed = event.progress?.completed || msg.stage2.length;
@@ -513,6 +602,17 @@ function App() {
       >
         🧠
       </button>
+      {/* Sign Out Button (Azure SSO only) */}
+      {handleLogout && (
+        <button
+          className="sign-out-toggle"
+          onClick={handleLogout}
+          title="Sign Out"
+          aria-label="Sign out of your Bayer account"
+        >
+          🚪
+        </button>
+      )}
       <MemoryPanel
         isOpen={showMemory}
         onClose={() => setShowMemory(false)}

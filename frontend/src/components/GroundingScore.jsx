@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import './GroundingScore.css';
 
 /** Small pharma metric bar with label, value, and formula tooltip. */
@@ -20,7 +20,7 @@ function PharmaBar({ label, value, formula }) {
  * Circular grounding-score bubble with per-criteria breakdown.
  * Inspired by compliance-evidence card UX (circular gauge + metric bars).
  */
-export default function GroundingScore({ groundingScores }) {
+const GroundingScore = memo(function GroundingScore({ groundingScores }) {
   const [expanded, setExpanded] = useState(false);
 
   if (!groundingScores) return null;
@@ -246,4 +246,6 @@ export default function GroundingScore({ groundingScores }) {
       )}
     </div>
   );
-}
+});
+
+export default GroundingScore;

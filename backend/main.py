@@ -48,6 +48,8 @@ from .agents import run_agent_team, enrich_stage3_citations
 from .openrouter import close_shared_client
 from .security import get_security_status
 from .infographics import extract_infographic, strip_infographic_block
+from .auth import get_authenticated_user_id
+from .config import ENTRA_SSO_ENABLED
 
 
 def check_token_expiry():
@@ -107,8 +109,13 @@ from contextlib import asynccontextmanager
 async def lifespan(application):
     """Run model sync on startup, launch periodic refresh in background."""
     logger.info("🚀 Running initial model sync...")
-    summary = await sync_models()
-    logger.info(f"   Initial sync result: {summary.get('total_after_filter', '?')} models")
+    try:
+        summary = await asyncio.wait_for(sync_models(), timeout=25)
+        logger.info(f"   Initial sync result: {summary.get('total_after_filter', '?')} models")
+    except asyncio.TimeoutError:
+        logger.warning("⚠️  Model sync timed out after 25s — starting with default models")
+    except Exception as e:
+        logger.warning(f"⚠️  Model sync failed: {e} — starting with default models")
     # Launch periodic sync as a background task
     sync_task = asyncio.create_task(periodic_sync_loop())
     yield
@@ -151,11 +158,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 # Add request logging middleware
 app.add_middleware(RequestLoggingMiddleware)
 
-# Enable CORS for all origins
+# Enable CORS — with credentials support for Entra ID SSO
+_cors_origins = [
+    "http://localhost:5173",
+    "https://llmcouncil-frontend.azurewebsites.net",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=_cors_origins if ENTRA_SSO_ENABLED else ["*"],
+    allow_credentials=ENTRA_SSO_ENABLED,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -224,7 +235,11 @@ def extract_file_content_description(attachment: AttachmentData) -> str:
 
 
 async def get_user_id(user_id: str = Header(..., alias="user-id")) -> str:
-    """Extract and validate the user-id header injected by the reverse proxy."""
+    """Extract and validate the user-id header injected by the reverse proxy.
+    
+    DEPRECATED: Use get_authenticated_user_id from auth.py instead.
+    Kept for backward compatibility with non-conversation endpoints.
+    """
     sanitized = user_id.strip()
     if not sanitized or "/" in sanitized or "\\" in sanitized or ".." in sanitized:
         raise HTTPException(status_code=400, detail="Invalid user-id header")
@@ -358,13 +373,13 @@ EXAMPLES:
 
 
 @app.get("/api/conversations", response_model=List[ConversationMetadata])
-async def list_conversations(user_id: str = Depends(get_user_id)):
+async def list_conversations(user_id: str = Depends(get_authenticated_user_id)):
     """List all conversations for the authenticated user (metadata only)."""
     return storage.list_conversations(user_id)
 
 
 @app.post("/api/conversations", response_model=Conversation)
-async def create_conversation(request: CreateConversationRequest, user_id: str = Depends(get_user_id)):
+async def create_conversation(request: CreateConversationRequest, user_id: str = Depends(get_authenticated_user_id)):
     """Create a new conversation."""
     conversation_id = str(uuid.uuid4())
     conversation = storage.create_conversation(user_id, conversation_id)
@@ -372,7 +387,7 @@ async def create_conversation(request: CreateConversationRequest, user_id: str =
 
 
 @app.get("/api/conversations/{conversation_id}", response_model=Conversation)
-async def get_conversation(conversation_id: str, user_id: str = Depends(get_user_id)):
+async def get_conversation(conversation_id: str, user_id: str = Depends(get_authenticated_user_id)):
     """Get a specific conversation with all its messages."""
     conversation = storage.get_conversation(user_id, conversation_id)
     if conversation is None:
@@ -381,7 +396,7 @@ async def get_conversation(conversation_id: str, user_id: str = Depends(get_user
 
 
 @app.get("/api/conversations/{conversation_id}/export")
-async def export_conversation(conversation_id: str, user_id: str = Depends(get_user_id), format: str = "markdown"):
+async def export_conversation(conversation_id: str, user_id: str = Depends(get_authenticated_user_id), format: str = "markdown"):
     """
     Export a conversation in the specified format.
     
@@ -464,7 +479,7 @@ async def export_conversation(conversation_id: str, user_id: str = Depends(get_u
 
 
 @app.post("/api/conversations/{conversation_id}/message")
-async def send_message(conversation_id: str, request: SendMessageRequest, user_id: str = Depends(get_user_id)):
+async def send_message(conversation_id: str, request: SendMessageRequest, user_id: str = Depends(get_authenticated_user_id)):
     """
     Send a message and run the 3-stage council process.
     Returns the complete response with all stages.
@@ -511,7 +526,7 @@ async def send_message(conversation_id: str, request: SendMessageRequest, user_i
 
 
 @app.delete("/api/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str, user_id: str = Depends(get_user_id)):
+async def delete_conversation(conversation_id: str, user_id: str = Depends(get_authenticated_user_id)):
     """Delete a conversation."""
     success = storage.delete_conversation(user_id, conversation_id)
     if not success:
@@ -520,7 +535,7 @@ async def delete_conversation(conversation_id: str, user_id: str = Depends(get_u
 
 
 @app.post("/api/conversations/{conversation_id}/analyze-agents")
-async def analyze_agents(conversation_id: str, user_id: str = Depends(get_user_id)):
+async def analyze_agents(conversation_id: str, user_id: str = Depends(get_authenticated_user_id)):
     """Run agent team analysis on-demand for an existing conversation.
 
     Useful for conversations that were created before agent-team
@@ -828,7 +843,7 @@ async def delete_memory_entry(memory_type: str, memory_id: str):
 
 
 @app.post("/api/conversations/{conversation_id}/message/stream")
-async def send_message_stream(conversation_id: str, request: SendMessageRequest, user_id: str = Depends(get_user_id)):
+async def send_message_stream(conversation_id: str, request: SendMessageRequest, user_id: str = Depends(get_authenticated_user_id)):
     """
     Send a message and stream the 3-stage council process.
     Returns Server-Sent Events as each stage completes.

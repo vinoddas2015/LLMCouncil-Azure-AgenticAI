@@ -22,7 +22,10 @@ param(
     [string]$MemoryCtr       = "memory",
     [string]$SkillsCtr       = "skills",
     [string]$StorageAccount  = "llmcouncilmga",
-    [string]$BlobContainer   = "conversations",
+    [string]$BlobConversations = "conversations",
+    [string]$BlobAttachments  = "attachments",
+    [string]$BlobMemory       = "memory",
+    [string]$BlobSkills       = "skills",
     [int]   $MaxThroughput   = 1000,
     [switch]$FreeTier,
     [switch]$Teardown,
@@ -80,7 +83,7 @@ if (-not $account) {
 Write-OK ("Subscription: " + $account.name + " (" + $account.id + ")")
 
 # -- 1. Resource Group -----------------------------------------
-Write-Step "1/9 - Resource Group"
+Write-Step "1/12 - Resource Group"
 $rgExists = az group exists --name $ResourceGroup 2>$null
 if ($rgExists -eq "true") {
     Write-OK "Resource group '$ResourceGroup' already exists"
@@ -94,7 +97,7 @@ if ($rgExists -eq "true") {
 }
 
 # -- 2. Cosmos DB Account --------------------------------------
-Write-Step "2/9 - Cosmos DB Account"
+Write-Step "2/12 - Cosmos DB Account"
 
 $nameExists = az cosmosdb check-name-exists --name $AccountName 2>$null
 if ($nameExists -eq "true") {
@@ -127,7 +130,7 @@ if ($nameExists -eq "true") {
 }
 
 # -- 3. SQL Database -------------------------------------------
-Write-Step "3/9 - SQL Database"
+Write-Step "3/12 - SQL Database"
 
 $dbExists = az cosmosdb sql database exists `
     --account-name $AccountName `
@@ -149,7 +152,7 @@ if ($dbExists -eq "true") {
 }
 
 # -- 4. Conversations Container --------------------------------
-Write-Step "4/9 - Conversations Container"
+Write-Step "4/12 - Conversations Container"
 
 $ctrExists = az cosmosdb sql container exists `
     --account-name $AccountName `
@@ -177,7 +180,7 @@ if ($ctrExists -eq "true") {
 }
 
 # -- 5. Memory Container ---------------------------------------
-Write-Step "5/9 - Memory Container"
+Write-Step "5/12 - Memory Container"
 
 $memExists = az cosmosdb sql container exists `
     --account-name $AccountName `
@@ -205,7 +208,7 @@ if ($memExists -eq "true") {
 }
 
 # -- 6. Skills Container ----------------------------------------
-Write-Step "6/9 - Skills Container"
+Write-Step "6/12 - Skills Container"
 
 $skillsExists = az cosmosdb sql container exists `
     --account-name $AccountName `
@@ -233,7 +236,7 @@ if ($skillsExists -eq "true") {
 }
 
 # -- 7. Storage Account ----------------------------------------
-Write-Step "7/9 - Storage Account"
+Write-Step "7/12 - Storage Account"
 
 $storageExists = az storage account check-name --name $StorageAccount --output json 2>$null | ConvertFrom-Json
 if ($storageExists.nameAvailable -eq $false -and $storageExists.reason -eq "AlreadyExists") {
@@ -261,31 +264,100 @@ if ($storageExists.nameAvailable -eq $false -and $storageExists.reason -eq "Alre
     Write-OK "Created storage account '$StorageAccount' [Standard_LRS, StorageV2, TLS 1.2]"
 }
 
-# -- 8. Blob Container -----------------------------------------
-Write-Step "8/9 - Blob Container ($BlobContainer)"
+# -- 8. Blob Container (conversations) -------------------------
+Write-Step "8/12 - Blob Container ($BlobConversations)"
 
 $blobExists = az storage container exists `
-    --name $BlobContainer `
+    --name $BlobConversations `
     --account-name $StorageAccount `
     --auth-mode login `
     --output json 2>$null | ConvertFrom-Json
 if ($blobExists.exists -eq $true) {
-    Write-OK "Blob container '$BlobContainer' already exists"
+    Write-OK "Blob container '$BlobConversations' already exists"
 } else {
-    Write-Cmd "az storage container create --name $BlobContainer --account-name $StorageAccount"
+    Write-Cmd "az storage container create --name $BlobConversations --account-name $StorageAccount"
     if (-not $DryRun) {
         az storage container create `
-            --name $BlobContainer `
+            --name $BlobConversations `
             --account-name $StorageAccount `
             --auth-mode login `
             --output none
-        if ($LASTEXITCODE -ne 0) { throw "Failed to create blob container" }
+        if ($LASTEXITCODE -ne 0) { throw "Failed to create blob container '$BlobConversations'" }
     }
-    Write-OK "Created blob container '$BlobContainer'"
+    Write-OK "Created blob container '$BlobConversations'"
 }
 
-# -- 9. Retrieve Keys -----------------------------------------
-Write-Step "9/9 - Connection Details"
+# -- 9. Blob Container (attachments) ----------------------------
+Write-Step "9/12 - Blob Container ($BlobAttachments)"
+
+$blobExists = az storage container exists `
+    --name $BlobAttachments `
+    --account-name $StorageAccount `
+    --auth-mode login `
+    --output json 2>$null | ConvertFrom-Json
+if ($blobExists.exists -eq $true) {
+    Write-OK "Blob container '$BlobAttachments' already exists"
+} else {
+    Write-Cmd "az storage container create --name $BlobAttachments --account-name $StorageAccount"
+    if (-not $DryRun) {
+        az storage container create `
+            --name $BlobAttachments `
+            --account-name $StorageAccount `
+            --auth-mode login `
+            --output none
+        if ($LASTEXITCODE -ne 0) { throw "Failed to create blob container '$BlobAttachments'" }
+    }
+    Write-OK "Created blob container '$BlobAttachments'"
+}
+
+# -- 10. Blob Container (memory) --------------------------------
+Write-Step "10/12 - Blob Container ($BlobMemory)"
+
+$blobExists = az storage container exists `
+    --name $BlobMemory `
+    --account-name $StorageAccount `
+    --auth-mode login `
+    --output json 2>$null | ConvertFrom-Json
+if ($blobExists.exists -eq $true) {
+    Write-OK "Blob container '$BlobMemory' already exists"
+} else {
+    Write-Cmd "az storage container create --name $BlobMemory --account-name $StorageAccount"
+    if (-not $DryRun) {
+        az storage container create `
+            --name $BlobMemory `
+            --account-name $StorageAccount `
+            --auth-mode login `
+            --output none
+        if ($LASTEXITCODE -ne 0) { throw "Failed to create blob container '$BlobMemory'" }
+    }
+    Write-OK "Created blob container '$BlobMemory'"
+}
+
+# -- 11. Blob Container (skills) --------------------------------
+Write-Step "11/12 - Blob Container ($BlobSkills)"
+
+$blobExists = az storage container exists `
+    --name $BlobSkills `
+    --account-name $StorageAccount `
+    --auth-mode login `
+    --output json 2>$null | ConvertFrom-Json
+if ($blobExists.exists -eq $true) {
+    Write-OK "Blob container '$BlobSkills' already exists"
+} else {
+    Write-Cmd "az storage container create --name $BlobSkills --account-name $StorageAccount"
+    if (-not $DryRun) {
+        az storage container create `
+            --name $BlobSkills `
+            --account-name $StorageAccount `
+            --auth-mode login `
+            --output none
+        if ($LASTEXITCODE -ne 0) { throw "Failed to create blob container '$BlobSkills'" }
+    }
+    Write-OK "Created blob container '$BlobSkills'"
+}
+
+# -- 12. Retrieve Keys -----------------------------------------
+Write-Step "12/12 - Connection Details"
 
 if (-not $DryRun) {
     $keys = az cosmosdb keys list `
@@ -320,7 +392,10 @@ if (-not $DryRun) {
         --output tsv 2>$null
 
     Write-Host "  AZURE_STORAGE_CONNECTION_STRING=$storageConn" -ForegroundColor White
-    Write-Host "  AZURE_STORAGE_CONTAINER=$BlobContainer" -ForegroundColor White
+    Write-Host "  AZURE_BLOB_CONVERSATIONS_CONTAINER=$BlobConversations" -ForegroundColor White
+    Write-Host "  AZURE_BLOB_ATTACHMENTS_CONTAINER=$BlobAttachments" -ForegroundColor White
+    Write-Host "  AZURE_BLOB_MEMORY_CONTAINER=$BlobMemory" -ForegroundColor White
+    Write-Host "  AZURE_BLOB_SKILLS_CONTAINER=$BlobSkills" -ForegroundColor White
     Write-Host ""
 } else {
     Write-Warn "DryRun - skipping key retrieval"

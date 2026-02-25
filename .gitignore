@@ -64,3 +64,14 @@ uv.lock
 *.bak
 *.png
 response_*.json
+
+# ── Deployment results / diagnostics ─────────────────────────
+*_result.txt
+*_result*.txt
+fetchlog*.txt
+frontend/frontend-deploy.zip
+deploy/quick_test.txt
+deploy/test_run.txt
+deploy/smoketest_result.txt
+deploy/test_data_creation_results.txt
+deploy/validate_result.txt

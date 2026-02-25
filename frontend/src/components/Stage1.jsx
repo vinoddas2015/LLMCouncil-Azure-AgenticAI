@@ -1,9 +1,18 @@
-import { useState } from 'react';
+import { useState, memo, useMemo } from 'react';
 import SciMarkdown from './SciMarkdown';
 import './Stage1.css';
 
-export default function Stage1({ responses }) {
+/** Extract short model name from "provider/model" */
+const shortName = (model) => model.split('/')[1] || model;
+
+const Stage1 = memo(function Stage1({ responses }) {
   const [activeTab, setActiveTab] = useState(0);
+
+  // Memoize tab labels so they don't recalculate on every render
+  const tabLabels = useMemo(
+    () => responses?.map((r) => shortName(r.model)) ?? [],
+    [responses]
+  );
 
   if (!responses || responses.length === 0) {
     return null;
@@ -14,13 +23,13 @@ export default function Stage1({ responses }) {
       <h3 className="stage-title">Stage 1: Individual Responses</h3>
 
       <div className="tabs">
-        {responses.map((resp, index) => (
+        {tabLabels.map((label, index) => (
           <button
             key={index}
             className={`tab ${activeTab === index ? 'active' : ''}`}
             onClick={() => setActiveTab(index)}
           >
-            {resp.model.split('/')[1] || resp.model}
+            {label}
           </button>
         ))}
       </div>
@@ -33,4 +42,6 @@ export default function Stage1({ responses }) {
       </div>
     </div>
   );
-}
+});
+
+export default Stage1;

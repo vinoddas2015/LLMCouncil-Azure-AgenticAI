@@ -1,14 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense, memo } from 'react';
 import SciMarkdown from './SciMarkdown';
-import Stage1 from './Stage1';
-import Stage2 from './Stage2';
-import Stage3 from './Stage3';
+const Stage1 = lazy(() => import('./Stage1'));
+const Stage2 = lazy(() => import('./Stage2'));
+const Stage3 = lazy(() => import('./Stage3'));
 import InfographicPanel from './InfographicPanel';
 import TokenBurndown from './TokenBurndown';
 import LearnUnlearn from './LearnUnlearn';
 import EnhancePrompt from './EnhancePrompt';
 import { api } from '../api';
 import './ChatInterface.css';
+
+/** Lightweight placeholder shown while a lazy-loaded Stage chunk is fetched. */
+const StageFallback = () => <div className="stage-loading-placeholder" aria-busy="true">Loading…</div>;
 
 // Allowed file types and their MIME types
 const ALLOWED_FILE_TYPES = {
@@ -325,7 +328,9 @@ export default function ChatInterface({
                       </span>
                     </div>
                   )}
-                  {msg.stage1 && <Stage1 responses={msg.stage1} />}
+                  <Suspense fallback={<StageFallback />}>
+                    {msg.stage1 && <Stage1 responses={msg.stage1} />}
+                  </Suspense>
 
                   {/* Stage 2 */}
                   {msg.loading?.stage2 && (
@@ -338,14 +343,16 @@ export default function ChatInterface({
                       </span>
                     </div>
                   )}
-                  {msg.stage2 && (
-                    <Stage2
-                      rankings={msg.stage2}
-                      labelToModel={msg.metadata?.label_to_model}
-                      aggregateRankings={msg.metadata?.aggregate_rankings}
-                      groundingScores={msg.metadata?.grounding_scores}
-                    />
-                  )}
+                  <Suspense fallback={<StageFallback />}>
+                    {msg.stage2 && (
+                      <Stage2
+                        rankings={msg.stage2}
+                        labelToModel={msg.metadata?.label_to_model}
+                        aggregateRankings={msg.metadata?.aggregate_rankings}
+                        groundingScores={msg.metadata?.grounding_scores}
+                      />
+                    )}
+                  </Suspense>
 
                   {/* Stage 3 */}
                   {msg.loading?.stage3 && (
@@ -354,7 +361,9 @@ export default function ChatInterface({
                       <span>Running Stage 3: Final synthesis...</span>
                     </div>
                   )}
-                  {msg.stage3 && <Stage3 finalResponse={msg.stage3} evidence={msg.evidence || msg.metadata?.evidence} />}
+                  <Suspense fallback={<StageFallback />}>
+                    {msg.stage3 && <Stage3 finalResponse={msg.stage3} evidence={msg.evidence || msg.metadata?.evidence} />}
+                  </Suspense>
 
                   {/* Infographic Panel */}
                   {(msg.infographic || msg.metadata?.infographic) && <InfographicPanel data={msg.infographic || msg.metadata?.infographic} />}

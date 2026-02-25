@@ -1,17 +1,11 @@
 FROM python:3.12-slim
 
-ARG OPENROUTER_API_KEY
-ARG API_BASE_URL
-ARG S3_BUCKET_NAME
-
+# ── Azure App Service uses WEBSITES_PORT or defaults to 8000 ──
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PORT=80 \
-    WEB_CONCURRENCY=4 \
-    OPENROUTER_API_KEY=${OPENROUTER_API_KEY} \
-    OPENROUTER_API_URL=${API_BASE_URL} \
-    S3_BUCKET_NAME=${S3_BUCKET_NAME}
+    PORT=8000 \
+    WEB_CONCURRENCY=4
 
 WORKDIR /app
 
@@ -22,9 +16,10 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 # Copy backend application code
 COPY backend/ ./backend/
 
-# Ensure local storage path exists
-RUN mkdir -p /app/data/conversations
+# Ensure local storage path exists (file-based fallback)
+RUN mkdir -p /app/data/conversations /app/data/memory /app/data/skills
 
-EXPOSE 80
+EXPOSE 8000
 
+# All secrets are injected via App Service Application Settings (env vars)
 CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT} --workers ${WEB_CONCURRENCY}"]
