@@ -6,8 +6,16 @@ Provides a pluggable storage backend for the council's 3-tier memory system
 requires zero infrastructure; swap in Redis / CosmosDB / PostgreSQL
 via the abstract base class for production deployments.
 
+Per-user isolation:
+    All memory operations are scoped to the current user via a ContextVar.
+    Call ``set_memory_user(user_id)`` before any memory operation to set
+    the active user.  Backends automatically namespace data by user_id.
+
+    - Local JSON: ``data/memory/{user_hash}/{collection}/{key}.json``
+    - Cosmos DB:  ``_user_id`` field on every document, filtered in queries
+
 Directory layout (local backend):
-    data/memory/
+    data/memory/{user_hash}/
         semantic/   ← domain knowledge entries
         episodic/   ← conversation-level decision logs
         procedural/ ← workflow patterns & learned procedures
@@ -16,18 +24,41 @@ Directory layout (local backend):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import uuid
 import math
-import hashlib
 import re
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 MEMORY_DIR = os.path.join("data", "memory")
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  Per-user scoping via ContextVar                                    ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+_current_memory_user: ContextVar[str] = ContextVar("memory_user", default="shared")
+
+
+def set_memory_user(user_id: str) -> None:
+    """Set the active user for all subsequent memory operations in this async context."""
+    _current_memory_user.set(user_id)
+
+
+def get_memory_user() -> str:
+    """Return the current memory user (defaults to 'shared')."""
+    return _current_memory_user.get()
+
+
+def _user_hash(user_id: str) -> str:
+    """Generate a short, filesystem-safe hash from a user_id."""
+    sanitised = user_id.lower().strip()
+    return hashlib.md5(sanitised.encode()).hexdigest()[:10]
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -65,14 +96,15 @@ class MemoryStoreBackend(ABC):
 class LocalJSONBackend(MemoryStoreBackend):
     """
     Stores each document as an individual JSON file:
-        {MEMORY_DIR}/{collection}/{key}.json
+        {MEMORY_DIR}/{user_hash}/{collection}/{key}.json
 
     A lightweight TF-IDF-ish inverted index is maintained in memory for search.
     Suitable for single-node dev / POC; swap for a managed store in production to the respective cloud env.
     """
 
-    def __init__(self, base_dir: str = MEMORY_DIR):
-        self._base = base_dir
+    def __init__(self, base_dir: str = MEMORY_DIR, user_id: str = "shared"):
+        self._user_id = user_id
+        self._base = os.path.join(base_dir, _user_hash(user_id))
         self._index: Dict[str, Dict[str, Dict[str, float]]] = {}  # collection -> {term -> {key -> score}}
         self._ensure_dirs()
         self._rebuild_index()
@@ -209,10 +241,12 @@ class CosmosDBBackend(MemoryStoreBackend):
 
     Container : configurable (default 'memory')
     Partition : /collection  (semantic | episodic | procedural)
-    Document  : {"id": key, "collection": collection, ...doc fields}
+    Document  : {"id": key, "collection": collection, "_user_id": ..., ...doc fields}
+
+    All operations are scoped to a specific user_id for per-user isolation.
     """
 
-    def __init__(self, endpoint: str, key: str, database: str, container_name: str = "memory"):
+    def __init__(self, endpoint: str, key: str, database: str, container_name: str = "memory", user_id: str = "shared"):
         from azure.cosmos import CosmosClient, PartitionKey
         self._client = CosmosClient(endpoint, credential=key)
         db = self._client.create_database_if_not_exists(id=database)
@@ -221,41 +255,63 @@ class CosmosDBBackend(MemoryStoreBackend):
             partition_key=PartitionKey(path="/collection"),
             offer_throughput=400,
         )
+        self._user_id = user_id
+        self._key_prefix = _user_hash(user_id)
+
+    def _user_key(self, key: str) -> str:
+        """Prefix a document key with the user hash for namespace isolation."""
+        if key.startswith(f"{self._key_prefix}::"):
+            return key  # already prefixed
+        return f"{self._key_prefix}::{key}"
+
+    def _strip_prefix(self, key: str) -> str:
+        """Remove the user hash prefix from a key."""
+        prefix = f"{self._key_prefix}::"
+        return key[len(prefix):] if key.startswith(prefix) else key
 
     def put(self, collection: str, key: str, doc: Dict[str, Any]) -> None:
         item = dict(doc)
-        item["id"] = key
+        item["id"] = self._user_key(key)
         item["collection"] = collection
+        item["_user_id"] = self._user_id
         self._container.upsert_item(item)
 
     def get(self, collection: str, key: str) -> Optional[Dict[str, Any]]:
         try:
-            item = self._container.read_item(item=key, partition_key=collection)
+            item = self._container.read_item(item=self._user_key(key), partition_key=collection)
             for k in ("_rid", "_self", "_etag", "_attachments", "_ts"):
                 item.pop(k, None)
+            # Restore original key (without prefix) for callers
+            item["id"] = self._strip_prefix(item.get("id", key))
             return item
         except Exception:
             return None
 
     def delete(self, collection: str, key: str) -> bool:
         try:
-            self._container.delete_item(item=key, partition_key=collection)
+            self._container.delete_item(item=self._user_key(key), partition_key=collection)
             return True
         except Exception:
             return False
 
     def list_keys(self, collection: str) -> List[str]:
-        query = "SELECT c.id FROM c WHERE c.collection = @coll"
-        params = [{"name": "@coll", "value": collection}]
+        query = "SELECT c.id FROM c WHERE c.collection = @coll AND c._user_id = @uid"
+        params = [
+            {"name": "@coll", "value": collection},
+            {"name": "@uid", "value": self._user_id},
+        ]
         items = list(self._container.query_items(
             query=query, parameters=params, enable_cross_partition_query=False,
         ))
-        return [item["id"] for item in items]
+        return [self._strip_prefix(item["id"]) for item in items]
 
     def query(self, collection: str, filters: Dict[str, Any],
               limit: int = 50) -> List[Dict[str, Any]]:
-        conditions = ["c.collection = @coll"]
-        params: list = [{"name": "@coll", "value": collection}]
+        conditions = ["c.collection = @coll", "c._user_id = @uid"]
+        params: list = [
+            {"name": "@coll", "value": collection},
+            {"name": "@uid", "value": self._user_id},
+        ]
         idx = 0
         for fk, fv in filters.items():
             pname = f"@f{idx}"
@@ -269,6 +325,7 @@ class CosmosDBBackend(MemoryStoreBackend):
         for item in items:
             for k in ("_rid", "_self", "_etag", "_attachments", "_ts"):
                 item.pop(k, None)
+            item["id"] = self._strip_prefix(item.get("id", ""))
         return items
 
     def search(self, collection: str, query_text: str,
@@ -276,8 +333,9 @@ class CosmosDBBackend(MemoryStoreBackend):
         """
         Full-text search via Cosmos DB CONTAINS (case-insensitive).
 
-        Searches across a set of common text fields. For production-scale search
-        consider enabling Cosmos DB full-text indexing or Azure AI Search.
+        Searches across a set of common text fields, scoped to the current user.
+        For production-scale search consider enabling Cosmos DB full-text indexing
+        or Azure AI Search.
         """
         terms = [t.lower() for t in re.findall(r"[a-z0-9]{2,}", query_text.lower())]
         if not terms:
@@ -291,48 +349,80 @@ class CosmosDBBackend(MemoryStoreBackend):
         where_clause = " OR ".join(contains_clauses)
         sql = (
             f"SELECT TOP {int(limit)} * FROM c "
-            f"WHERE c.collection = @coll AND ({where_clause})"
+            f"WHERE c.collection = @coll AND c._user_id = @uid AND ({where_clause})"
         )
-        params = [{"name": "@coll", "value": collection}]
+        params = [
+            {"name": "@coll", "value": collection},
+            {"name": "@uid", "value": self._user_id},
+        ]
         items = list(self._container.query_items(
             query=sql, parameters=params, enable_cross_partition_query=False,
         ))
         for item in items:
             for k in ("_rid", "_self", "_etag", "_attachments", "_ts"):
                 item.pop(k, None)
+            item["id"] = self._strip_prefix(item.get("id", ""))
         return items
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
-# ║  Singleton accessor                                                 ║
+# ║  User-scoped backend accessor                                      ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
-_backend_instance: Optional[MemoryStoreBackend] = None
+# Cache: one backend per user_id (avoids re-creating Cosmos clients)
+_backend_cache: Dict[str, MemoryStoreBackend] = {}
+_cosmos_container = None  # shared Cosmos container (lazy-init)
+
+
+def _get_cosmos_container():
+    """Lazy-init a shared Cosmos container reference (one per process)."""
+    global _cosmos_container
+    if _cosmos_container is None:
+        from .config import COSMOS_ENDPOINT, COSMOS_KEY, COSMOS_DATABASE, COSMOS_MEMORY_CONTAINER
+        if COSMOS_ENDPOINT and COSMOS_KEY:
+            from azure.cosmos import CosmosClient, PartitionKey
+            client = CosmosClient(COSMOS_ENDPOINT, credential=COSMOS_KEY)
+            db = client.create_database_if_not_exists(id=COSMOS_DATABASE)
+            _cosmos_container = db.create_container_if_not_exists(
+                id=COSMOS_MEMORY_CONTAINER,
+                partition_key=PartitionKey(path="/collection"),
+                offer_throughput=400,
+            )
+    return _cosmos_container
 
 
 def get_memory_backend() -> MemoryStoreBackend:
-    """Return the active memory store backend (lazy-init).
+    """Return a user-scoped memory store backend.
+
+    Reads the active user from the ``_current_memory_user`` ContextVar
+    (set via ``set_memory_user(user_id)``).
 
     Priority:
       1. Cosmos DB — if COSMOS_ENDPOINT + COSMOS_KEY are set
-      2. Local JSON — file-based fallback for dev
+      2. Local JSON — file-based fallback for dev (per-user directory)
     """
-    global _backend_instance
-    if _backend_instance is None:
-        from .config import COSMOS_ENDPOINT, COSMOS_KEY, COSMOS_DATABASE, COSMOS_MEMORY_CONTAINER
-        if COSMOS_ENDPOINT and COSMOS_KEY:
-            _backend_instance = CosmosDBBackend(
-                endpoint=COSMOS_ENDPOINT,
-                key=COSMOS_KEY,
-                database=COSMOS_DATABASE,
-                container_name=COSMOS_MEMORY_CONTAINER,
-            )
-        else:
-            _backend_instance = LocalJSONBackend()
-    return _backend_instance
+    user_id = get_memory_user()
+
+    if user_id in _backend_cache:
+        return _backend_cache[user_id]
+
+    from .config import COSMOS_ENDPOINT, COSMOS_KEY, COSMOS_DATABASE, COSMOS_MEMORY_CONTAINER
+    if COSMOS_ENDPOINT and COSMOS_KEY:
+        backend = CosmosDBBackend(
+            endpoint=COSMOS_ENDPOINT,
+            key=COSMOS_KEY,
+            database=COSMOS_DATABASE,
+            container_name=COSMOS_MEMORY_CONTAINER,
+            user_id=user_id,
+        )
+    else:
+        backend = LocalJSONBackend(user_id=user_id)
+
+    _backend_cache[user_id] = backend
+    return backend
 
 
 def set_memory_backend(backend: MemoryStoreBackend):
     """Swap the backend at runtime (e.g. for cloud deployment or tests)."""
-    global _backend_instance
-    _backend_instance = backend
+    user_id = get_memory_user()
+    _backend_cache[user_id] = backend

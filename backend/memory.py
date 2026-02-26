@@ -41,7 +41,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from .memory_store import get_memory_backend
+from .memory_store import get_memory_backend, set_memory_user, get_memory_user
 
 logger = logging.getLogger("llm_council.memory")
 

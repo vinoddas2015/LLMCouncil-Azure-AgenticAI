@@ -5,6 +5,11 @@ Stores skill execution results, citation caches, per-skill health metrics,
 and query-skill affinity data.  Mirrors the architecture of memory_store.py
 (ABC + local fallback + Cosmos DB backend).
 
+Per-user isolation:
+    Uses the same ``_current_memory_user`` ContextVar from memory_store
+    to scope all skill data to the current user.  Local backend stores
+    under ``data/skills/{user_hash}/``, Cosmos DB adds ``_user_id`` field.
+
 Container: ``skills`` in the ``llm-council`` database.
 Partition key: ``/skill_name``  (one logical partition per skill source).
 
@@ -41,6 +46,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from .memory_store import get_memory_user, _user_hash
 
 logger = logging.getLogger("skills_store")
 
@@ -130,9 +137,9 @@ class SkillsStoreBackend(ABC):
 
 class LocalSkillsBackend(SkillsStoreBackend):
     """
-    File-based skills store.
+    File-based skills store, scoped per user.
     Layout::
-        data/skills/
+        data/skills/{user_hash}/
             executions/{skill_name}/{id}.json
             health/{skill_name}.json
             citations/{url_hash}.json
@@ -140,8 +147,9 @@ class LocalSkillsBackend(SkillsStoreBackend):
             runs/{run_id}.json
     """
 
-    def __init__(self, base_dir: str = SKILLS_DATA_DIR):
-        self._base = base_dir
+    def __init__(self, base_dir: str = SKILLS_DATA_DIR, user_id: str = "shared"):
+        self._user_id = user_id
+        self._base = os.path.join(base_dir, _user_hash(user_id))
         self._ensure_dirs()
 
     def _ensure_dirs(self):
@@ -299,11 +307,12 @@ class LocalSkillsBackend(SkillsStoreBackend):
 
 class CosmosSkillsBackend(SkillsStoreBackend):
     """
-    Azure Cosmos DB backend for the skills container.
+    Azure Cosmos DB backend for the skills container, scoped per user.
 
     Partition key: ``/skill_name`` -- each skill source gets its own
     logical partition for efficient per-skill queries.
 
+    All documents include ``_user_id`` for per-user data isolation.
     Full-run bundles use ``skill_name = "__run__"`` as a synthetic partition.
     """
 
@@ -315,6 +324,7 @@ class CosmosSkillsBackend(SkillsStoreBackend):
         key: str,
         database: str = "llm-council",
         container_name: str = "skills",
+        user_id: str = "shared",
     ):
         from azure.cosmos import CosmosClient, PartitionKey
 
@@ -324,6 +334,18 @@ class CosmosSkillsBackend(SkillsStoreBackend):
             id=container_name,
             partition_key=PartitionKey(path="/skill_name"),
         )
+        self._user_id = user_id
+        self._key_prefix = _user_hash(user_id)
+
+    def _user_key(self, key: str) -> str:
+        """Prefix a document key with user hash for namespace isolation."""
+        if key.startswith(f"{self._key_prefix}::"):
+            return key
+        return f"{self._key_prefix}::{key}"
+
+    def _strip_prefix(self, key: str) -> str:
+        prefix = f"{self._key_prefix}::"
+        return key[len(prefix):] if key.startswith(prefix) else key
 
     def _strip(self, item: dict) -> dict:
         for k in self._SYSTEM_KEYS:
@@ -337,14 +359,15 @@ class CosmosSkillsBackend(SkillsStoreBackend):
     # -- Executions --------------------------------------------------
 
     def save_execution(self, skill_name: str, doc: Dict[str, Any]) -> str:
-        doc_id = doc.get("id") or str(uuid.uuid4())
+        raw_id = doc.get("id") or str(uuid.uuid4())
         item = dict(doc)
-        item["id"] = doc_id
+        item["id"] = self._user_key(raw_id)
         item["skill_name"] = skill_name
         item["type"] = "execution"
+        item["_user_id"] = self._user_id
         item.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
         self._container.upsert_item(item)
-        return doc_id
+        return raw_id
 
     def get_recent_executions(
         self, skill_name: str, limit: int = 20
@@ -352,42 +375,55 @@ class CosmosSkillsBackend(SkillsStoreBackend):
         sql = (
             f"SELECT TOP {int(limit)} * FROM c "
             f"WHERE c.skill_name = @sk AND c.type = 'execution' "
+            f"AND c._user_id = @uid "
             f"ORDER BY c.timestamp DESC"
         )
-        params = [{"name": "@sk", "value": skill_name}]
+        params = [
+            {"name": "@sk", "value": skill_name},
+            {"name": "@uid", "value": self._user_id},
+        ]
         items = list(self._container.query_items(
             query=sql,
             parameters=params,
             enable_cross_partition_query=False,
         ))
+        for i in items:
+            i["id"] = self._strip_prefix(i.get("id", ""))
         return [self._strip(i) for i in items]
 
     # -- Health ------------------------------------------------------
 
     def update_health(self, skill_name: str, metrics: Dict[str, Any]) -> None:
-        doc_id = f"health-{skill_name.replace('/', '_').replace(' ', '_').lower()}"
+        raw_id = f"health-{skill_name.replace('/', '_').replace(' ', '_').lower()}"
         item = dict(metrics)
-        item["id"] = doc_id
+        item["id"] = self._user_key(raw_id)
         item["skill_name"] = skill_name
         item["type"] = "health"
+        item["_user_id"] = self._user_id
         item["updated_at"] = datetime.now(timezone.utc).isoformat()
         self._container.upsert_item(item)
 
     def get_health(self, skill_name: str) -> Optional[Dict[str, Any]]:
-        doc_id = f"health-{skill_name.replace('/', '_').replace(' ', '_').lower()}"
+        raw_id = f"health-{skill_name.replace('/', '_').replace(' ', '_').lower()}"
         try:
-            item = self._container.read_item(item=doc_id, partition_key=skill_name)
+            item = self._container.read_item(
+                item=self._user_key(raw_id), partition_key=skill_name
+            )
+            item["id"] = self._strip_prefix(item.get("id", ""))
             return self._strip(item)
         except Exception:
             return None
 
     def get_all_health(self) -> List[Dict[str, Any]]:
-        sql = "SELECT * FROM c WHERE c.type = 'health'"
+        sql = "SELECT * FROM c WHERE c.type = 'health' AND c._user_id = @uid"
+        params = [{"name": "@uid", "value": self._user_id}]
         items = list(self._container.query_items(
             query=sql,
-            parameters=[],
+            parameters=params,
             enable_cross_partition_query=True,
         ))
+        for i in items:
+            i["id"] = self._strip_prefix(i.get("id", ""))
         return [self._strip(i) for i in items]
 
     # -- Citation cache ----------------------------------------------
@@ -398,32 +434,42 @@ class CosmosSkillsBackend(SkillsStoreBackend):
             return
         url_hash = self._url_hash(url)
         item = dict(citation)
-        item["id"] = f"cite-{url_hash}"
+        item["id"] = self._user_key(f"cite-{url_hash}")
         item["skill_name"] = skill_name
         item["type"] = "citation"
         item["url_hash"] = url_hash
+        item["_user_id"] = self._user_id
         item["cached_at"] = datetime.now(timezone.utc).isoformat()
         self._container.upsert_item(item)
 
     def get_cached_citation(self, url: str) -> Optional[Dict[str, Any]]:
         url_hash = self._url_hash(url)
-        doc_id = f"cite-{url_hash}"
-        # Citation could be in any skill partition, so cross-partition query
-        sql = "SELECT * FROM c WHERE c.id = @id AND c.type = 'citation'"
-        params = [{"name": "@id", "value": doc_id}]
+        doc_id = self._user_key(f"cite-{url_hash}")
+        sql = (
+            "SELECT * FROM c WHERE c.id = @id "
+            "AND c.type = 'citation' AND c._user_id = @uid"
+        )
+        params = [
+            {"name": "@id", "value": doc_id},
+            {"name": "@uid", "value": self._user_id},
+        ]
         items = list(self._container.query_items(
             query=sql,
             parameters=params,
             enable_cross_partition_query=True,
         ))
-        return self._strip(items[0]) if items else None
+        if items:
+            items[0]["id"] = self._strip_prefix(items[0].get("id", ""))
+            return self._strip(items[0])
+        return None
 
     # -- Affinity ----------------------------------------------------
 
     def record_affinity(
         self, skill_name: str, keywords: List[str], hit_count: int
     ) -> None:
-        doc_id = f"affinity-{skill_name.replace('/', '_').replace(' ', '_').lower()}"
+        raw_id = f"affinity-{skill_name.replace('/', '_').replace(' ', '_').lower()}"
+        doc_id = self._user_key(raw_id)
         # Read-modify-write (upsert pattern)
         try:
             existing = self._container.read_item(item=doc_id, partition_key=skill_name)
@@ -433,8 +479,10 @@ class CosmosSkillsBackend(SkillsStoreBackend):
                 "id": doc_id,
                 "skill_name": skill_name,
                 "type": "affinity",
+                "_user_id": self._user_id,
                 "keyword_hits": {},
             }
+        existing["_user_id"] = self._user_id
         kw_hits = existing.get("keyword_hits", {})
         for kw in keywords:
             kw_lower = kw.lower()
@@ -446,10 +494,11 @@ class CosmosSkillsBackend(SkillsStoreBackend):
     def get_top_skills_for_keywords(
         self, keywords: List[str], limit: int = 5
     ) -> List[Dict[str, Any]]:
-        sql = "SELECT * FROM c WHERE c.type = 'affinity'"
+        sql = "SELECT * FROM c WHERE c.type = 'affinity' AND c._user_id = @uid"
+        params = [{"name": "@uid", "value": self._user_id}]
         items = list(self._container.query_items(
             query=sql,
-            parameters=[],
+            parameters=params,
             enable_cross_partition_query=True,
         ))
         kw_set = {k.lower() for k in keywords}
@@ -468,18 +517,22 @@ class CosmosSkillsBackend(SkillsStoreBackend):
     # -- Full run bundles --------------------------------------------
 
     def save_full_run(self, run_bundle: Dict[str, Any]) -> str:
-        run_id = run_bundle.get("id") or str(uuid.uuid4())
+        raw_id = run_bundle.get("id") or str(uuid.uuid4())
         item = dict(run_bundle)
-        item["id"] = run_id
+        item["id"] = self._user_key(raw_id)
         item["skill_name"] = "__run__"   # synthetic partition for run bundles
         item["type"] = "full_run"
+        item["_user_id"] = self._user_id
         item.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
         self._container.upsert_item(item)
-        return run_id
+        return raw_id
 
     def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         try:
-            item = self._container.read_item(item=run_id, partition_key="__run__")
+            item = self._container.read_item(
+                item=self._user_key(run_id), partition_key="__run__"
+            )
+            item["id"] = self._strip_prefix(item.get("id", ""))
             return self._strip(item)
         except Exception:
             return None
@@ -489,39 +542,48 @@ class CosmosSkillsBackend(SkillsStoreBackend):
 # Singleton accessor
 # =====================================================================
 
-_skills_store_instance: Optional[SkillsStoreBackend] = None
+_skills_cache: Dict[str, SkillsStoreBackend] = {}
 
 
 def get_skills_store() -> SkillsStoreBackend:
-    """Return the active skills store backend (lazy-init).
+    """Return the active skills store backend for the current user (lazy-init).
+
+    Uses the same ``ContextVar`` as the memory store so that
+    ``set_memory_user(user_id)`` in the request handler scopes both
+    memory and skills stores automatically.
 
     Priority:
       1. Cosmos DB -- if COSMOS_ENDPOINT + COSMOS_KEY are set
       2. Local JSON -- file-based fallback for dev
     """
-    global _skills_store_instance
-    if _skills_store_instance is None:
-        from .config import (
-            COSMOS_ENDPOINT,
-            COSMOS_KEY,
-            COSMOS_DATABASE,
-            COSMOS_SKILLS_CONTAINER,
+    user_id = get_memory_user()
+    if user_id in _skills_cache:
+        return _skills_cache[user_id]
+
+    from .config import (
+        COSMOS_ENDPOINT,
+        COSMOS_KEY,
+        COSMOS_DATABASE,
+        COSMOS_SKILLS_CONTAINER,
+    )
+    if COSMOS_ENDPOINT and COSMOS_KEY:
+        logger.info("[SkillsStore] Using Cosmos DB backend (user=%s)", user_id)
+        backend: SkillsStoreBackend = CosmosSkillsBackend(
+            endpoint=COSMOS_ENDPOINT,
+            key=COSMOS_KEY,
+            database=COSMOS_DATABASE,
+            container_name=COSMOS_SKILLS_CONTAINER,
+            user_id=user_id,
         )
-        if COSMOS_ENDPOINT and COSMOS_KEY:
-            logger.info("[SkillsStore] Using Cosmos DB backend")
-            _skills_store_instance = CosmosSkillsBackend(
-                endpoint=COSMOS_ENDPOINT,
-                key=COSMOS_KEY,
-                database=COSMOS_DATABASE,
-                container_name=COSMOS_SKILLS_CONTAINER,
-            )
-        else:
-            logger.info("[SkillsStore] Using local JSON backend")
-            _skills_store_instance = LocalSkillsBackend()
-    return _skills_store_instance
+    else:
+        logger.info("[SkillsStore] Using local JSON backend (user=%s)", user_id)
+        backend = LocalSkillsBackend(user_id=user_id)
+
+    _skills_cache[user_id] = backend
+    return backend
 
 
 def set_skills_store(backend: SkillsStoreBackend):
     """Swap the backend at runtime (for tests or hot-swap)."""
-    global _skills_store_instance
-    _skills_store_instance = backend
+    user_id = get_memory_user()
+    _skills_cache[user_id] = backend
