@@ -68,7 +68,9 @@ $filesToCopy = @(
     "backend\security.py"
     "backend\token_tracking.py"
     "backend\auth.py"
+    "backend\health_probe.py"
     "run_server.py"
+    "startup.sh"
 )
 
 foreach ($file in $filesToCopy) {
@@ -88,10 +90,18 @@ foreach ($file in $filesToCopy) {
 $startupCmd = "python run_server.py"
 $startupCmd | Out-File -FilePath (Join-Path $stagingDir "startup.txt") -Encoding ascii -NoNewline
 
-# Create ZIP
+# Create ZIP with FORWARD SLASHES (critical: Linux App Service treats backslashes as literal filename chars)
 Write-Host "Compressing to $zipPath ..."
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory($stagingDir, $zipPath)
+$zip = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+$stagingDirFull = (Resolve-Path $stagingDir).Path.TrimEnd('\') + '\'
+Get-ChildItem -Path $stagingDir -Recurse -File | ForEach-Object {
+    $relativePath = $_.FullName.Substring($stagingDirFull.Length).Replace('\', '/')
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $relativePath) | Out-Null
+    Write-Host "  zip: $relativePath"
+}
+$zip.Dispose()
 $zipSize = (Get-Item $zipPath).Length
 Write-Host "ZIP created: $([math]::Round($zipSize / 1KB, 1)) KB"
 

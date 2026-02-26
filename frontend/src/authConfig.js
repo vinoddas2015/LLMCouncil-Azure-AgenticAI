@@ -20,7 +20,7 @@ export const msalConfig = {
   auth: {
     clientId: CLIENT_ID,
     authority: `https://login.microsoftonline.com/${TENANT_ID}`,
-    redirectUri: window.location.origin, // http://localhost:5173 or https://llmcouncil-frontend.azurewebsites.net
+    redirectUri: window.location.origin, // http://localhost:5173, https://llmcouncil-frontend.azurewebsites.net, or https://llmcouncil-agents.ai
     postLogoutRedirectUri: window.location.origin,
     navigateToLoginRequestUrl: true,
   },

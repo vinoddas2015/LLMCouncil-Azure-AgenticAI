@@ -106,6 +106,10 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - Metadata includes: label_to_model mapping and aggregate_rankings
 - SSE pipeline includes `ca_validation_complete` event (with enhanced grounding_scores) after Stage 3 and `agent_team_complete` event after cost_summary
 - **Entra ID SSO**: when `ENTRA_SSO_ENABLED=true`, all endpoints require a valid JWT Bearer token via `backend/auth.py`
+- **Health Probe Agent**: periodic background health checks via `backend/health_probe.py`
+  - Endpoints: `/api/health/deep`, `/api/health/history`, `/api/health/failures`
+  - Background task runs every 5 minutes, logs warnings for degraded/critical status
+  - Checks: Cosmos DB, API key expiry, memory store, model sync, resilience subsystem
 
 **`auth.py`** — Entra ID JWT Validation
 - Downloads JWKS from `https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys`
@@ -140,7 +144,7 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - Configures `@azure/msal-browser` PublicClientApplication
 - Authority: `https://login.microsoftonline.com/{tenantId}`
 - Client ID: `a73fe3b0-6f94-4093-ba33-441d25772636` (App Reg: `llmcouncil-agents`)
-- SPA Redirect URIs: `http://localhost:5173`, `https://llmcouncil-frontend.azurewebsites.net`
+- SPA Redirect URIs: `http://localhost:5173`, `https://llmcouncil-frontend.azurewebsites.net`, `https://llmcouncil-agents.ai`
 - Login scopes: `openid`, `profile`, `email`
 
 **`main.jsx`**
@@ -436,6 +440,32 @@ The entire flow is async/parallel where possible to minimize latency.
 - Sends `user-id: azure-user` header for user identification
 - Backend CORS is `allow_origins=["*"]` (permissive for now)
 
+### Backend Deployment (`deploy/deploy_backend.ps1`)
+
+**Key Files:**
+- `deploy/deploy_backend.ps1` — ZIP deploy via Kudu API with TrustAllCertsPolicy
+- `run_server.py` — Azure App Service entry point (sets PYTHONPATH, starts uvicorn)
+- `startup.sh` — Backup startup script (handles output.tar.gz extraction if Oryx doesn't)
+- `requirements.txt` — Python dependencies (installed by Oryx build)
+
+**Build & Deploy Process:**
+1. Copy backend source + `run_server.py` + `requirements.txt` to staging dir
+2. Create ZIP using .NET `ZipFile.Open()` API with **forward-slash paths** (critical!)
+3. Deploy: POST to Kudu `/api/zipdeploy?isAsync=true`
+4. Oryx build runs: `pip install -r requirements.txt` into `antenv/`, compresses to `output.tar.gz`
+5. Set startup command: `python run_server.py`
+
+**App Settings:**
+- `SCM_DO_BUILD_DURING_DEPLOYMENT=true` (Oryx builds venv from requirements.txt)
+- `WEBSITES_PORT=8000`
+- Startup command: `python run_server.py`
+
+**Critical Gotchas:**
+- **ZIP Path Separators (CRITICAL)**: Both `Compress-Archive` AND `[ZipFile]::CreateFromDirectory()` create entries with Windows backslash separators. On Linux, `backend\main.py` becomes a **single flat filename** (backslash is valid in Linux filenames), not `backend/main.py` in a directory. Must use `[ZipFile]::Open()` with manual entry creation and `.Replace('\', '/')`. This caused recurring `ModuleNotFoundError: No module named 'backend'` crashes.
+- **Oryx CompressDestinationDir**: Oryx sets `CompressDestinationDir=true`, packing the build output into `output.tar.gz` in wwwroot. The container's init script extracts it to `/tmp/{hash}/` before running the startup command.
+- **PYTHONPATH**: `run_server.py` adds its own directory to `sys.path` and `PYTHONPATH` env var. Oryx also sets PYTHONPATH to include the antenv site-packages directory.
+- **Custom startup.sh Pitfall**: Do NOT use `bash startup.sh` as the startup command if `startup.sh` does `cd /home/site/wwwroot` — Oryx extracts files to `/tmp/{hash}/`, not wwwroot. Use `python run_server.py` directly and let Oryx's wrapper handle extraction.
+
 ### Entra ID SSO (Azure Deployment)
 - **Frontend** (`@azure/msal-browser` + `@azure/msal-react`):
   - `authConfig.js` configures MSAL PublicClientApplication
@@ -447,5 +477,5 @@ The entire flow is async/parallel where possible to minimize latency.
   - `get_current_user` FastAPI dependency injected on all API routes when enabled
   - Toggle: `ENTRA_SSO_ENABLED=true/false` env var
 - **App Registration**: `llmcouncil-agents` (Client ID: `a73fe3b0-6f94-4093-ba33-441d25772636`)
-  - SPA Redirect URIs: `http://localhost:5173`, `https://llmcouncil-frontend.azurewebsites.net`
+  - SPA Redirect URIs: `http://localhost:5173`, `https://llmcouncil-frontend.azurewebsites.net`, `https://llmcouncil-agents.ai`
 - **Backend App Settings**: `ENTRA_SSO_ENABLED=true`, `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`

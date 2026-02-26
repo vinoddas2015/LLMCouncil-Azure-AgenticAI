@@ -53,6 +53,9 @@ from .auth import get_authenticated_user_id
 from .config import ENTRA_SSO_ENABLED
 
 
+from .health_probe import health_agent, periodic_health_check
+
+
 def check_token_expiry():
     """Check JWT token expiration on startup."""
     if not OPENROUTER_API_KEY:
@@ -119,7 +122,10 @@ async def lifespan(application):
         logger.warning(f"⚠️  Model sync failed: {e} — starting with default models")
     # Launch periodic sync as a background task
     sync_task = asyncio.create_task(periodic_sync_loop())
+    # Launch health probe agent (checks every 5 minutes)
+    health_task = asyncio.create_task(periodic_health_check(interval_seconds=300))
     yield
+    health_task.cancel()
     sync_task.cancel()
     await close_shared_client()
 
@@ -163,6 +169,7 @@ app.add_middleware(RequestLoggingMiddleware)
 _cors_origins = [
     "http://localhost:5173",
     "https://llmcouncil-frontend.azurewebsites.net",
+    "https://llmcouncil-agents.ai",
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -273,6 +280,24 @@ async def root():
 async def health():
     """Lightweight infra health check endpoint for ALB/ECS."""
     return {"status": "ok"}
+
+
+@app.get("/api/health/deep")
+async def deep_health():
+    """Comprehensive health check — tests all subsystems (DB, API, memory, models, resilience)."""
+    return await health_agent.run_deep_check()
+
+
+@app.get("/api/health/history")
+async def health_history(limit: int = 20):
+    """Get recent health check history."""
+    return {"history": health_agent.get_history(limit=limit)}
+
+
+@app.get("/api/health/failures")
+async def health_failures():
+    """Get subsystems with consecutive failures."""
+    return health_agent.get_failure_report()
 
 
 @app.get("/api/models")

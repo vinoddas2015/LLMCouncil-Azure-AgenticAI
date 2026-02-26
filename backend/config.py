@@ -35,7 +35,7 @@ AVAILABLE_MODELS = [
 # These are available when GOOGLE_API_KEY is set
 GOOGLE_AVAILABLE_MODELS = [
     # ── Gemini 3.x (latest generation) ──
-    {"id": "google/gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro", "description": "Latest Gemini — cutting-edge reasoning & tools", "provider": "google"},
+    {"id": "google/gemini-3-pro-preview", "name": "Gemini 3 Pro", "description": "Latest Gemini — cutting-edge reasoning & tools", "provider": "google"},
     {"id": "google/gemini-3-flash-preview", "name": "Gemini 3 Flash", "description": "Next-gen fast model — multimodal reasoning", "provider": "google"},
     # ── Gemini 2.5 (stable) ──
     {"id": "google/gemini-2.5-pro", "name": "Gemini 2.5 Pro", "description": "Best stable reasoning, 1M context, thinking", "provider": "google"},
@@ -49,7 +49,7 @@ GOOGLE_AVAILABLE_MODELS = [
 # Cross-provider: picks the latest/best from BOTH Bayer + Google.
 # At runtime, model_sync auto-selects from live catalogs instead.
 DEFAULT_COUNCIL_MODELS = [
-    "google/gemini-3.1-pro-preview",               # Google — latest Gemini reasoning
+    "google/gemini-3-pro-preview",                # Google — latest Gemini reasoning
     "claude-sonnet-4.6",                           # Bayer  — Anthropic fast reasoner
     "gpt-5.2",                                     # Bayer  — OpenAI flagship
     "grok-3",                                      # Bayer  — xAI flagship
