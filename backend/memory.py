@@ -35,11 +35,13 @@ ones are boosted.  Users can override this via explicit learn/unlearn.
 
 from __future__ import annotations
 
+import math
 import uuid
 import hashlib
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .memory_store import get_memory_backend, set_memory_user, get_memory_user
 
@@ -734,9 +736,684 @@ class MemoryManager:
         return steps[:10]
 
 
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  User Profile Memory — Behaviour Learning & Relevancy Tracking      ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+# Domain keywords for auto-classification
+_DOMAIN_MAP = {
+    "pharma": [
+        "drug", "compound", "molecule", "clinical", "trial", "fda", "ema",
+        "dosage", "pharmacokinetic", "pharmacodynamic", "pk/pd", "adme",
+        "toxicology", "oncology", "cardiology", "neurology", "immunology",
+        "antibody", "vaccine", "biosimilar", "formulation", "excipient",
+    ],
+    "chemistry": [
+        "synthesis", "reaction", "smiles", "inchi", "chemical", "catalyst",
+        "reagent", "yield", "stereochemistry", "chromatography", "nmr",
+        "mass spec", "ic50", "ec50", "ki", "kd", "binding affinity",
+    ],
+    "regulatory": [
+        "regulatory", "compliance", "submission", "ind", "nda", "bla",
+        "ectd", "ich", "gmp", "gcp", "glp", "audit", "inspection",
+    ],
+    "market_access": [
+        "market access", "payer", "reimbursement", "hta", "nice", "iqwig",
+        "pricing", "value proposition", "competitive", "positioning",
+    ],
+    "data_science": [
+        "machine learning", "deep learning", "neural network", "model",
+        "dataset", "pipeline", "api", "python", "statistics", "bayesian",
+        "regression", "classification", "nlp", "llm", "transformer",
+    ],
+}
+
+_QUESTION_TYPE_MAP = {
+    "how_to": ["how to", "how do", "steps to", "process for", "procedure", "guide"],
+    "comparison": ["compare", "versus", "vs", "difference between", "which is better"],
+    "factual": ["what is", "what are", "define", "explain", "describe"],
+    "analysis": ["analyze", "evaluate", "assess", "review", "critique"],
+    "recommendation": ["recommend", "suggest", "best practice", "should i", "advise"],
+}
+
+
+class UserProfileMemory:
+    """
+    Tracks per-user query behaviour, relevancy violations, domain affinity,
+    and grounding performance across sessions.
+
+    Learning signals:
+      • Domain classification → repeated domains boost affinity weights.
+      • Question type tracking → recurring patterns become procedural hints.
+      • Relevancy violations → high violation rate triggers chairman warnings.
+      • Grounding scores → running mean per domain for adaptive thresholds.
+
+    Persistence:
+      Stored in the episodic collection with ``type: "user_profile"`` so it
+      co-locates with conversation data and benefits from Cosmos partition.
+    """
+
+    COLLECTION = "episodic"
+
+    # ── Query Classification ─────────────────────────────────────────
+
+    @staticmethod
+    def classify_query(query: str) -> Dict[str, Any]:
+        """
+        Auto-classify a user query into domain, question_type, and complexity.
+
+        Returns::
+            {
+                "domain": str,            # top-scoring domain from _DOMAIN_MAP
+                "domain_scores": dict,    # all domain hit counts
+                "question_type": str,     # from _QUESTION_TYPE_MAP
+                "complexity": str,        # "simple" | "moderate" | "complex"
+                "word_count": int,
+            }
+        """
+        q_lower = query.lower()
+        words = query.split()
+        word_count = len(words)
+
+        # Domain scoring
+        domain_scores: Dict[str, int] = {}
+        for domain, keywords in _DOMAIN_MAP.items():
+            score = sum(1 for kw in keywords if kw in q_lower)
+            if score > 0:
+                domain_scores[domain] = score
+        top_domain = max(domain_scores, key=domain_scores.get) if domain_scores else "general"
+
+        # Question type
+        question_type = "general"
+        for qtype, triggers in _QUESTION_TYPE_MAP.items():
+            if any(t in q_lower for t in triggers):
+                question_type = qtype
+                break
+
+        # Complexity heuristic
+        if word_count < 15:
+            complexity = "simple"
+        elif word_count < 50:
+            complexity = "moderate"
+        else:
+            complexity = "complex"
+
+        return {
+            "domain": top_domain,
+            "domain_scores": domain_scores,
+            "question_type": question_type,
+            "complexity": complexity,
+            "word_count": word_count,
+        }
+
+    # ── Per-Session Interaction Recording ────────────────────────────
+
+    def record_interaction(
+        self,
+        user_id: str,
+        query: str,
+        grounding_score: float,
+        relevancy_violations: List[str],
+        gated_labels: List[str],
+        classification: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Record a single council interaction for the user profile.
+
+        Args:
+            user_id: Scoped user identifier.
+            query: The original user query.
+            grounding_score: Overall council grounding score (0–1).
+            relevancy_violations: Labels that were gated out.
+            gated_labels: Same as relevancy_violations (explicit alias).
+            classification: Pre-computed classify_query() result (optional).
+
+        Returns:
+            The stored interaction document.
+        """
+        backend = get_memory_backend()
+        cls = classification or self.classify_query(query)
+        entry_id = f"upi_{user_id}_{uuid.uuid4().hex[:8]}"
+
+        doc = {
+            "id": entry_id,
+            "type": "user_profile_interaction",
+            "user_id": user_id,
+            "query_preview": query[:200],
+            "domain": cls["domain"],
+            "question_type": cls["question_type"],
+            "complexity": cls["complexity"],
+            "grounding_score": round(grounding_score, 4),
+            "relevancy_violations": relevancy_violations,
+            "gated_labels": gated_labels,
+            "violation_count": len(relevancy_violations),
+            "status": "active",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        backend.put(self.COLLECTION, entry_id, doc)
+        logger.info(
+            f"[UserProfile] Recorded interaction for {user_id}: "
+            f"domain={cls['domain']}, violations={len(relevancy_violations)}"
+        )
+        return doc
+
+    # ── Aggregated User Profile ──────────────────────────────────────
+
+    def get_user_profile(self, user_id: str, limit: int = 50) -> Dict[str, Any]:
+        """
+        Build an aggregated behavioural profile from recent interactions.
+
+        Returns::
+            {
+                "user_id": str,
+                "interaction_count": int,
+                "domain_affinity": {domain: count},
+                "question_patterns": {type: count},
+                "avg_grounding": float,
+                "relevancy_violation_rate": float,     # violations / interactions
+                "total_violations": int,
+                "recent_domains": [str],               # last 5 domains
+                "complexity_distribution": {level: count},
+                "warning_level": str | None,           # "high_violations" if rate > 0.3
+            }
+        """
+        backend = get_memory_backend()
+        all_keys = backend.list_keys(self.COLLECTION)
+        interactions = []
+        for k in all_keys:
+            doc = backend.get(self.COLLECTION, k)
+            if (doc
+                    and doc.get("type") == "user_profile_interaction"
+                    and doc.get("user_id") == user_id
+                    and doc.get("status") == "active"):
+                interactions.append(doc)
+
+        interactions.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        interactions = interactions[:limit]
+
+        if not interactions:
+            return {
+                "user_id": user_id,
+                "interaction_count": 0,
+                "domain_affinity": {},
+                "question_patterns": {},
+                "avg_grounding": 0.0,
+                "relevancy_violation_rate": 0.0,
+                "total_violations": 0,
+                "recent_domains": [],
+                "complexity_distribution": {},
+                "warning_level": None,
+            }
+
+        # Aggregate
+        domain_counts: Dict[str, int] = defaultdict(int)
+        qtype_counts: Dict[str, int] = defaultdict(int)
+        complexity_counts: Dict[str, int] = defaultdict(int)
+        grounding_sum = 0.0
+        total_violations = 0
+        recent_domains: List[str] = []
+
+        for ix in interactions:
+            domain_counts[ix.get("domain", "general")] += 1
+            qtype_counts[ix.get("question_type", "general")] += 1
+            complexity_counts[ix.get("complexity", "moderate")] += 1
+            grounding_sum += ix.get("grounding_score", 0.0)
+            total_violations += ix.get("violation_count", 0)
+            if len(recent_domains) < 5:
+                recent_domains.append(ix.get("domain", "general"))
+
+        n = len(interactions)
+        avg_grounding = grounding_sum / n if n else 0.0
+        violation_rate = total_violations / n if n else 0.0
+
+        # Warning threshold: if >30% of sessions have violations
+        warning_level = "high_violations" if violation_rate > 0.3 else None
+
+        return {
+            "user_id": user_id,
+            "interaction_count": n,
+            "domain_affinity": dict(domain_counts),
+            "question_patterns": dict(qtype_counts),
+            "avg_grounding": round(avg_grounding, 4),
+            "relevancy_violation_rate": round(violation_rate, 4),
+            "total_violations": total_violations,
+            "recent_domains": recent_domains,
+            "complexity_distribution": dict(complexity_counts),
+            "warning_level": warning_level,
+        }
+
+    # ── Prompt-Injectable Context Block ──────────────────────────────
+
+    def format_user_context(self, user_id: str) -> str:
+        """
+        Format the user profile into a text block suitable for chairman
+        prompt injection.  Returns empty string if no meaningful profile.
+        """
+        profile = self.get_user_profile(user_id)
+        if profile["interaction_count"] < 2:
+            return ""
+
+        parts = ["=== USER BEHAVIOUR PROFILE ==="]
+
+        # Domain expertise
+        if profile["domain_affinity"]:
+            top = sorted(profile["domain_affinity"].items(),
+                         key=lambda x: x[1], reverse=True)[:3]
+            domains_str = ", ".join(f"{d} ({c}x)" for d, c in top)
+            parts.append(f"• Domain focus: {domains_str}")
+
+        # Performance
+        parts.append(f"• Avg grounding: {profile['avg_grounding']:.0%}")
+
+        # Relevancy warnings
+        if profile["warning_level"] == "high_violations":
+            parts.append(
+                f"⚠️ HIGH RELEVANCY VIOLATION RATE: {profile['relevancy_violation_rate']:.0%} "
+                f"({profile['total_violations']} violations in {profile['interaction_count']} sessions). "
+                "Apply EXTRA-STRICT relevancy filtering."
+            )
+
+        parts.append("")
+        return "\n".join(parts) + "\n"
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  Experiential Co-Adaptation (ECA) — Memory × Skills Pairing         ║
+# ╠══════════════════════════════════════════════════════════════════════╣
+# ║                                                                      ║
+# ║  Informed by:                                                        ║
+# ║    • arXiv 2602.03837  — Memory & skills adaptation in AI systems    ║
+# ║    • arXiv 2511.00926  — Adaptation in autonomous agents             ║
+# ║    • arXiv 2602.13949v1 — Experiential Reinforcement Learning        ║
+# ║                                                                      ║
+# ║  Mathematical Framework:                                             ║
+# ║    ECA treats (Memory, Skills) as a coupled dynamical system where   ║
+# ║    the reward signal R(t) from skills execution performance feeds    ║
+# ║    back into memory's learning parameters.                           ║
+# ║                                                                      ║
+# ║    R(t) = α·Quality(t) + β·Efficiency(t) + γ·Coverage(t)            ║
+# ║      Quality   = avg citation relevance from reranker scores         ║
+# ║      Efficiency = 1 − (avg_latency / max_latency)                   ║
+# ║      Coverage   = unique_skills_hit / total_skills_available         ║
+# ║                                                                      ║
+# ║    Adaptation functions use exponential moving average (EMA):        ║
+# ║      θ(t+1) = λ·θ(t) + (1−λ)·f(R(t))                              ║
+# ║    where λ ∈ (0,1) is the memory decay factor and f maps reward     ║
+# ║    to parameter adjustments.                                         ║
+# ║                                                                      ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+# ECA hyperparameters
+ECA_ALPHA = 0.4    # weight for citation quality in reward signal
+ECA_BETA = 0.3     # weight for latency efficiency
+ECA_GAMMA = 0.3    # weight for skill coverage
+ECA_LAMBDA = 0.7   # EMA decay factor (higher = more memory inertia)
+ECA_TOTAL_SKILLS = 28  # total available evidence skills
+
+
+class ExperientialCoAdaptation:
+    """
+    Implements the Memory × Skills pairing as a coupled adaptation loop.
+
+    Three adaptation functions:
+      1. ``adapt_prompt``   — adjusts chairman system prompt emphasis based on
+                              user profile + skills performance history.
+      2. ``adapt_rubric``   — adjusts rubric weight distribution based on
+                              historical grounding patterns.
+      3. ``adapt_learning`` — adjusts auto-learn thresholds and memory
+                              confidence decay using experiential reward signals.
+
+    The reward signal R(t) is computed from skills execution data:
+      - Quality:    average reranker relevance score of returned citations
+      - Efficiency: normalised inverse latency (fast skills rewarded)
+      - Coverage:   fraction of skills that returned ≥1 result
+
+    Reward → adaptation mapping uses EMA for smooth temporal evolution.
+    """
+
+    COLLECTION = "episodic"
+
+    # ── Reward Signal Computation ────────────────────────────────────
+
+    @staticmethod
+    def compute_reward(evidence_bundle: Dict[str, Any]) -> Dict[str, float]:
+        """
+        Compute the experiential reward R(t) from a skills execution bundle.
+
+        Args:
+            evidence_bundle: The result from ``run_evidence_skills()``, containing
+                ``citations``, ``skills_used``, ``reranker``, ``benchmark``.
+
+        Returns::
+            {
+                "quality":    float,   # 0–1, avg citation relevance
+                "efficiency": float,   # 0–1, normalised inverse latency
+                "coverage":   float,   # 0–1, skill hit fraction
+                "reward":     float,   # weighted composite R(t)
+            }
+        """
+        if not evidence_bundle:
+            return {"quality": 0.0, "efficiency": 0.0, "coverage": 0.0, "reward": 0.0}
+
+        # Quality: average reranker relevance score
+        reranker = evidence_bundle.get("reranker", {})
+        top_scores = reranker.get("top_scores", [])
+        quality = sum(top_scores) / len(top_scores) if top_scores else 0.0
+        quality = min(1.0, max(0.0, quality))
+
+        # Efficiency: 1 − (avg_latency / max_latency)
+        benchmark = evidence_bundle.get("benchmark", {})
+        latencies = benchmark.get("per_skill_latency_ms", {})
+        if latencies:
+            vals = [v for v in latencies.values() if isinstance(v, (int, float)) and v > 0]
+            if vals:
+                avg_lat = sum(vals) / len(vals)
+                max_lat = max(vals)
+                efficiency = 1.0 - (avg_lat / max_lat) if max_lat > 0 else 0.0
+            else:
+                efficiency = 0.0
+        else:
+            efficiency = 0.0
+        efficiency = min(1.0, max(0.0, efficiency))
+
+        # Coverage: unique_skills_hit / total_available
+        skills_used = evidence_bundle.get("skills_used", [])
+        coverage = len(skills_used) / ECA_TOTAL_SKILLS if ECA_TOTAL_SKILLS > 0 else 0.0
+        coverage = min(1.0, max(0.0, coverage))
+
+        # Composite reward
+        reward = (
+            ECA_ALPHA * quality
+            + ECA_BETA * efficiency
+            + ECA_GAMMA * coverage
+        )
+
+        return {
+            "quality": round(quality, 4),
+            "efficiency": round(efficiency, 4),
+            "coverage": round(coverage, 4),
+            "reward": round(reward, 4),
+        }
+
+    # ── ECA State Persistence ────────────────────────────────────────
+
+    def _get_eca_state(self, user_id: str) -> Dict[str, Any]:
+        """Load or initialise the ECA state for a user."""
+        backend = get_memory_backend()
+        state_id = f"eca_state_{hashlib.md5(user_id.encode()).hexdigest()[:12]}"
+        existing = backend.get(self.COLLECTION, state_id)
+        if existing and existing.get("type") == "eca_state":
+            return existing
+        # Initialise default state
+        return {
+            "id": state_id,
+            "type": "eca_state",
+            "user_id": user_id,
+            # EMA-smoothed parameters
+            "prompt_emphasis": {
+                "evidence_weight": 0.5,  # how much to emphasise evidence in chairman
+                "safety_weight": 0.5,    # emphasis on safety/regulatory language
+                "precision_weight": 0.5, # emphasis on precision vs breadth
+            },
+            "rubric_weights": {
+                "relevancy": 1.0,
+                "faithfulness": 1.0,
+                "completeness": 1.0,
+                "safety": 1.0,
+                "reasoning": 1.0,
+            },
+            "learning_params": {
+                "auto_learn_threshold": 0.75,   # current threshold
+                "confidence_decay": 0.02,        # per-session decay rate
+                "min_confidence": 0.3,           # floor for confidence decay
+            },
+            "reward_history": [],   # last N reward snapshots
+            "ema_reward": 0.5,      # running EMA of reward signal
+            "adaptation_count": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _save_eca_state(self, state: Dict[str, Any]) -> None:
+        """Persist the ECA state."""
+        backend = get_memory_backend()
+        state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        backend.put(self.COLLECTION, state["id"], state)
+
+    # ── Adaptation Function 1: adapt_prompt ──────────────────────────
+
+    def adapt_prompt(
+        self,
+        user_id: str,
+        user_profile: Dict[str, Any],
+        reward: Dict[str, float],
+    ) -> Dict[str, float]:
+        """
+        Adjust chairman prompt emphasis parameters based on user profile
+        and current skills performance.
+
+        Mapping logic:
+          • High quality reward → increase evidence_weight (trust evidence more)
+          • High violation rate → increase safety_weight (stricter filtering)
+          • User domain = pharma/chemistry → increase precision_weight
+
+        Returns the updated prompt_emphasis dict.
+        """
+        state = self._get_eca_state(user_id)
+        pe = state["prompt_emphasis"]
+        r = reward.get("reward", 0.5)
+
+        # EMA update: θ(t+1) = λ·θ(t) + (1−λ)·f(R(t))
+        # f₁: evidence_weight ← R(quality) biased
+        f_evidence = 0.3 + 0.4 * reward.get("quality", 0.5)
+        pe["evidence_weight"] = round(
+            ECA_LAMBDA * pe["evidence_weight"] + (1 - ECA_LAMBDA) * f_evidence, 4
+        )
+
+        # f₂: safety_weight ← violation rate biased
+        violation_rate = user_profile.get("relevancy_violation_rate", 0.0)
+        f_safety = 0.3 + 0.5 * violation_rate  # more violations → higher safety emphasis
+        pe["safety_weight"] = round(
+            ECA_LAMBDA * pe["safety_weight"] + (1 - ECA_LAMBDA) * f_safety, 4
+        )
+
+        # f₃: precision_weight ← domain-type biased
+        domain = user_profile.get("recent_domains", ["general"])[0] if user_profile.get("recent_domains") else "general"
+        domain_precision = 0.7 if domain in ("pharma", "chemistry", "regulatory") else 0.4
+        pe["precision_weight"] = round(
+            ECA_LAMBDA * pe["precision_weight"] + (1 - ECA_LAMBDA) * domain_precision, 4
+        )
+
+        state["prompt_emphasis"] = pe
+        self._save_eca_state(state)
+
+        logger.info(
+            f"[ECA.adapt_prompt] user={user_id} evidence={pe['evidence_weight']:.2f} "
+            f"safety={pe['safety_weight']:.2f} precision={pe['precision_weight']:.2f}"
+        )
+        return pe
+
+    # ── Adaptation Function 2: adapt_rubric ──────────────────────────
+
+    def adapt_rubric(
+        self,
+        user_id: str,
+        user_profile: Dict[str, Any],
+        grounding_scores: Dict[str, Any],
+    ) -> Dict[str, float]:
+        """
+        Adjust Stage 2 rubric weight distribution based on historical
+        grounding performance patterns.
+
+        Mapping logic:
+          • Low avg grounding across sessions → boost faithfulness weight
+          • High violation rate → boost relevancy weight
+          • Complex queries predominant → boost reasoning weight
+
+        Returns the updated rubric_weights dict (normalised to sum=5.0).
+        """
+        state = self._get_eca_state(user_id)
+        rw = state["rubric_weights"]
+
+        avg_g = user_profile.get("avg_grounding", 0.5)
+        vr = user_profile.get("relevancy_violation_rate", 0.0)
+        complexity = user_profile.get("complexity_distribution", {})
+        complex_ratio = complexity.get("complex", 0) / max(user_profile.get("interaction_count", 1), 1)
+
+        # Boost faithfulness when grounding has been low
+        f_faith = 1.0 + 0.5 * max(0, 0.6 - avg_g)  # boost if <60% grounding
+        rw["faithfulness"] = round(
+            ECA_LAMBDA * rw["faithfulness"] + (1 - ECA_LAMBDA) * f_faith, 4
+        )
+
+        # Boost relevancy when violations are frequent
+        f_rel = 1.0 + 1.0 * vr  # linear scale with violation rate
+        rw["relevancy"] = round(
+            ECA_LAMBDA * rw["relevancy"] + (1 - ECA_LAMBDA) * f_rel, 4
+        )
+
+        # Boost reasoning for complex queries
+        f_reason = 1.0 + 0.5 * complex_ratio
+        rw["reasoning"] = round(
+            ECA_LAMBDA * rw["reasoning"] + (1 - ECA_LAMBDA) * f_reason, 4
+        )
+
+        # Normalise to sum = 5.0 (5 criteria × baseline 1.0)
+        total = sum(rw.values())
+        if total > 0:
+            scale = 5.0 / total
+            rw = {k: round(v * scale, 4) for k, v in rw.items()}
+
+        state["rubric_weights"] = rw
+        self._save_eca_state(state)
+
+        logger.info(
+            f"[ECA.adapt_rubric] user={user_id} "
+            + " ".join(f"{k}={v:.2f}" for k, v in rw.items())
+        )
+        return rw
+
+    # ── Adaptation Function 3: adapt_learning ────────────────────────
+
+    def adapt_learning(
+        self,
+        user_id: str,
+        reward: Dict[str, float],
+        grounding_score: float,
+    ) -> Dict[str, float]:
+        """
+        Adjust auto-learn threshold and confidence decay parameters
+        using the experiential reward signal.
+
+        Mathematical model (EMA):
+          ema_reward(t+1) = λ·ema_reward(t) + (1−λ)·R(t)
+
+          If ema_reward is consistently high → lower the auto-learn
+          threshold (trust the system more → learn more aggressively).
+
+          If ema_reward is consistently low → raise threshold (require
+          stronger evidence before auto-learning).
+
+          Confidence decay adapts inversely: high reward → slower decay
+          (memories persist longer); low reward → faster decay.
+
+        Returns the updated learning_params dict.
+        """
+        state = self._get_eca_state(user_id)
+        lp = state["learning_params"]
+        r = reward.get("reward", 0.5)
+
+        # Update EMA reward
+        ema = state.get("ema_reward", 0.5)
+        ema_new = ECA_LAMBDA * ema + (1 - ECA_LAMBDA) * r
+        state["ema_reward"] = round(ema_new, 4)
+
+        # Append to reward history (keep last 20)
+        hist = state.get("reward_history", [])
+        hist.append({
+            "reward": round(r, 4),
+            "grounding": round(grounding_score, 4),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        state["reward_history"] = hist[-20:]
+
+        # Adapt auto_learn_threshold:
+        #   θ_learn(t+1) = clamp(0.5 + 0.3·(1 − ema_reward), [0.5, 0.9])
+        #   High ema → threshold drops toward 0.5 (more aggressive learning)
+        #   Low ema  → threshold rises toward 0.8 (conservative learning)
+        new_threshold = 0.5 + 0.3 * (1.0 - ema_new)
+        new_threshold = min(0.9, max(0.5, new_threshold))
+        lp["auto_learn_threshold"] = round(new_threshold, 4)
+
+        # Adapt confidence_decay:
+        #   decay(t+1) = clamp(0.05·(1 − ema_reward), [0.005, 0.05])
+        #   High ema → low decay (memories last longer)
+        #   Low ema  → high decay (memories fade faster)
+        new_decay = 0.05 * (1.0 - ema_new)
+        new_decay = min(0.05, max(0.005, new_decay))
+        lp["confidence_decay"] = round(new_decay, 4)
+
+        state["learning_params"] = lp
+        state["adaptation_count"] = state.get("adaptation_count", 0) + 1
+        self._save_eca_state(state)
+
+        logger.info(
+            f"[ECA.adapt_learning] user={user_id} ema_reward={ema_new:.3f} "
+            f"threshold={new_threshold:.3f} decay={new_decay:.4f} "
+            f"adaptations={state['adaptation_count']}"
+        )
+        return lp
+
+    # ── Combined Adaptation Pass ─────────────────────────────────────
+
+    def run_full_adaptation(
+        self,
+        user_id: str,
+        user_profile: Dict[str, Any],
+        evidence_bundle: Dict[str, Any],
+        grounding_scores: Dict[str, Any],
+        grounding_score_overall: float,
+    ) -> Dict[str, Any]:
+        """
+        Execute all three adaptation functions in sequence for a given
+        council session.
+
+        Args:
+            user_id: Current user.
+            user_profile: From UserProfileMemory.get_user_profile().
+            evidence_bundle: From run_evidence_skills().
+            grounding_scores: Full grounding breakdown.
+            grounding_score_overall: Scalar 0–1 overall grounding.
+
+        Returns:
+            Summary dict with all adapted parameters.
+        """
+        reward = self.compute_reward(evidence_bundle)
+        prompt_emphasis = self.adapt_prompt(user_id, user_profile, reward)
+        rubric_weights = self.adapt_rubric(user_id, user_profile, grounding_scores)
+        learning_params = self.adapt_learning(user_id, reward, grounding_score_overall)
+
+        return {
+            "reward": reward,
+            "prompt_emphasis": prompt_emphasis,
+            "rubric_weights": rubric_weights,
+            "learning_params": learning_params,
+            "ema_reward": self._get_eca_state(user_id).get("ema_reward", 0.5),
+            "adaptation_count": self._get_eca_state(user_id).get("adaptation_count", 0),
+        }
+
+    # ── Diagnostics ──────────────────────────────────────────────────
+
+    def get_eca_state(self, user_id: str) -> Dict[str, Any]:
+        """Public accessor for the current ECA state (read-only)."""
+        return self._get_eca_state(user_id)
+
+
 # ── Singleton ────────────────────────────────────────────────────────
 
 _memory_manager: Optional[MemoryManager] = None
+_user_profile_memory: Optional[UserProfileMemory] = None
+_eca: Optional[ExperientialCoAdaptation] = None
 
 
 def get_memory_manager() -> MemoryManager:
@@ -744,3 +1421,17 @@ def get_memory_manager() -> MemoryManager:
     if _memory_manager is None:
         _memory_manager = MemoryManager()
     return _memory_manager
+
+
+def get_user_profile_memory() -> UserProfileMemory:
+    global _user_profile_memory
+    if _user_profile_memory is None:
+        _user_profile_memory = UserProfileMemory()
+    return _user_profile_memory
+
+
+def get_eca() -> ExperientialCoAdaptation:
+    global _eca
+    if _eca is None:
+        _eca = ExperientialCoAdaptation()
+    return _eca

@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from . import storage
-from .council import run_full_council, generate_conversation_title, build_conversation_context, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, stage2_ca_validation_pass, parse_ranking_from_text, parse_rubric_scores, parse_claim_counts
+from .council import run_full_council, generate_conversation_title, build_conversation_context, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, stage2_ca_validation_pass, parse_ranking_from_text, parse_rubric_scores, parse_claim_counts, compute_relevancy_gate
 from .config import OPENROUTER_API_KEY, AVAILABLE_MODELS, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL, COUNCIL_MODELS, GOOGLE_API_KEY, is_google_model
 from .model_sync import sync_models, get_live_models, get_defaults, get_sync_status, periodic_sync_loop
 from .openrouter import query_model
@@ -36,7 +36,7 @@ from .resilience import (
 from .grounding import compute_response_grounding_scores, get_rubric_criteria, enhance_ca_with_validation
 from .skills import run_evidence_skills, format_citations_for_prompt
 from .token_tracking import SessionCostTracker
-from .memory import get_memory_manager
+from .memory import get_memory_manager, get_user_profile_memory, get_eca
 from .memory_store import set_memory_user
 from .prompt_guard import evaluate_prompt
 from .orchestrator import (
@@ -1254,6 +1254,11 @@ Now provide your complete evaluation:"""
             yield f"data: {json.dumps({'type': 'evidence_complete', 'data': evidence_bundle})}\n\n"
             yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'grounding_scores': grounding_scores}})}\n\n"
 
+            # ── Stage 2.5: Relevancy Gate ────────────────────────────
+            relevancy_gate = compute_relevancy_gate(stage2_results)
+            gated_labels = [lbl for lbl, g in relevancy_gate.items() if g.get("gated_out")]
+            yield f"data: {json.dumps({'type': 'relevancy_gate', 'data': {'gate': relevancy_gate, 'gated_labels': gated_labels}})}\n\n"
+
             # Kill switch check between stages
             if kill_switch.is_session_killed(session_id):
                 yield f"data: {json.dumps({'type': 'killed', 'message': 'Council session aborted by user.'})}\n\n"
@@ -1285,6 +1290,7 @@ Now provide your complete evaluation:"""
                     user_chairman_model, conversation_history, web_search_enabled,
                     session_id=session_id,
                     evidence_context=evidence_text,
+                    relevancy_gate=relevancy_gate,
                 )
             )
 
@@ -1390,6 +1396,7 @@ Now provide your complete evaluation:"""
                     "infographic": infographic_data,
                     "memory_recall": memory_recall_data,
                     "memory_gate": stage2_gate,
+                    "relevancy_gate": relevancy_gate,
                 },
             )
 
@@ -1468,6 +1475,50 @@ Now provide your complete evaluation:"""
                     )
                 except Exception:
                     logger.debug("Failed to persist cost_summary metadata")
+
+            # ── OPT-6: User Behaviour Learning + ECA Adaptation ───
+            # Non-blocking: record user profile and run adaptation loop.
+            try:
+                upm = get_user_profile_memory()
+                eca = get_eca()
+
+                # Classify the query and record the interaction
+                classification = upm.classify_query(augmented_content)
+                upm.record_interaction(
+                    user_id=user_id,
+                    query=augmented_content,
+                    grounding_score=overall_grounding,
+                    relevancy_violations=gated_labels,
+                    gated_labels=gated_labels,
+                    classification=classification,
+                )
+
+                # Get updated user profile for ECA
+                user_profile = upm.get_user_profile(user_id)
+
+                # Run full ECA adaptation (Memory × Skills pairing)
+                eca_result = eca.run_full_adaptation(
+                    user_id=user_id,
+                    user_profile=user_profile,
+                    evidence_bundle=evidence_bundle,
+                    grounding_scores=grounding_scores,
+                    grounding_score_overall=overall_grounding,
+                )
+
+                # Emit user behaviour + ECA event
+                yield f"data: {json.dumps({'type': 'user_behaviour_update', 'data': {'profile': user_profile, 'eca': eca_result, 'classification': classification}})}\n\n"
+
+                # Persist ECA state in conversation metadata
+                storage.update_last_message_metadata(
+                    user_id, conversation_id,
+                    {"user_profile": user_profile, "eca_adaptation": eca_result, "relevancy_gate": relevancy_gate},
+                )
+                logger.info(
+                    f"[UserBehaviour+ECA] Complete for {user_id}: "
+                    f"domain={classification['domain']}, ema_reward={eca_result.get('ema_reward', 0):.3f}"
+                )
+            except Exception as e:
+                logger.warning(f"[UserBehaviour+ECA] Non-fatal error: {e}")
 
             # Send completion event
             yield f"data: {json.dumps({'type': 'complete'})}\n\n"

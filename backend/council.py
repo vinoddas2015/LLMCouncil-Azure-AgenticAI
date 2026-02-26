@@ -322,6 +322,61 @@ Now provide your complete evaluation:"""
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Stage 2.5 — Relevancy Gate
+# ═══════════════════════════════════════════════════════════════════════
+
+RELEVANCY_GATE_THRESHOLD = 5.0   # avg Relevancy < 5/10 → gated out
+RELEVANCY_GATE_MIN_REVIEWERS = 2  # need ≥2 reviewers to trigger gate
+
+
+def compute_relevancy_gate(
+    stage2_results: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Aggregate Relevancy rubric scores per response across all Stage 2
+    reviewers.  Any response with avg relevancy < RELEVANCY_GATE_THRESHOLD/10
+    across ≥ RELEVANCY_GATE_MIN_REVIEWERS reviewers is **gated out**.
+
+    Returns:
+        Dict mapping each response label (e.g. 'Response A') to:
+            {
+                'avg_relevancy': float (0–10 scale),
+                'reviewer_count': int,
+                'gated_out': bool,
+            }
+    """
+    # Collect relevancy scores per response label across all reviewers
+    label_scores: Dict[str, List[float]] = {}
+    for result in stage2_results:
+        rubric = result.get("rubric_scores", {})
+        for label, scores in rubric.items():
+            rel = scores.get("relevancy")
+            if rel is not None:
+                label_scores.setdefault(label, []).append(rel * 10.0)  # un-normalise to 0–10
+
+    gate: Dict[str, Dict[str, Any]] = {}
+    for label, scores in label_scores.items():
+        avg = sum(scores) / len(scores) if scores else 0.0
+        reviewer_count = len(scores)
+        gated_out = (
+            avg < RELEVANCY_GATE_THRESHOLD
+            and reviewer_count >= RELEVANCY_GATE_MIN_REVIEWERS
+        )
+        gate[label] = {
+            "avg_relevancy": round(avg, 2),
+            "reviewer_count": reviewer_count,
+            "gated_out": gated_out,
+        }
+        if gated_out:
+            logger.warning(
+                f"[RelevancyGate] {label} GATED OUT — avg_relevancy={avg:.1f}/10 "
+                f"across {reviewer_count} reviewers (threshold={RELEVANCY_GATE_THRESHOLD})"
+            )
+
+    return gate
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Stage 3 — Adaptive Prompt Optimisation Helpers
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -359,11 +414,18 @@ _SYSTEM_MSG_BASE = """You are the Chairman of an LLM Council. Your operating con
 
 Your task is to synthesize individual model responses and peer review rankings into a single, comprehensive, accurate answer that **directly addresses the original question**.
 
+═══════════════════════════════════════════════════════════
+ANTI-DRIFT RULES (override all other guidelines)
+═══════════════════════════════════════════════════════════
+0a. You MUST NOT incorporate content from ⛔ EXCLUDED responses (marked below), regardless of factual correctness.
+0b. Only incorporate insights that DIRECTLY ADDRESS the original question.
+0c. Every piece of information you include must pass this test: "Does this directly help answer the user's original question?" If not, omit it.
+
 Core principles:
 1. RELEVANCY FIRST — read the original question carefully. Only include content that is directly relevant to what was asked. Exclude tangential, off-topic, or loosely-related material regardless of its accuracy. A correct fact that does not answer the question is noise, not value.
 2. For clinical/safety questions: put patient-safety and factual accuracy first — prefer responses with high Faithfulness scores and low FN counts. For non-clinical questions: prioritise clarity and practical usefulness.
 3. Weight reviewer consensus: if multiple reviewers agree a response is strong on Relevancy and Context Recall, lean on that response. Conversely, responses scored LOW on Relevancy by reviewers should be de-weighted or excluded even if they are factually correct.
-4. Incorporate unique correct insights from lower-ranked responses ONLY IF those insights directly address the original question. Do not include tangential content merely because it is accurate — relevancy to the user's question is the gating criterion.
+4. Incorporate unique correct insights from lower-ranked responses ONLY IF those insights directly address the original question. Do not include tangential content merely because it is accurate — relevancy to the user's question is the gating criterion. Lower-ranked insights are included ONLY IF relevant; off-topic material is omitted even if factually correct.
 5. Flag any claims where reviewers disagreed on TP/FP classification — note the uncertainty explicitly.
 6. Structure your answer clearly with appropriate headings when the subject matter warrants it.
 7. When evidence citations are provided, reference them inline using their tags (e.g. [FDA-L1], [CT-2], [PM-3]) and include a REFERENCES section at the end with clickable URLs.
@@ -412,6 +474,7 @@ async def stage3_synthesize_final(
     web_search_enabled: bool = False,
     session_id: Optional[str] = None,
     evidence_context: str = "",
+    relevancy_gate: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Stage 3: Chairman synthesizes final response.
@@ -477,11 +540,23 @@ Note: This is a follow-up question in an ongoing conversation. Consider the prev
     features = _detect_query_features(user_query, stage1_text)
     system_msg = _build_system_message(features)
 
+    # ── Relevancy Gate: annotate excluded responses in the user prompt ──
+    gate_section = ""
+    if relevancy_gate:
+        excluded = [lbl for lbl, g in relevancy_gate.items() if g.get("gated_out")]
+        if excluded:
+            lines = ["RELEVANCY GATE — The following responses scored below the relevancy threshold and are EXCLUDED:"]
+            for lbl in excluded:
+                g = relevancy_gate[lbl]
+                lines.append(f"  ⛔ {lbl}: avg Relevancy {g['avg_relevancy']:.1f}/10 across {g['reviewer_count']} reviewers — EXCLUDED")
+            lines.append("You MUST NOT use content from excluded responses.")
+            gate_section = "\n".join(lines) + "\n\n"
+
     # User message contains only the data (system msg has all instructions)
     user_prompt = f"""{context_note}
 Original Question: {user_query}
 
-STAGE 1 — Individual Responses:
+{gate_section}STAGE 1 — Individual Responses:
 {stage1_text}
 
 STAGE 2 — Peer Rankings:

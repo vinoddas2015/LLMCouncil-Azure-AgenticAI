@@ -37,6 +37,15 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - `stage3_synthesize_final()`: Chairman synthesizes from all responses + rankings
 - `parse_ranking_from_text()`: Extracts "FINAL RANKING:" section, handles both numbered lists and plain format
 - `calculate_aggregate_rankings()`: Computes average rank position across all peer evaluations
+- **Relevancy Gate** (`compute_relevancy_gate()`):
+  - Aggregates per-response Relevancy rubric scores across Stage 2 reviewers
+  - Any response with avg relevancy < 5.0/10 across ≥2 reviewers is **gated out**
+  - Gated labels are annotated with ⛔ in the Stage 3 chairman prompt
+  - Constants: `RELEVANCY_GATE_THRESHOLD = 5.0`, `RELEVANCY_GATE_MIN_REVIEWERS = 2`
+- **Chairman Anti-Drift Rules** (Guidelines 0a–0c in `_SYSTEM_MSG_BASE`):
+  - 0a: MUST NOT incorporate excluded ⛔ responses
+  - 0b: Only incorporate insights that DIRECTLY ADDRESS original question
+  - 0c: Every piece must pass "Does this directly help answer the user's question?" test
 
 **`storage.py`** — Triple-Mode Conversation Storage (Cosmos DB + Azure Blob + Local Files)
 - **Cloud users (primary)** → Azure Cosmos DB (`COSMOS_ENDPOINT` + `COSMOS_KEY` env vars)
@@ -99,6 +108,26 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
   - CA Stability = 1 − |round1 − round2|
   - CA Combined = (round1 + round2) / 2
 
+**`memory.py`** — Three-Tier Memory + User Profile + ECA
+- **UserProfileMemory** (behaviour learning):
+  - `classify_query(query)` → auto-classifies by domain (pharma/chemistry/regulatory/market_access/data_science), question_type, complexity
+  - `record_interaction(user_id, query, grounding_score, relevancy_violations, ...)` → stores per-session profile data
+  - `get_user_profile(user_id)` → aggregated profile: domain_affinity, question_patterns, avg_grounding, relevancy_violation_rate, warning_level
+  - `format_user_context(user_id)` → prompt-injectable text block (triggers "⚠️ HIGH VIOLATION RATE" warning when rate > 30%)
+  - Stored in episodic collection with `type: "user_profile_interaction"` for per-user partitioning
+- **Experiential Co-Adaptation (ECA)** — Memory × Skills pairing (arXiv 2602.03837, 2511.00926, 2602.13949v1):
+  - Reward signal: R(t) = α·Quality + β·Efficiency + γ·Coverage (α=0.4, β=0.3, γ=0.3)
+    - Quality = avg reranker relevance score of returned citations
+    - Efficiency = 1 − (avg_latency / max_latency)
+    - Coverage = unique_skills_hit / 28 total skills
+  - EMA temporal smoothing: θ(t+1) = λ·θ(t) + (1−λ)·f(R(t)), λ=0.7
+  - Three adaptation functions:
+    1. `adapt_prompt(user_id, user_profile, reward)` → adjusts evidence_weight, safety_weight, precision_weight for chairman prompt emphasis
+    2. `adapt_rubric(user_id, user_profile, grounding_scores)` → adjusts rubric weight distribution (normalised to sum=5.0) based on violation rates and grounding
+    3. `adapt_learning(user_id, reward, grounding_score)` → adjusts auto_learn_threshold (0.5–0.9) and confidence_decay (0.005–0.05) using EMA reward
+  - `run_full_adaptation()` → orchestrates all 3 functions in sequence
+  - Per-user ECA state persisted in episodic collection with `type: "eca_state"`
+  - Singletons: `get_user_profile_memory()`, `get_eca()`
 **`main.py`**
 - FastAPI app with CORS enabled for all origins
 - `get_user_id` dependency: extracts `user-id` header from request, validates against path traversal, required on all `/api/conversations/*` endpoints

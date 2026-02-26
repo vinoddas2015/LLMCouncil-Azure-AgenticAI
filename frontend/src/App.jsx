@@ -413,6 +413,22 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             }));
             break;
 
+          case 'relevancy_gate':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.relevancyGate = event.data;
+              // Also store in metadata for persistence
+              if (msg.metadata) {
+                msg.metadata.relevancy_gate = event.data?.gate;
+              }
+            }));
+            break;
+
+          case 'user_behaviour_update':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.userBehaviour = event.data;
+            }));
+            break;
+
           case 'infographic_complete':
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.infographic = event.data;
