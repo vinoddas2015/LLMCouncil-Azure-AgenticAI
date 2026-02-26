@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import uuid
 import math
@@ -35,6 +36,8 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger("llm_council.memory_store")
 
 MEMORY_DIR = os.path.join("data", "memory")
 
@@ -104,9 +107,11 @@ class LocalJSONBackend(MemoryStoreBackend):
 
     def __init__(self, base_dir: str = MEMORY_DIR, user_id: str = "shared"):
         self._user_id = user_id
+        self._base_dir = base_dir
         self._base = os.path.join(base_dir, _user_hash(user_id))
         self._index: Dict[str, Dict[str, Dict[str, float]]] = {}  # collection -> {term -> {key -> score}}
         self._ensure_dirs()
+        self._migrate_legacy_data()
         self._rebuild_index()
 
     # ── CRUD ─────────────────────────────────────────────────────────
@@ -176,6 +181,44 @@ class LocalJSONBackend(MemoryStoreBackend):
 
     def _path(self, collection: str, key: str) -> str:
         return os.path.join(self._base, collection, f"{key}.json")
+
+    def _migrate_legacy_data(self):
+        """Migrate pre-user-scoping memory data into the user-hashed directory.
+
+        Before per-user isolation was added, memory files were stored directly
+        in ``data/memory/{collection}/{key}.json``.  This function detects those
+        legacy files and moves them into the current user-scoped path so they
+        appear in stats and listings.  Migration is idempotent — files are only
+        moved if the destination does not already exist.
+        """
+        import shutil
+        legacy_base = self._base_dir  # e.g. data/memory
+        if legacy_base == self._base:
+            return  # nothing to migrate (shouldn't happen)
+        migrated = 0
+        for collection in ("semantic", "episodic", "procedural"):
+            legacy_dir = os.path.join(legacy_base, collection)
+            if not os.path.isdir(legacy_dir):
+                continue
+            # Only migrate if the legacy dir is NOT inside a user-hash folder
+            # (i.e. it's directly under base_dir, not base_dir/{hash}/collection)
+            parent_name = os.path.basename(os.path.dirname(legacy_dir))
+            if parent_name != os.path.basename(legacy_base):
+                continue  # this is already inside a user-hash dir
+            target_dir = os.path.join(self._base, collection)
+            for fname in os.listdir(legacy_dir):
+                if not fname.endswith(".json"):
+                    continue
+                src = os.path.join(legacy_dir, fname)
+                dst = os.path.join(target_dir, fname)
+                if not os.path.exists(dst):
+                    try:
+                        shutil.copy2(src, dst)
+                        migrated += 1
+                    except Exception:
+                        pass  # best-effort
+        if migrated:
+            logger.info(f"[MemoryStore] Migrated {migrated} legacy memory files to user-scoped dir")
 
     def _ensure_dirs(self, collection: str | None = None):
         Path(self._base).mkdir(parents=True, exist_ok=True)
@@ -398,25 +441,30 @@ def get_memory_backend() -> MemoryStoreBackend:
     (set via ``set_memory_user(user_id)``).
 
     Priority:
-      1. Cosmos DB — if COSMOS_ENDPOINT + COSMOS_KEY are set
-      2. Local JSON — file-based fallback for dev (per-user directory)
+      1. local-user → always Local JSON (dev mode, no cloud dependency)
+      2. Cosmos DB — if COSMOS_ENDPOINT + COSMOS_KEY are set
+      3. Local JSON — file-based fallback (per-user directory)
     """
     user_id = get_memory_user()
 
     if user_id in _backend_cache:
         return _backend_cache[user_id]
 
-    from .config import COSMOS_ENDPOINT, COSMOS_KEY, COSMOS_DATABASE, COSMOS_MEMORY_CONTAINER
-    if COSMOS_ENDPOINT and COSMOS_KEY:
-        backend = CosmosDBBackend(
-            endpoint=COSMOS_ENDPOINT,
-            key=COSMOS_KEY,
-            database=COSMOS_DATABASE,
-            container_name=COSMOS_MEMORY_CONTAINER,
-            user_id=user_id,
-        )
-    else:
+    # Local development always uses file-based storage
+    if user_id == "local-user":
         backend = LocalJSONBackend(user_id=user_id)
+    else:
+        from .config import COSMOS_ENDPOINT, COSMOS_KEY, COSMOS_DATABASE, COSMOS_MEMORY_CONTAINER
+        if COSMOS_ENDPOINT and COSMOS_KEY:
+            backend = CosmosDBBackend(
+                endpoint=COSMOS_ENDPOINT,
+                key=COSMOS_KEY,
+                database=COSMOS_DATABASE,
+                container_name=COSMOS_MEMORY_CONTAINER,
+                user_id=user_id,
+            )
+        else:
+            backend = LocalJSONBackend(user_id=user_id)
 
     _backend_cache[user_id] = backend
     return backend

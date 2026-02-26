@@ -979,7 +979,15 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
             # ── OPT-1: Prompt Guard ∥ Pre-Stage 1 Memory Recall ──────
             # Fire both in parallel — memory recall is read-only so safe
             # to discard if the guard rejects the prompt.
-            guard_task = asyncio.create_task(evaluate_prompt(request.content or ""))
+            # Include attachment filenames/descriptions in guard input
+            # so image/file names like 'forensic medicine.png' provide
+            # topic context for the relevance check.
+            guard_input = request.content or ""
+            if request.attachments:
+                att_names = [att.name for att in request.attachments if att.name]
+                if att_names:
+                    guard_input = f"{guard_input} [Attachments: {', '.join(att_names)}]"
+            guard_task = asyncio.create_task(evaluate_prompt(guard_input))
             memory_task = asyncio.create_task(pre_stage1_agent(augmented_content, conversation_id))
 
             guard_verdict = await guard_task

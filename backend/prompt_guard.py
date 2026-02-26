@@ -187,6 +187,13 @@ _ONTOPIC_KEYWORDS = re.compile(
     r'disease|disorder|syndrome|pathology|oncology|cardiology|'
     r'neurology|immunology|endocrinology|hematology|dermatology|'
     r'gastroenterology|pulmonology|nephrology|urology|psychiatry|'
+    r'forensic\s+medicine|forensic\s+pathology|forensic\s+toxicology|'
+    r'forensic\s+science|autopsy|post[\-\s]?mortem|cause\s+of\s+death|'
+    r'medico[\-\s]?legal|death\s+investigation|forensic\s+examination|'
+    r'radiology|anesthesiology|ophthalmology|otolaryngology|'
+    r'rheumatology|geriatrics|pediatrics|neonatology|'
+    r'emergency\s+medicine|sports\s+medicine|nuclear\s+medicine|'
+    r'palliative\s+care|rehabilitation|orthopedics|'
     r'patient|physician|nurse|healthcare|hospital|clinic|'
     # Chemistry
     r'molecule|compound|chemical|reaction|synthesis|mechanism|'
@@ -263,11 +270,15 @@ Your ONLY job is to decide whether a user's query is related to ANY of these dom
   - Biotechnology, bioprocessing, biologics
   - Public health, epidemiology
   - Medical devices (if related to therapy/diagnosis)
+  - Forensic medicine, forensic pathology, forensic toxicology, medico-legal science
+  - Any medical speciality (radiology, anaesthesiology, ophthalmology, orthopaedics, etc.)
 
 Rules:
 - If the query is clearly about one of these domains → respond EXACTLY: YES
+- If the query mentions ANY medical speciality, field of medicine, or healthcare discipline → respond EXACTLY: YES
 - If the query mentions a term you do not recognise and it is NOT clearly a scientific/medical term → respond EXACTLY: NO
 - If the query is about general knowledge, entertainment, technology, coding, business, sports, cooking, travel, or any non-life-science topic → respond EXACTLY: NO
+- When file attachments are mentioned (e.g. [Attachments: filename.png]), consider the filename as additional context — a file named 'forensic medicine.png' implies a medical topic
 - Do NOT guess. If you cannot confidently place the query in a life-science domain, respond: NO
 - Respond with ONLY one word: YES or NO"""
 
