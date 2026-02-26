@@ -37,6 +37,7 @@ from .grounding import compute_response_grounding_scores, get_rubric_criteria, e
 from .skills import run_evidence_skills, format_citations_for_prompt
 from .token_tracking import SessionCostTracker
 from .memory import get_memory_manager
+from .memory_store import set_memory_user
 from .prompt_guard import evaluate_prompt
 from .orchestrator import (
     pre_stage1_agent,
@@ -44,7 +45,7 @@ from .orchestrator import (
     post_stage3_agent,
     user_gate_agent,
 )
-from .agents import run_agent_team, enrich_stage3_citations
+from .agents import run_agent_team, enrich_stage3_citations, validate_and_fix_citations
 from .openrouter import close_shared_client
 from .security import get_security_status
 from .infographics import extract_infographic, strip_infographic_block
@@ -484,6 +485,8 @@ async def send_message(conversation_id: str, request: SendMessageRequest, user_i
     Send a message and run the 3-stage council process.
     Returns the complete response with all stages.
     """
+    # Scope memory to this user
+    set_memory_user(user_id)
     # Check if conversation exists
     conversation = storage.get_conversation(user_id, conversation_id)
     if conversation is None:
@@ -541,6 +544,7 @@ async def analyze_agents(conversation_id: str, user_id: str = Depends(get_authen
     Useful for conversations that were created before agent-team
     persistence was added, or when the original analysis failed.
     """
+    set_memory_user(user_id)
     conv = storage.get_conversation(user_id, conversation_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -779,15 +783,17 @@ class MemoryDecisionRequest(BaseModel):
 
 
 @app.get("/api/memory/stats")
-async def get_memory_stats():
-    """Get memory statistics across all three tiers."""
+async def get_memory_stats(user_id: str = Depends(get_authenticated_user_id)):
+    """Get memory statistics across all three tiers for the current user."""
+    set_memory_user(user_id)
     mm = get_memory_manager()
     return mm.stats()
 
 
 @app.get("/api/memory/{memory_type}")
-async def list_memories(memory_type: str, include_unlearned: bool = False):
-    """List all memories for a given type (semantic, episodic, procedural)."""
+async def list_memories(memory_type: str, include_unlearned: bool = False, user_id: str = Depends(get_authenticated_user_id)):
+    """List all memories for a given type (semantic, episodic, procedural), scoped to user."""
+    set_memory_user(user_id)
     mm = get_memory_manager()
     if memory_type == "semantic":
         return mm.semantic.list_all(include_unlearned=include_unlearned)
@@ -800,8 +806,9 @@ async def list_memories(memory_type: str, include_unlearned: bool = False):
 
 
 @app.get("/api/memory/{memory_type}/{memory_id}")
-async def get_memory_entry(memory_type: str, memory_id: str):
-    """Get a specific memory entry."""
+async def get_memory_entry(memory_type: str, memory_id: str, user_id: str = Depends(get_authenticated_user_id)):
+    """Get a specific memory entry, scoped to user."""
+    set_memory_user(user_id)
     from .memory_store import get_memory_backend
     backend = get_memory_backend()
     doc = backend.get(memory_type, memory_id)
@@ -811,8 +818,9 @@ async def get_memory_entry(memory_type: str, memory_id: str):
 
 
 @app.post("/api/memory/decision")
-async def apply_memory_decision(request: MemoryDecisionRequest):
+async def apply_memory_decision(request: MemoryDecisionRequest, user_id: str = Depends(get_authenticated_user_id)):
     """Apply a learn/unlearn decision from the user."""
+    set_memory_user(user_id)
     result = await user_gate_agent(
         decision=request.decision,
         memory_type=request.memory_type,
@@ -825,16 +833,18 @@ async def apply_memory_decision(request: MemoryDecisionRequest):
 
 
 @app.get("/api/memory/search/{memory_type}")
-async def search_memories(memory_type: str, q: str, limit: int = 10):
-    """Search memories by text query."""
+async def search_memories(memory_type: str, q: str, limit: int = 10, user_id: str = Depends(get_authenticated_user_id)):
+    """Search memories by text query, scoped to user."""
+    set_memory_user(user_id)
     from .memory_store import get_memory_backend
     backend = get_memory_backend()
     return backend.search(memory_type, q, limit=limit)
 
 
 @app.delete("/api/memory/{memory_type}/{memory_id}")
-async def delete_memory_entry(memory_type: str, memory_id: str):
-    """Permanently delete a memory entry (admin action)."""
+async def delete_memory_entry(memory_type: str, memory_id: str, user_id: str = Depends(get_authenticated_user_id)):
+    """Permanently delete a memory entry, scoped to user."""
+    set_memory_user(user_id)
     from .memory_store import get_memory_backend
     backend = get_memory_backend()
     if backend.delete(memory_type, memory_id):
@@ -923,6 +933,8 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
         # Register with kill switch
         kill_event = kill_switch.register_session(session_id)
         cost_tracker = SessionCostTracker()
+        # Scope all memory operations to this user
+        set_memory_user(user_id)
         try:
             # Emit session ID so the frontend can target the kill switch
             yield f"data: {json.dumps({'type': 'session_start', 'data': {'session_id': session_id}})}\n\n"
@@ -1316,6 +1328,14 @@ Now provide your complete evaluation:"""
             stage3_result["response"] = enrich_stage3_citations(
                 stage3_result["response"]
             )
+
+            # ── Citation Validator: verify URLs are reachable, fix broken ones ──
+            try:
+                stage3_result["response"] = await validate_and_fix_citations(
+                    stage3_result["response"]
+                )
+            except Exception as e:
+                logger.warning(f"[Citation Validator] Non-fatal error: {e}")
 
             yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
 

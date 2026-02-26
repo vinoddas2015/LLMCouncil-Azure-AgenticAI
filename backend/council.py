@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import random
+import re
+import time
 from typing import List, Dict, Any, Tuple, Optional
 from .openrouter import query_models_parallel, query_model
 from .config import COUNCIL_MODELS, CHAIRMAN_MODEL, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL
@@ -319,6 +321,87 @@ Now provide your complete evaluation:"""
     return stage2_results, label_to_model
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Stage 3 — Adaptive Prompt Optimisation Helpers
+# ═══════════════════════════════════════════════════════════════════════
+
+_VP_KEYWORDS = re.compile(
+    r'value\s*proposition|competitive\s*position|brand\s*strategy|'
+    r'messaging\s*framework|market\s*positioning|differentiation',
+    re.IGNORECASE,
+)
+_CHEM_KEYWORDS = re.compile(
+    r'molecule|compound|drug\s*structure|SMILES|chemical|pharmacophore|'
+    r'synthesis\s*route|reaction|IC50|EC50|Ki\b|Kd\b|binding\s*affinity|'
+    r'molecular\s*weight|log\s*P',
+    re.IGNORECASE,
+)
+_COMPARISON_KEYWORDS = re.compile(
+    r'compar|versus|vs\.?\b|head.to.head|difference\s*between|'
+    r'advantage|disadvantage|which\s*is\s*better',
+    re.IGNORECASE,
+)
+
+
+def _detect_query_features(query: str, stage1_responses: str) -> Dict[str, bool]:
+    """Quick heuristic to detect what output features the query needs."""
+    combined = query + " " + stage1_responses[:2000]
+    return {
+        "needs_vp": bool(_VP_KEYWORDS.search(combined)),
+        "needs_chemistry": bool(_CHEM_KEYWORDS.search(combined)),
+        "needs_comparison": bool(_COMPARISON_KEYWORDS.search(combined)),
+    }
+
+
+# ── Static system message (cacheable by LLM APIs) ───────────────────
+
+_SYSTEM_MSG_BASE = """You are the Chairman of an LLM Council operating in a pharmaceutical / life-sciences context where accuracy is paramount and missing critical information (FN) is more dangerous than including minor inaccuracies (FP).
+
+Your task is to synthesize individual model responses and peer review rankings into a single, comprehensive, accurate answer.
+
+Core principles:
+1. Put patient-safety and factual accuracy FIRST — prefer responses with high Faithfulness scores and low FN counts.
+2. Weight reviewer consensus: if multiple reviewers agree a response is strong on Relevancy and Context Recall, lean on that response.
+3. Incorporate unique correct insights from lower-ranked responses; do not discard valuable information just because the source ranked lower.
+4. Flag any claims where reviewers disagreed on TP/FP classification — note the uncertainty explicitly.
+5. Structure your answer clearly with appropriate headings when the subject matter warrants it.
+6. When evidence citations are provided, reference them inline using their tags (e.g. [FDA-L1], [CT-2], [PM-3]) and include a REFERENCES section at the end with clickable URLs.
+7. SCIENTIFIC INTELLIGENCE: Cross-reference web-sourced findings with council responses. Use citation counts and journal impact to weight reliability. Highlight recent findings that supersede older knowledge. Flag arXiv preprints as non-peer-reviewed. Use Wikipedia as background only, not a primary source.
+8. RICH SCIENTIFIC OUTPUT (Markdown rendered):
+   - Use Markdown TABLES for comparative data.
+   - Use ordered/unordered LISTS for protocols, criteria, mechanisms.
+   - Use subscript/superscript HTML tags for chemical formulas (H<sub>2</sub>O).
+   - Use LaTeX math for quantitative data: inline $K_d$ or display $$AUC$$.
+9. INFOGRAPHIC DATA: After your answer, generate a structured JSON block in ```infographic markers:
+   {"title": "...", "type": "summary", "key_metrics": [{"label":"...","value":"...","icon":"emoji"}], "comparison": {"headers":[...],"rows":[...]}, "process_steps": [{"step":1,"title":"...","description":"..."}], "highlights": [{"text":"...","type":"success|warning|info|danger"}]}
+   Include ONLY relevant fields. key_metrics for quantitative facts, comparison only if comparing items, process_steps only for mechanisms/pathways, highlights always 2-4 takeaways."""
+
+_CHEMISTRY_ADDON = """
+MOLECULAR STRUCTURES: ALWAYS use SMILES code blocks for molecules/drugs/compounds:
+```smiles
+CC(=O)Oc1ccccc1C(=O)O
+```
+NEVER use external image URLs for chemical structures. Include SMILES whenever you mention a specific molecule by name."""
+
+_VP_ADDON = """
+VALUE PROPOSITION MODE: Structure your answer as:
+- **TITLE**: Product + therapeutic area
+- **CHALLENGE**: Unmet need, disease burden, limitations of current treatments
+- **SOLUTION**: Mechanism, clinical differentiation, key efficacy data
+- **OUTCOME**: Clinical benefits, safety, transformative impact
+After the VP text, generate infographic JSON with type "value_proposition" and sections: challenge, solution, outcome."""
+
+
+def _build_system_message(features: Dict[str, bool]) -> str:
+    """Assemble the system message with only the relevant instruction addons."""
+    parts = [_SYSTEM_MSG_BASE]
+    if features.get("needs_chemistry"):
+        parts.append(_CHEMISTRY_ADDON)
+    if features.get("needs_vp"):
+        parts.append(_VP_ADDON)
+    return "\n".join(parts)
+
+
 async def stage3_synthesize_final(
     user_query: str,
     stage1_results: List[Dict[str, Any]],
@@ -350,7 +433,8 @@ async def stage3_synthesize_final(
         raise KillSwitchError(f"Session {session_id} killed before Stage 3")
 
     chairman_to_use = chairman_model or CHAIRMAN_MODEL
-    
+    t0 = time.perf_counter()
+
     # Build context for follow-up questions
     context = build_conversation_context(conversation_history)
     context_note = ""
@@ -359,7 +443,7 @@ async def stage3_synthesize_final(
 Note: This is a follow-up question in an ongoing conversation. Consider the previous context when synthesizing your response.
 {context}
 """
-    
+
     # Build comprehensive context for chairman
     stage1_text = "\n\n".join([
         f"Model: {result['model']}\nResponse: {result['response']}"
@@ -388,8 +472,12 @@ Note: This is a follow-up question in an ongoing conversation. Consider the prev
                 )
     rubric_section = "\n".join(rubric_lines) if rubric_lines else "  (No structured rubric data parsed)"
 
-    chairman_prompt = f"""You are the Chairman of an LLM Council operating in a pharmaceutical / life-sciences context where accuracy is paramount and missing critical information (FN) is more dangerous than including minor inaccuracies (FP).
-{context_note}
+    # ── OPT: Adaptive prompt — detect query features, trim prompt ────
+    features = _detect_query_features(user_query, stage1_text)
+    system_msg = _build_system_message(features)
+
+    # User message contains only the data (system msg has all instructions)
+    user_prompt = f"""{context_note}
 Original Question: {user_query}
 
 STAGE 1 — Individual Responses:
@@ -402,124 +490,111 @@ STAGE 2 — Rubric Evaluation & Claim Analysis:
 {rubric_section}
 
 {evidence_context}
-
-Your task as Chairman is to synthesize the above into a single, comprehensive, accurate answer. Guidelines:
-1. Put patient-safety and factual accuracy FIRST — prefer responses with high Faithfulness scores and low FN counts.
-2. Weight reviewer consensus: if multiple reviewers agree a response is strong on Relevancy and Context Recall, lean on that response.
-3. Incorporate unique correct insights from lower-ranked responses; do not discard valuable information just because the source ranked lower.
-4. Flag any claims where reviewers disagreed on TP/FP classification — note the uncertainty explicitly.
-5. Structure your answer clearly with appropriate headings when the subject matter warrants it.
-6. When evidence citations are provided above, reference them inline using their tags (e.g. [FDA-L1], [CT-2], [PM-3], [SS-1], [CR-1], [EPMC-1], [WEB-1], [AX-1], [PAT-1], [WIKI-1], [ORC-1]) and include a REFERENCES section at the end with clickable URLs.
-7. SCIENTIFIC INTELLIGENCE FROM DIVERSE SOURCES: The evidence may include data from a broad, diverse set of sources — not just pharma APIs but also scientific preprints (arXiv), patents (Google Patents), encyclopaedic context (Wikipedia), and researcher profiles (ORCID). When processing these sources:
-   - Cross-reference web-sourced findings with the council members' responses to validate or refute claims.
-   - Use citation counts, journal impact, and patent filing dates to weight the reliability of evidence.
-   - Highlight any recent findings (last 2 years) from web sources that update or supersede older council member knowledge.
-   - Extract mechanistic insights, pharmacokinetic parameters, clinical endpoints, and safety signals from abstracts and integrate them into the synthesis.
-   - When web evidence contradicts a council member's claim, clearly flag the discrepancy and explain which source is more authoritative.
-   - For arXiv preprints, note they are not peer-reviewed and flag confidence level accordingly.
-   - For patents, extract relevant claims and invention descriptions that pertain to the query.
-   - For Wikipedia, use as context and background — never as a primary scientific source.
-   - For ORCID profiles, identify key researchers and their publication records relevant to the topic.
-8. RICH SCIENTIFIC OUTPUT (the frontend renders full Markdown):
-   - Use Markdown TABLES (pipe syntax) for comparative data such as drug properties, dosing, trial endpoints, adverse-event rates, or any structured comparison.
-   - **MOLECULAR STRUCTURES — ALWAYS use SMILES code blocks.** The frontend natively renders SMILES as interactive 2D/3D molecular visualizations. NEVER use external image URLs (![image](url)) for chemical structures — those break. Instead ALWAYS write:
-     ```smiles
-     CC(=O)Oc1ccccc1C(=O)O
-     ```
-     Every time you mention a specific molecule, drug, or compound by name, ALSO include its SMILES in a ```smiles code block so the user gets an interactive 3D structure.
-   - Use ordered and unordered LISTS for step-by-step protocols, criteria, mechanisms of action, etc.
-   - Use subscript (<sub>x</sub>) and superscript (<sup>y</sup>) HTML tags for chemical formulas like H<sub>2</sub>O or IC<sub>50</sub>.
-   - When quantitative data is involved, use LaTeX math notation: inline $K_d = 5.2 \\text{{ nM}}$ or display blocks $$AUC = \\int_0^T C(t)\\,dt$$ for pharmacokinetic equations.
-   - For non-molecular images, you may include image links from public sources (e.g. RCSB PDB) when a figure would aid understanding: ![Figure caption](https://url).
-9. INFOGRAPHIC DATA: After your full answer, generate a structured JSON block wrapped in ```infographic markers that the frontend will render as a visual infographic summary. The JSON must follow this schema:
-   ```infographic
-   {{
-     "title": "Short infographic title summarising the answer",
-     "type": "summary",
-     "key_metrics": [
-       {{"label": "Metric name", "value": "Metric value", "icon": "emoji"}},
-       ...max 6 metrics
-     ],
-     "comparison": {{
-       "headers": ["Category", "Option A", "Option B"],
-       "rows": [["Row label", "Value A", "Value B"], ...]
-     }},
-     "process_steps": [
-       {{"step": 1, "title": "Step title", "description": "Brief description"}},
-       ...max 6 steps
-     ],
-     "highlights": [
-       {{"text": "Key finding or takeaway", "type": "success|warning|info|danger"}},
-       ...max 4 highlights
-     ]
-   }}
-   ```
-   RULES for infographic data:
-   - Include ONLY fields that are relevant to the answer. Omit empty arrays or objects.
-   - key_metrics: Extract the most important quantitative facts (e.g. "IC50: 5.2 nM", "Phase: III", "Approval: 2024").
-   - comparison: Only include if the answer compares two or more items (drugs, treatments, trials).
-   - process_steps: Only include if the answer describes a mechanism, pathway, protocol, or pipeline.
-   - highlights: Always include 2-4 key takeaways from the answer.
-   - Keep values concise (under 30 chars each).
-10. VALUE PROPOSITION MODE: If the user's question asks for a value proposition, competitive positioning, messaging framework, or brand strategy for a pharmaceutical product, structure your answer using the following template:
-   - **TITLE**: Product name and therapeutic area (e.g. "Acoramidis — ATTR Cardiomyopathy Value Proposition")
-   - **CHALLENGE**: Describe the current unmet medical need, disease burden, limitations of existing treatments, and why patients/HCPs need a new solution. Use evidence from council members and citations.
-   - **SOLUTION**: Articulate the product's mechanism of action, clinical differentiation, key efficacy data (trial names, endpoints, hazard ratios), and what makes it unique vs. standard of care.
-   - **OUTCOME**: Present measurable clinical benefits (survival, hospitalization reduction, QoL), safety profile, and the transformative impact for patients and healthcare systems.
-   After the full VP text, generate the infographic JSON using type "value_proposition" instead of "summary":
-   ```infographic
-   {{
-     "title": "Product Name — Value Proposition",
-     "type": "value_proposition",
-     "sections": [
-       {{
-         "section_type": "challenge",
-         "title": "The Challenge",
-         "content": "2-3 sentence summary of the unmet need",
-         "bullets": ["Key challenge point 1", "Key challenge point 2", "Key challenge point 3"]
-       }},
-       {{
-         "section_type": "solution",
-         "title": "The Solution",
-         "content": "2-3 sentence summary of the product approach",
-         "bullets": ["Differentiation point 1", "Efficacy data point", "Mechanism of action"]
-       }},
-       {{
-         "section_type": "outcome",
-         "title": "The Outcome",
-         "content": "2-3 sentence summary of clinical impact",
-         "bullets": ["Clinical benefit 1", "Safety profile", "Patient impact"]
-       }}
-     ],
-     "key_metrics": [
-       {{"label": "Metric", "value": "Value", "icon": "emoji"}},
-       ...max 6 metrics
-     ],
-     "highlights": [
-       {{"text": "Key takeaway", "type": "success|warning|info|danger"}},
-       ...max 4 highlights
-     ]
-   }}
-   ```
-{f'11. Consider the context from the previous conversation.' if context else ''}
+{f'Consider the context from the previous conversation.' if context else ''}
 
 Provide a clear, well-reasoned final answer that represents the council's collective wisdom:"""
 
-    messages = [{"role": "user", "content": chairman_prompt}]
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": user_prompt},
+    ]
 
-    # Query the chairman model (with retries from openrouter layer)
-    response = await query_model(
-        chairman_to_use, messages,
-        web_search_enabled=web_search_enabled,
-        session_id=session_id,
-    )
+    # ── OPT: Speculative Racing — fire chairman + 1 racer in parallel ──
+    # If the primary chairman fails or is slow, the racer provides a
+    # fast fallback.  We cancel the slower task once one completes.
+    racer_model = resolve_fallback(chairman_to_use, {chairman_to_use})
 
-    if response is not None:
-        return {
-            "model": chairman_to_use,
-            "response": response.get('content', ''),
-            "usage": response.get('usage'),
-        }
+    async def _query_with_label(model: str, label: str):
+        """Wrapper that tags the result with model/label for identification."""
+        resp = await query_model(
+            model, messages,
+            web_search_enabled=web_search_enabled,
+            session_id=session_id,
+        )
+        return (model, label, resp)
+
+    if racer_model:
+        # Fire both in parallel, take whichever finishes first
+        primary_task = asyncio.create_task(_query_with_label(chairman_to_use, "primary"))
+        racer_task = asyncio.create_task(_query_with_label(racer_model, "racer"))
+
+        done, pending = await asyncio.wait(
+            {primary_task, racer_task},
+            return_when=asyncio.FIRST_COMPLETED,
+            timeout=150,
+        )
+
+        # Process the winner
+        response = None
+        winner_model = chairman_to_use
+        winner_label = "primary"
+
+        for task in done:
+            try:
+                model, label, resp = task.result()
+                if resp is not None:
+                    response = resp
+                    winner_model = model
+                    winner_label = label
+                    break
+            except Exception as e:
+                logger.warning(f"[Stage3] Speculative {label} error: {e}")
+
+        # If the winner succeeded, cancel the loser
+        if response is not None:
+            for task in pending:
+                task.cancel()
+            elapsed = time.perf_counter() - t0
+            logger.info(
+                f"[Stage3] Speculative racing: {winner_label} ({winner_model}) "
+                f"won in {elapsed:.1f}s"
+            )
+
+            model_desc = winner_model
+            if winner_label == "racer":
+                model_desc = f"{winner_model} (speculative racer for {chairman_to_use})"
+                health_monitor.log_healing_action("stage3_racer_won", {
+                    "chairman": chairman_to_use,
+                    "racer": winner_model,
+                    "elapsed_s": round(elapsed, 1),
+                })
+
+            return {
+                "model": model_desc,
+                "response": response.get('content', ''),
+                "usage": response.get('usage'),
+            }
+
+        # Both returned but neither succeeded — await the second
+        for task in pending:
+            try:
+                model, label, resp = await task
+                if resp is not None:
+                    elapsed = time.perf_counter() - t0
+                    logger.info(f"[Stage3] Late {label} ({model}) succeeded in {elapsed:.1f}s")
+                    return {
+                        "model": model,
+                        "response": resp.get('content', ''),
+                        "usage": resp.get('usage'),
+                    }
+            except Exception as e:
+                logger.warning(f"[Stage3] Late {label} error: {e}")
+
+    else:
+        # No racer available — single primary query
+        response = await query_model(
+            chairman_to_use, messages,
+            web_search_enabled=web_search_enabled,
+            session_id=session_id,
+        )
+        if response is not None:
+            elapsed = time.perf_counter() - t0
+            logger.info(f"[Stage3] Chairman {chairman_to_use} responded in {elapsed:.1f}s")
+            return {
+                "model": chairman_to_use,
+                "response": response.get('content', ''),
+                "usage": response.get('usage'),
+            }
 
     # ── Self-healing: Chairman failed — try fallback chairmen ───────────
     logger.warning(f"[Stage3] Chairman {chairman_to_use} failed, attempting fallbacks...")

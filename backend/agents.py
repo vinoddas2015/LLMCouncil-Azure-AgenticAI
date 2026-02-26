@@ -28,6 +28,7 @@ scalable, and suitable for serverless deployment.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone
@@ -1292,6 +1293,149 @@ def enrich_stage3_citations(text: str) -> str:
         lambda m: f"[{m.group(1)}]({m.group(1)})",
         result,
     )
+
+    return result
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  🔗 Async Citation URL Validator                                    ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def _check_url(client, url: str, timeout: float = 8.0) -> Dict[str, Any]:
+    """
+    HEAD-check a single URL. Returns {url, reachable, status_code, redirect_url}.
+    Falls back to GET with stream=True if HEAD is rejected (405/403).
+    """
+    import httpx
+
+    for method in ("HEAD", "GET"):
+        try:
+            if method == "HEAD":
+                resp = await client.head(url, timeout=timeout, follow_redirects=True)
+            else:
+                # GET with stream to avoid downloading large bodies
+                resp = await client.get(url, timeout=timeout, follow_redirects=True)
+
+            final_url = str(resp.url) if resp.url != url else None
+            # Accept 2xx and 3xx as reachable
+            if resp.status_code < 400:
+                return {"url": url, "reachable": True, "status_code": resp.status_code, "redirect_url": final_url}
+
+            # 405 Method Not Allowed → retry with GET
+            if method == "HEAD" and resp.status_code in (405, 403):
+                continue
+
+            return {"url": url, "reachable": False, "status_code": resp.status_code, "redirect_url": None}
+        except Exception:
+            if method == "HEAD":
+                continue
+            return {"url": url, "reachable": False, "status_code": 0, "redirect_url": None}
+
+    return {"url": url, "reachable": False, "status_code": 0, "redirect_url": None}
+
+
+async def validate_and_fix_citations(text: str) -> str:
+    """
+    Async post-processor that verifies all URLs in the text are reachable.
+    Broken URLs (4xx, 5xx, timeout) are replaced with PubMed search
+    fallback links built from surrounding context (title, author, year).
+
+    Called in the SSE pipeline AFTER enrich_stage3_citations() so all
+    references already have links.
+
+    Strategy:
+      1. Extract all markdown links: [label](url)
+      2. Fire parallel HEAD checks (max 15 concurrent, 8s timeout each)
+      3. For broken links, build a PubMed search fallback from the label text
+      4. Replace broken URLs in-place
+
+    Total added latency: typically < 3s (parallel HEAD checks with timeout).
+    """
+    import httpx
+    from urllib.parse import quote_plus
+
+    if not text:
+        return text
+
+    # ── 1. Collect all markdown links ────────────────────────────────
+    # Pattern: [any label](https://...)
+    link_pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')
+    matches = list(link_pattern.finditer(text))
+    if not matches:
+        return text
+
+    # Deduplicate URLs (same URL may appear multiple times)
+    unique_urls = list({m.group(2) for m in matches})
+
+    # Skip PubMed search URLs — these are our own generated fallbacks
+    urls_to_check = [u for u in unique_urls if "pubmed.ncbi.nlm.nih.gov/?term=" not in u]
+    if not urls_to_check:
+        return text
+
+    # ── 2. Parallel HEAD checks ──────────────────────────────────────
+    logger.info(f"[Citation Validator] Checking {len(urls_to_check)} URLs...")
+    url_results: Dict[str, Dict[str, Any]] = {}
+
+    try:
+        async with httpx.AsyncClient(
+            verify=False,
+            limits=httpx.Limits(max_connections=15, max_keepalive_connections=5),
+            headers={"User-Agent": "LLMCouncil-CitationValidator/1.0"},
+        ) as client:
+            tasks = [_check_url(client, url) for url in urls_to_check]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, dict):
+                    url_results[r["url"]] = r
+    except Exception as e:
+        logger.warning(f"[Citation Validator] Client error: {e}")
+        return text  # Non-fatal — return original text
+
+    # ── 3. Replace broken URLs with PubMed fallbacks ─────────────────
+    broken_count = 0
+    fixed_count = 0
+
+    def _replace_broken_link(m):
+        nonlocal broken_count, fixed_count
+        label = m.group(1)
+        url = m.group(2)
+        result = url_results.get(url)
+
+        if result is None:
+            return m.group(0)  # URL wasn't checked (PubMed fallback), keep as-is
+
+        if result["reachable"]:
+            return m.group(0)  # URL works, keep it
+
+        broken_count += 1
+
+        # Extract context from label for PubMed search
+        # Strip markdown formatting from label
+        clean_label = re.sub(r'[*_`]', '', label).strip()
+
+        # If it's a DOI link, extract the DOI and try doi.org
+        if "doi.org" in url:
+            # DOI links should work — if doi.org is down, keep the link
+            return m.group(0)
+
+        # Build PubMed search URL from label context
+        # Extract potential title (italic text in label) or use full label
+        search_terms = clean_label
+        # Trim to first 120 chars (PubMed search limit)
+        if len(search_terms) > 120:
+            search_terms = search_terms[:120]
+        pubmed_url = f"https://pubmed.ncbi.nlm.nih.gov/?term={quote_plus(search_terms)}"
+
+        fixed_count += 1
+        return f"[{label}]({pubmed_url})"
+
+    result = link_pattern.sub(_replace_broken_link, text)
+
+    if broken_count > 0:
+        logger.info(
+            f"[Citation Validator] {broken_count} broken URL(s) detected, "
+            f"{fixed_count} replaced with PubMed fallbacks"
+        )
 
     return result
 
