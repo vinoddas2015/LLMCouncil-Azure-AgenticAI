@@ -37,19 +37,35 @@ async function getMsalToken() {
   if (!msal) throw new Error('MSAL not initialised');
 
   const account = msal.getActiveAccount();
-  if (!account) throw new Error('No active account — please sign in');
+  if (!account) {
+    // Try to find any account and set it
+    const accounts = msal.getAllAccounts();
+    if (accounts.length > 0) {
+      msal.setActiveAccount(accounts[0]);
+      console.info('[MSAL] Auto-set active account:', accounts[0].username);
+    } else {
+      throw new Error('No active account — please sign in');
+    }
+  }
+
+  const activeAccount = msal.getActiveAccount();
 
   try {
     const response = await msal.acquireTokenSilent({
       ...apiTokenRequest,
-      account,
+      account: activeAccount,
     });
     return response.accessToken;
   } catch (err) {
     // Silent failed (token expired, consent needed) — try interactive
-    console.warn('[MSAL] Silent token acquisition failed, trying popup:', err);
-    const response = await msal.acquireTokenPopup(apiTokenRequest);
-    return response.accessToken;
+    console.warn('[MSAL] Silent token acquisition failed, trying popup:', err.message || err);
+    try {
+      const response = await msal.acquireTokenPopup(apiTokenRequest);
+      return response.accessToken;
+    } catch (popupErr) {
+      console.error('[MSAL] Popup token acquisition also failed:', popupErr.message || popupErr);
+      throw new Error(`Authentication failed: ${popupErr.message || 'Could not acquire token'}`);
+    }
   }
 }
 
@@ -158,15 +174,21 @@ export function getUserId() {
   if (currentEnvironment === 'development') {
     return 'local-user';
   }
-  // Azure: extract user ID from MSAL active account
+  // Azure: extract user ID from MSAL active account via the MSAL instance
   if (currentEnvironment === 'azure') {
     try {
-      // MSAL stores account data in sessionStorage
+      // Try accessing the MSAL instance directly (already resolved Promise)
+      if (_msalInstance && typeof _msalInstance.then !== 'function') {
+        const account = _msalInstance.getActiveAccount() || (_msalInstance.getAllAccounts && _msalInstance.getAllAccounts()[0]);
+        if (account) {
+          return account.username || account.name || account.localAccountId;
+        }
+      }
+      // Fallback: scan sessionStorage for MSAL account data
       for (const key of Object.keys(sessionStorage)) {
         if (key.includes('activeAccount') || key.includes('.idtoken')) {
           try {
             const val = JSON.parse(sessionStorage.getItem(key));
-            // prefer username (UPN/email), fallback to oid
             if (val?.username) return val.username;
             if (val?.oid) return val.oid;
           } catch { /* skip */ }
@@ -222,7 +244,12 @@ export const api = {
   async listConversations() {
     const response = await fetchWithAuth(`${API_BASE}/api/conversations`);
     if (!response.ok) {
-      throw new Error('Failed to list conversations');
+      let detail = `HTTP ${response.status}`;
+      try {
+        const body = await response.json();
+        if (body.detail) detail += ` — ${body.detail}`;
+      } catch { /* ignore parse errors */ }
+      throw new Error(detail);
     }
     return response.json();
   },
@@ -239,7 +266,13 @@ export const api = {
       body: JSON.stringify({}),
     });
     if (!response.ok) {
-      throw new Error('Failed to create conversation');
+      // Extract the backend error detail for better diagnostics
+      let detail = `HTTP ${response.status}`;
+      try {
+        const body = await response.json();
+        if (body.detail) detail += ` — ${body.detail}`;
+      } catch { /* ignore parse errors */ }
+      throw new Error(detail);
     }
     return response.json();
   },

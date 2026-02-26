@@ -57,7 +57,7 @@ def validate_access_token(token: str) -> dict:
     Checks:
     - Signature (RS256, against Microsoft JWKS)
     - Issuer  (must match Bayer tenant v2.0 issuer)
-    - Audience (must match api://<client_id>)
+    - Audience (must match api://<client_id> OR bare <client_id>)
     - Expiration (exp), not-before (nbf)
 
     Returns:
@@ -66,6 +66,11 @@ def validate_access_token(token: str) -> dict:
     Raises:
         HTTPException(401): On any validation failure.
     """
+    # Accept both "api://<client_id>" and bare "<client_id>" as valid audiences.
+    # MSAL SPAs may issue tokens with either format depending on the flow.
+    from .config import ENTRA_CLIENT_ID as _cid
+    _accepted_audiences = [ENTRA_AUDIENCE, _cid]
+
     try:
         jwks_client = _get_jwks_client()
         signing_key = jwks_client.get_signing_key_from_jwt(token)
@@ -74,7 +79,7 @@ def validate_access_token(token: str) -> dict:
             token,
             signing_key.key,
             algorithms=["RS256"],
-            audience=ENTRA_AUDIENCE,
+            audience=_accepted_audiences,
             issuer=ENTRA_ISSUER,
             options={
                 "verify_exp": True,
@@ -84,16 +89,31 @@ def validate_access_token(token: str) -> dict:
                 "verify_iss": True,
             },
         )
+        logger.info(f"[Auth] Token validated — aud={claims.get('aud')}, ver={claims.get('ver')}")
         return claims
 
     except jwt.ExpiredSignatureError:
         logger.warning("[Auth] Token expired")
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidAudienceError:
-        logger.warning("[Auth] Invalid audience")
+        # Decode without verification to see the actual audience for diagnostics
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False, "verify_aud": False, "verify_iss": False, "verify_exp": False})
+            actual_aud = unverified.get("aud", "N/A")
+            actual_iss = unverified.get("iss", "N/A")
+            actual_ver = unverified.get("ver", "N/A")
+            logger.warning(f"[Auth] Invalid audience — token aud={actual_aud!r}, expected one of {_accepted_audiences!r}, iss={actual_iss}, ver={actual_ver}")
+        except Exception:
+            logger.warning("[Auth] Invalid audience (could not decode token for diagnostics)")
         raise HTTPException(status_code=401, detail="Invalid token audience")
     except jwt.InvalidIssuerError:
-        logger.warning("[Auth] Invalid issuer")
+        # Decode without verification to see the actual issuer for diagnostics
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False, "verify_aud": False, "verify_iss": False, "verify_exp": False})
+            actual_iss = unverified.get("iss", "N/A")
+            logger.warning(f"[Auth] Invalid issuer — token iss={actual_iss!r}, expected {ENTRA_ISSUER!r}")
+        except Exception:
+            logger.warning("[Auth] Invalid issuer (could not decode token for diagnostics)")
         raise HTTPException(status_code=401, detail="Invalid token issuer")
     except (jwt.DecodeError, jwt.InvalidTokenError) as e:
         logger.warning(f"[Auth] Token validation failed: {e}")
