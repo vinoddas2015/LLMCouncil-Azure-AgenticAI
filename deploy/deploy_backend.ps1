@@ -67,6 +67,8 @@ $filesToCopy = @(
     "backend\resilience.py"
     "backend\security.py"
     "backend\token_tracking.py"
+    "backend\auth.py"
+    "run_server.py"
 )
 
 foreach ($file in $filesToCopy) {
@@ -83,7 +85,7 @@ foreach ($file in $filesToCopy) {
 }
 
 # Create startup.txt for the startup command
-$startupCmd = "gunicorn -c gunicorn.conf.py backend.main:app"
+$startupCmd = "python run_server.py"
 $startupCmd | Out-File -FilePath (Join-Path $stagingDir "startup.txt") -Encoding ascii -NoNewline
 
 # Create ZIP
