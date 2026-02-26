@@ -1,41 +1,63 @@
 {
   "name": "Skills Manager",
   "description": "Monitors and orchestrates the 28-skill evidence retrieval pipeline. Tracks skill health, coverage, performance benchmarks, evidence diversity, and MedCPT reranker status. Provides recommendations for skill configuration.",
-  "url": "https://llmcouncil.bayer.com/.well-known/agents/skills-manager.json",
+  "supportedInterfaces": [
+    {
+      "url": "https://llmcouncil-backend.azurewebsites.net/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
   "provider": {
-    "organization": "Bayer AG — LLM Council",
-    "url": "https://llmcouncil.bayer.com"
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://llmcouncil-agents.ai"
   },
-  "version": "1.0.0",
+  "iconUrl": "data:text/plain,🧰",
+  "version": "3.0.0",
+  "beatId": "BEAT04059418",
   "capabilities": {
     "streaming": false,
     "pushNotifications": false
   },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
   "skills": [
     {
       "id": "skill-health-monitoring",
       "name": "Skill Health Monitoring",
-      "description": "Tracks which of the 22 evidence skills (11 core + 11 web) returned results, which failed silently, and provides coverage metrics."
+      "description": "Tracks which of the 22 evidence skills (11 core + 11 web) returned results, which failed silently, and provides coverage metrics.",
+      "tags": ["health", "monitoring", "coverage", "evidence-skills"]
     },
     {
       "id": "evidence-diversity-analysis",
       "name": "Evidence Diversity Analysis",
-      "description": "Analyses citation source types, identifies single-source concentrations, and recommends enabling web search for broader coverage."
+      "description": "Analyses citation source types, identifies single-source concentrations, and recommends enabling web search for broader coverage.",
+      "tags": ["diversity", "citations", "web-search", "source-analysis"]
     },
     {
       "id": "performance-benchmarking",
       "name": "Performance Benchmarking",
-      "description": "Monitors per-skill latency, identifies bottleneck skills, and tracks MedCPT neural reranker availability."
+      "description": "Monitors per-skill latency, identifies bottleneck skills, and tracks MedCPT neural reranker availability.",
+      "tags": ["performance", "latency", "benchmarking", "medcpt", "reranker"]
     },
     {
       "id": "skill-registry",
       "name": "Skill Registry",
-      "description": "Maintains canonical registry of all 22 skills with IDs, citation tags, and types (core/web). Used for health checks and coverage calculations."
+      "description": "Maintains canonical registry of all 22 skills with IDs, citation tags, and types (core/web). Used for health checks and coverage calculations.",
+      "tags": ["registry", "skills", "canonical", "configuration"]
     }
   ],
-  "defaultInputModes": ["application/json"],
-  "defaultOutputModes": ["application/json"],
-  "authentication": {
-    "schemes": ["bearer"]
+  "metadata": {
+    "agentId": "skills_manager",
+    "icon": "🧰",
+    "category": "core",
+    "pipelinePosition": "post-stage3",
+    "executionMode": "parallel",
+    "confidenceFormula": "min(1.0, 0.3 + coverage*0.4 + diversity*0.3)",
+    "skillCounts": {
+      "core": 11,
+      "web": 11,
+      "total": 22
+    }
   }
 }

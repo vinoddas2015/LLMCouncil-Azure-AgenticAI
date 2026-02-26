@@ -504,7 +504,7 @@ The `agent_team_complete` event carries the combined result of all 12 agents, re
 | **Citation-Grounded** | Real-time evidence from 28 APIs (FDA, ClinicalTrials, PubMed, EMA, WHO ATC, UniProt, ChEMBL, KEGG, Reactome, RxNorm, STRING-DB, Hubble, Semantic Scholar, CrossRef, Europe PMC, arXiv, Patents, Wikipedia, ORCID, OpenAlex, Unpaywall, Elsevier, bioRxiv, medRxiv, OECD.AI, Endpoints News, Doctor Penguin, and more) |
 | **Infographics** | Auto-generated visual summaries: metrics, comparisons, process steps, highlights |
 | **Auto Model Sync** | Live catalog from MyGenAssist API — family version dedup, 30-min refresh |
-| **A2A Agent Cards** | Agent-to-Agent protocol v1.0 RC compliant discovery for all 10 agents |
+| **A2A Agent Cards** | Agent-to-Agent protocol v1.0 RC compliant discovery for all 13 agents (BEAT ID: BEAT04059418) |
 | **10-Agent Intelligence** | Post-pipeline analysis: research, fact-check, risk, patterns, insights, quality, citations + 3 VP-mode |
 | **Pharma Metrics** | Verbalized Sampling with Correctness/Precision/Recall |
 | **Scientific Output** | SMILES structures, LaTeX equations, GFM tables |
@@ -1098,9 +1098,9 @@ The platform implements the **Agent-to-Agent (A2A) protocol v1.0 RC** for standa
 | Endpoint | Description |
 |----------|-------------|
 | `GET /.well-known/agent-card.json` | A2A standard discovery — main council agent card |
-| `GET /api/agent-cards` | List all 10 individual agent cards |
+| `GET /api/agent-cards` | List all 13 individual agent cards |
 | `GET /api/agent-cards/{agent_id}` | Get specific agent card by ID |
-| `GET /api/agent-cards-download` | Download full bundle (main + 10 agents) as JSON |
+| `GET /api/agent-cards-download` | Download full bundle (main + 13 agents) as JSON |
 
 ### Card Structure (A2A v1.0 RC)
 
@@ -1143,6 +1143,9 @@ Each agent card follows the A2A protocol schema:
 | 8 | `agents/market-positioning.json` | `market-positioning` | VP-mode |
 | 9 | `agents/clinical-value.json` | `clinical-value` | VP-mode |
 | 10 | `agents/messaging-strategist.json` | `messaging-strategist` | VP-mode |
+| 11 | `agents/skills-manager.json` | `skills-manager` | Core |
+| 12 | `agents/memory-orchestrator.json` | `memory-orchestrator` | Core |
+| 13 | `agents/health-probe.json` | `health-probe` | Infrastructure |
 
 ### Frontend Integration
 

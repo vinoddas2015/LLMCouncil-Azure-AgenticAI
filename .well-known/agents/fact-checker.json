@@ -3,17 +3,18 @@
   "description": "Validates claims against peer-review evidence, detects hallucination signals, and assesses inter-model agreement via RAGAS-aligned grounding metrics. Analyses True Positive, False Positive, and False Negative claim counts from Stage 2 peer reviews, overall grounding score, and per-response score variance.",
   "supportedInterfaces": [
     {
-      "url": "https://localhost:8001/api",
+      "url": "https://llmcouncil-backend.azurewebsites.net/api",
       "protocolBinding": "HTTP+JSON",
       "protocolVersion": "1.0"
     }
   ],
   "provider": {
     "organization": "Bayer AG — LLM Council Agent Team",
-    "url": "https://chat.int.bayer.com"
+    "url": "https://llmcouncil-agents.ai"
   },
   "iconUrl": "data:text/plain,🛡️",
-  "version": "2.0.0",
+  "version": "3.0.0",
+  "beatId": "BEAT04059418",
   "capabilities": {
     "streaming": false,
     "pushNotifications": false

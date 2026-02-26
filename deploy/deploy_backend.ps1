@@ -71,6 +71,20 @@ $filesToCopy = @(
     "backend\health_probe.py"
     "run_server.py"
     "startup.sh"
+    ".well-known\agent-card.json"
+    ".well-known\agents\citation-supervisor.json"
+    ".well-known\agents\clinical-value.json"
+    ".well-known\agents\fact-checker.json"
+    ".well-known\agents\health-probe.json"
+    ".well-known\agents\insight-synthesizer.json"
+    ".well-known\agents\market-positioning.json"
+    ".well-known\agents\memory-orchestrator.json"
+    ".well-known\agents\messaging-strategist.json"
+    ".well-known\agents\pattern-scout.json"
+    ".well-known\agents\quality-auditor.json"
+    ".well-known\agents\research-analyst.json"
+    ".well-known\agents\risk-assessor.json"
+    ".well-known\agents\skills-manager.json"
 )
 
 foreach ($file in $filesToCopy) {

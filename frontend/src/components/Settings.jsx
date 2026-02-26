@@ -235,8 +235,8 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
             <div className="settings-section">
               <h3>🤖 A2A Agent Cards</h3>
               <p className="settings-description">
-                Download the full Agent-to-Agent protocol card bundle for all {10} council agents.
-                Includes the main council card and individual cards for each specialist agent.
+                Download the full Agent-to-Agent protocol card bundle for all {13} council agents.
+                Includes the main council card and individual cards for each specialist agent (BEAT ID: BEAT04059418).
               </p>
               <div className="settings-btn-row">
                 <button

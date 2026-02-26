@@ -1,46 +1,65 @@
 {
   "name": "Memory Orchestrator",
   "description": "Monitors and orchestrates the three-tier memory system (Semantic, Episodic, Procedural). Tracks tier health, knowledge drift, learn/unlearn patterns, context awareness degradation, and learning readiness based on grounding scores.",
-  "url": "https://llmcouncil.bayer.com/.well-known/agents/memory-orchestrator.json",
+  "supportedInterfaces": [
+    {
+      "url": "https://llmcouncil-backend.azurewebsites.net/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
   "provider": {
-    "organization": "Bayer AG — LLM Council",
-    "url": "https://llmcouncil.bayer.com"
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://llmcouncil-agents.ai"
   },
-  "version": "1.0.0",
+  "iconUrl": "data:text/plain,🧠",
+  "version": "3.0.0",
+  "beatId": "BEAT04059418",
   "capabilities": {
     "streaming": false,
     "pushNotifications": false
   },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
   "skills": [
     {
       "id": "tier-health-monitoring",
       "name": "Tier Health Monitoring",
-      "description": "Monitors each memory tier (Semantic facts, Episodic deliberations, Procedural workflows) for active entries, unlearned entries, and growth trends."
+      "description": "Monitors each memory tier (Semantic facts, Episodic deliberations, Procedural workflows) for active entries, unlearned entries, and growth trends.",
+      "tags": ["memory", "health", "semantic", "episodic", "procedural"]
     },
     {
       "id": "knowledge-drift-detection",
       "name": "Knowledge Drift Detection",
-      "description": "Detects high unlearn rates that may indicate knowledge quality issues or domain drift across memory tiers."
+      "description": "Detects high unlearn rates that may indicate knowledge quality issues or domain drift across memory tiers.",
+      "tags": ["drift", "unlearn", "quality", "domain-shift"]
     },
     {
       "id": "learning-readiness",
       "name": "Learning Readiness Assessment",
-      "description": "Evaluates grounding scores against thresholds to determine if the current deliberation qualifies for automatic memory learning."
+      "description": "Evaluates grounding scores against thresholds to determine if the current deliberation qualifies for automatic memory learning.",
+      "tags": ["learning", "grounding", "threshold", "auto-learn"]
     },
     {
       "id": "ca-trend-analysis",
       "name": "Context Awareness Trend Analysis",
-      "description": "Analyses cross-session CA snapshots per model to detect catastrophic forgetting or declining self-awareness over time."
+      "description": "Analyses cross-session CA snapshots per model to detect catastrophic forgetting or declining self-awareness over time.",
+      "tags": ["context-awareness", "trend", "catastrophic-forgetting", "self-awareness"]
     },
     {
       "id": "memory-recall-test",
       "name": "Memory Recall Testing",
-      "description": "Tests memory retrieval for the current query, reporting how many prior Semantic/Episodic/Procedural hits were available for council augmentation."
+      "description": "Tests memory retrieval for the current query, reporting how many prior Semantic/Episodic/Procedural hits were available for council augmentation.",
+      "tags": ["recall", "retrieval", "augmentation", "testing"]
     }
   ],
-  "defaultInputModes": ["application/json"],
-  "defaultOutputModes": ["application/json"],
-  "authentication": {
-    "schemes": ["bearer"]
+  "metadata": {
+    "agentId": "memory_orchestrator",
+    "icon": "🧠",
+    "category": "core",
+    "pipelinePosition": "post-stage3",
+    "executionMode": "parallel",
+    "confidenceFormula": "min(1.0, 0.3 + tier_health*0.3 + learning_ready*0.2 + recall_hits*0.2)",
+    "memoryTiers": ["semantic", "episodic", "procedural"]
   }
 }

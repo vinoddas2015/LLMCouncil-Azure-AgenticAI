@@ -3,17 +3,18 @@
   "description": "Detects patterns across model responses: consensus areas, divergence points, recurring pharmaceutical themes, and rubric trend analysis. Calculates rank spread to measure inter-model agreement, performs keyword-frequency theme detection across 15 pharma-specific categories, and analyses rubric score distributions to identify strongest and weakest evaluation criteria.",
   "supportedInterfaces": [
     {
-      "url": "https://localhost:8001/api",
+      "url": "https://llmcouncil-backend.azurewebsites.net/api",
       "protocolBinding": "HTTP+JSON",
       "protocolVersion": "1.0"
     }
   ],
   "provider": {
     "organization": "Bayer AG — LLM Council Agent Team",
-    "url": "https://chat.int.bayer.com"
+    "url": "https://llmcouncil-agents.ai"
   },
   "iconUrl": "data:text/plain,🔍",
-  "version": "2.0.0",
+  "version": "3.0.0",
+  "beatId": "BEAT04059418",
   "capabilities": {
     "streaming": false,
     "pushNotifications": false

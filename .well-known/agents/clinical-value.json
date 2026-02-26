@@ -3,17 +3,18 @@
   "description": "Assesses pharmaceutical value propositions for clinical evidence strength: mechanism of action clarity, efficacy data robustness, safety narrative completeness, and clinical trial references (NCT numbers). Activated only in value_proposition query mode.",
   "supportedInterfaces": [
     {
-      "url": "https://localhost:8001/api",
+      "url": "https://llmcouncil-backend.azurewebsites.net/api",
       "protocolBinding": "HTTP+JSON",
       "protocolVersion": "1.0"
     }
   ],
   "provider": {
     "organization": "Bayer AG — LLM Council Agent Team",
-    "url": "https://chat.int.bayer.com"
+    "url": "https://llmcouncil-agents.ai"
   },
   "iconUrl": "data:text/plain,💊",
-  "version": "2.0.0",
+  "version": "3.0.0",
+  "beatId": "BEAT04059418",
   "capabilities": {
     "streaming": false,
     "pushNotifications": false

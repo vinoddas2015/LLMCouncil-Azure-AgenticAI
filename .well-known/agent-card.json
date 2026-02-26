@@ -1,20 +1,22 @@
 {
   "name": "LLM Council — Multi-Model Deliberation System",
-  "description": "A 3-stage pharmaceutical deliberation engine where multiple LLMs collaboratively answer user questions through parallel response generation, anonymized peer review with RAGAS-aligned grounding metrics, and chairman synthesis. Post-pipeline, a team of 9 specialist agents (expandable to 12 in value-proposition mode) analyse the output for research depth, factual grounding, risk signals, patterns, insights, quality, citation integrity, skill pipeline health, and memory orchestration.",
+  "description": "A 3-stage pharmaceutical deliberation engine where multiple LLMs collaboratively answer user questions through parallel response generation, anonymized peer review with RAGAS-aligned grounding metrics, and chairman synthesis. Post-pipeline, a team of 12 specialist agents (expandable to 13 with infrastructure) analyse the output for research depth, factual grounding, risk signals, patterns, insights, quality, citation integrity, skill pipeline health, memory orchestration, and system health monitoring.",
   "supportedInterfaces": [
     {
-      "url": "https://localhost:8001/api",
+      "url": "https://llmcouncil-backend.azurewebsites.net/api",
       "protocolBinding": "HTTP+JSON",
       "protocolVersion": "1.0"
     }
   ],
   "provider": {
     "organization": "Bayer AG — Pharmaceutical Data Science",
-    "url": "https://chat.int.bayer.com"
+    "url": "https://llmcouncil-agents.ai"
   },
-  "iconUrl": "https://localhost:5173/bayer-logo.png",
-  "version": "2.0.0",
-  "documentationUrl": "https://localhost:5173",
+  "iconUrl": "https://llmcouncil-agents.ai/bayer-logo.png",
+  "version": "3.0.0",
+  "documentationUrl": "https://llmcouncil-agents.ai",
+  "beatId": "BEAT04059418",
+  "serviceNowUrl": "https://bayersi.service-now.com/nav_to.do?uri=x_inpgh_upmx_portfolio_element.do?sys_id=562c786797f4069407f6f7ffe153aff0",
   "capabilities": {
     "streaming": true,
     "pushNotifications": false,
@@ -27,10 +29,18 @@
         "scheme": "Bearer",
         "bearerFormat": "API Key"
       }
+    },
+    "entraIdSso": {
+      "httpAuthSecurityScheme": {
+        "description": "Microsoft Entra ID SSO via Bearer JWT token",
+        "scheme": "Bearer",
+        "bearerFormat": "JWT"
+      }
     }
   },
   "securityRequirements": [
-    { "bayerApiKey": [] }
+    { "bayerApiKey": [] },
+    { "entraIdSso": [] }
   ],
   "defaultInputModes": ["text/plain", "application/json"],
   "defaultOutputModes": ["text/plain", "application/json", "text/event-stream"],
@@ -51,7 +61,7 @@
     {
       "id": "agent-team-analysis",
       "name": "Agent Team Post-Pipeline Analysis",
-      "description": "Runs 9 specialist agents in parallel after the council pipeline to provide multi-dimensional analysis: research depth, fact-checking, risk assessment, pattern detection, insight synthesis, quality auditing, citation supervision, skill pipeline health monitoring, and memory orchestration.",
+      "description": "Runs 9 core specialist agents in parallel after the council pipeline to provide multi-dimensional analysis: research depth, fact-checking, risk assessment, pattern detection, insight synthesis, quality auditing, citation supervision, skill pipeline health monitoring, and memory orchestration.",
       "tags": ["agents", "analysis", "fact-check", "risk", "quality", "citations"],
       "examples": [
         "Analyse the council output for safety signals and hallucination risk",
@@ -86,6 +96,14 @@
       "description": "Multi-source evidence retrieval via 22 parallel skills (11 core: OpenFDA, ClinicalTrials.gov, PubMed, EMA, WHO ATC, UniProt, ChEMBL, KEGG, Reactome, RxNorm, STRING-DB + 11 web: Semantic Scholar, CrossRef, Europe PMC, DuckDuckGo Science, arXiv, Google Patents, Wikipedia, ORCID, OpenAlex, Unpaywall, Elsevier/Scopus). Citations are integrated into the chairman synthesis with inline tags.",
       "tags": ["evidence", "pubmed", "clinical-trials", "fda", "citations", "retrieval"],
       "inputModes": ["text/plain"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "health-probe-monitoring",
+      "name": "Health Probe Monitoring",
+      "description": "Autonomous background health monitoring agent that runs periodic checks every 5 minutes across 5 subsystems: Cosmos DB connectivity, API key expiry, memory store health, model sync status, and resilience subsystem. Reports overall status as healthy/degraded/critical with per-check details.",
+      "tags": ["health", "monitoring", "infrastructure", "cosmos-db", "resilience"],
+      "inputModes": ["application/json"],
       "outputModes": ["application/json"]
     }
   ]

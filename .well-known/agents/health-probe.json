@@ -1,0 +1,73 @@
+{
+  "name": "Health Probe Agent",
+  "description": "Autonomous background health monitoring agent that runs periodic checks every 5 minutes across 5 subsystems: Cosmos DB connectivity, API key expiry detection, memory store health, model sync status, and resilience subsystem integrity. Reports overall system status as healthy/degraded/critical with per-check latency and error details. Exposes results via /api/health/deep, /api/health/history, and /api/health/failures endpoints.",
+  "supportedInterfaces": [
+    {
+      "url": "https://llmcouncil-backend.azurewebsites.net/api",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "provider": {
+    "organization": "Bayer AG — LLM Council Agent Team",
+    "url": "https://llmcouncil-agents.ai"
+  },
+  "iconUrl": "data:text/plain,🏥",
+  "version": "3.0.0",
+  "beatId": "BEAT04059418",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "cosmos-db-check",
+      "name": "Cosmos DB Connectivity Check",
+      "description": "Tests Azure Cosmos DB connection by performing a lightweight read operation against the conversations container. Reports latency, connection status, and error details if unreachable.",
+      "tags": ["cosmos-db", "database", "connectivity", "azure"],
+      "examples": [
+        "Verify Cosmos DB is reachable and responding within acceptable latency"
+      ]
+    },
+    {
+      "id": "api-key-expiry-check",
+      "name": "API Key Expiry Detection",
+      "description": "Validates that the Bayer myGenAssist API key (OPENROUTER_API_KEY) is present and functional. Detects expired or revoked keys before they cause pipeline failures.",
+      "tags": ["api-key", "authentication", "expiry", "mygenassist"]
+    },
+    {
+      "id": "memory-store-check",
+      "name": "Memory Store Health Check",
+      "description": "Verifies the 3-tier memory system (Semantic, Episodic, Procedural) backend is operational. Tests read/write capability to the memory Cosmos DB container or local JSON fallback.",
+      "tags": ["memory", "semantic", "episodic", "procedural", "health"]
+    },
+    {
+      "id": "model-sync-check",
+      "name": "Model Sync Status Check",
+      "description": "Validates that the council model list is synchronized with the upstream myGenAssist API. Detects stale model configurations, removed models, or new models available for addition.",
+      "tags": ["models", "sync", "mygenassist", "configuration"]
+    },
+    {
+      "id": "resilience-check",
+      "name": "Resilience Subsystem Check",
+      "description": "Tests the circuit breaker, retry, and fallback mechanisms in the resilience layer. Verifies that graceful degradation paths are functional for pipeline fault tolerance.",
+      "tags": ["resilience", "circuit-breaker", "retry", "fault-tolerance"]
+    }
+  ],
+  "metadata": {
+    "agentId": "health_probe",
+    "icon": "🏥",
+    "category": "infrastructure",
+    "pipelinePosition": "background",
+    "executionMode": "background-periodic",
+    "intervalMinutes": 5,
+    "endpoints": {
+      "deepHealth": "/api/health/deep",
+      "history": "/api/health/history",
+      "failures": "/api/health/failures"
+    },
+    "statusLevels": ["healthy", "degraded", "critical"]
+  }
+}
