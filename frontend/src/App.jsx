@@ -76,11 +76,22 @@ function App() {
     );
   }
 
+  // ── Extract user display name from MSAL account ──────────────────
+  // The account object contains: username (UPN/email), name (display name)
+  let userDisplayName = null;
+  if (msalInstance) {
+    const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+    if (account) {
+      // Prefer display name, fallback to username (CWID@bayer.com)
+      userDisplayName = account.name || account.username || null;
+    }
+  }
+
   // ── Authenticated app ─────────────────────────────────────────────
-  return <AuthenticatedApp handleLogout={needsAuth ? handleLogout : null} />;
+  return <AuthenticatedApp handleLogout={needsAuth ? handleLogout : null} userDisplayName={userDisplayName} />;
 }
 
-function AuthenticatedApp({ handleLogout }) {
+function AuthenticatedApp({ handleLogout, userDisplayName }) {
   const [conversations, setConversations] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [currentConversation, setCurrentConversation] = useState(null);
@@ -91,6 +102,14 @@ function AuthenticatedApp({ handleLogout }) {
   const [atlasWidth, setAtlasWidth] = useState(480);
   const [preferences, setPreferences] = useState(loadPreferences);
   const [activeSessionId, setActiveSessionId] = useState(null);
+  const [errorBanner, setErrorBanner] = useState(null);
+
+  // Auto-dismiss error banner after 8 seconds
+  useEffect(() => {
+    if (!errorBanner) return;
+    const t = setTimeout(() => setErrorBanner(null), 8000);
+    return () => clearTimeout(t);
+  }, [errorBanner]);
 
   // ── RAF-batched state updater (replaces flushSync) ────────────
   // Queues state updates and flushes them all in a single animation
@@ -137,6 +156,7 @@ function AuthenticatedApp({ handleLogout }) {
       setConversations(convs);
     } catch (error) {
       console.error('Failed to load conversations:', error);
+      setErrorBanner(`Failed to load conversations: ${error.message}`);
     } finally {
       loadingConvsRef.current = false;
     }
@@ -173,8 +193,10 @@ function AuthenticatedApp({ handleLogout }) {
         ...conversations,
       ]);
       setCurrentConversationId(newConv.id);
+      setErrorBanner(null); // Clear any previous error
     } catch (error) {
       console.error('Failed to create conversation:', error);
+      setErrorBanner(`Failed to create conversation: ${error.message}`);
     }
   };
 
@@ -566,9 +588,17 @@ function AuthenticatedApp({ handleLogout }) {
           onOpenSettings={() => setShowSettings(true)}
           onExportConversation={handleExportConversation}
           onDeleteConversation={handleDeleteConversation}
+          onLogout={handleLogout}
+          userDisplayName={userDisplayName}
         />
       </nav>
       <main id="main-content" role="main" aria-label="Chat area">
+        {errorBanner && (
+          <div className="error-banner" role="alert" aria-live="assertive">
+            <span>{errorBanner}</span>
+            <button onClick={() => setErrorBanner(null)} aria-label="Dismiss error">&times;</button>
+          </div>
+        )}
         <ChatInterface
           conversation={currentConversation}
           onSendMessage={handleSendMessage}
@@ -602,17 +632,7 @@ function AuthenticatedApp({ handleLogout }) {
       >
         🧠
       </button>
-      {/* Sign Out Button (Azure SSO only) */}
-      {handleLogout && (
-        <button
-          className="sign-out-toggle"
-          onClick={handleLogout}
-          title="Sign Out"
-          aria-label="Sign out of your Bayer account"
-        >
-          🚪
-        </button>
-      )}
+      {/* Sign Out moved to Sidebar footer — see Sidebar.jsx */}
       <MemoryPanel
         isOpen={showMemory}
         onClose={() => setShowMemory(false)}

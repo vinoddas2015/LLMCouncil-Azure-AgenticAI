@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import ThemeToggle from './ThemeToggle';
-import { getUserId } from '../api';
 import './Sidebar.css';
 
 export default function Sidebar({
@@ -11,21 +10,10 @@ export default function Sidebar({
   onOpenSettings,
   onExportConversation,
   onDeleteConversation,
+  onLogout,
+  userDisplayName,
 }) {
   const [showMenu, setShowMenu] = useState(null);
-  const [userId, setUserId] = useState(null);
-
-  useEffect(() => {
-    const id = getUserId();
-    if (id) setUserId(id);
-
-    // Re-check after a short delay so the token fetch has time to complete
-    const timer = setTimeout(() => {
-      const id = getUserId();
-      if (id) setUserId(id);
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, []);
 
   const handleContextMenu = (e, convId) => {
     e.preventDefault();
@@ -136,7 +124,22 @@ export default function Sidebar({
       </div>
 
       <div className="sidebar-footer">
-        {userId && <span className="footer-user-id" title={userId}>{userId}</span>}
+        {onLogout && (
+          <button
+            className="sidebar-sign-out"
+            onClick={onLogout}
+            title="Sign out of your Bayer account"
+            aria-label="Sign out of your Bayer account"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            Sign Out
+          </button>
+        )}
+        {userDisplayName && <span className="footer-user-id" title={userDisplayName}>{userDisplayName}</span>}
         <span className="powered-by">Queries contact: <a href="mailto:llmcouncil@bayer.com" className="footer-email">llmcouncil@bayer.com</a></span>
       </div>
     </div>
