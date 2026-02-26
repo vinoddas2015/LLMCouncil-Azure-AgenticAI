@@ -169,51 +169,78 @@ async def post_stage3_agent(
     - Otherwise → mark as pending for user decision.
     - Returns learning summary + prompt for user action.
     """
-    mm = get_memory_manager()
+    try:
+        mm = get_memory_manager()
+    except Exception as e:
+        logger.error(f"[PostStage3Agent] Failed to get memory manager: {e}")
+        # Return a fallback result so the SSE event still fires
+        return {
+            "gate": "post_stage3",
+            "action": "error",
+            "grounding_score": round(grounding_score, 4),
+            "auto_learn_threshold": auto_learn_threshold,
+            "message": f"Memory system unavailable: {e}",
+            "learned": {"semantic": None, "episodic": None, "procedural": None},
+        }
 
     should_auto_learn = grounding_score >= auto_learn_threshold
 
-    if should_auto_learn:
-        learned = mm.learn_from_council(
-            conversation_id=conversation_id,
-            query=user_query,
-            stage1_results=stage1_results,
-            aggregate_rankings=aggregate_rankings,
-            stage3_result=stage3_result,
-            grounding_score=grounding_score,
-            cost_summary=cost_summary,
-            tags=tags,
-        )
-        action = "auto_learned"
-        message = (
-            f"Grounding score ({grounding_score:.0%}) exceeds threshold "
-            f"({auto_learn_threshold:.0%}). Decision auto-learned into memory."
-        )
-        logger.info(f"[PostStage3Agent] Auto-learned (grounding={grounding_score:.2%})")
-    else:
-        # Still store episodic record with 'pending' verdict
-        learned = {
-            "episodic": mm.episodic.store(
+    try:
+        if should_auto_learn:
+            learned = mm.learn_from_council(
                 conversation_id=conversation_id,
                 query=user_query,
-                stage1_summary=stage1_results,
+                stage1_results=stage1_results,
                 aggregate_rankings=aggregate_rankings,
-                chairman_model=stage3_result.get("model", "unknown"),
-                chairman_response_preview=stage3_result.get("response", "")[:500],
+                stage3_result=stage3_result,
                 grounding_score=grounding_score,
                 cost_summary=cost_summary,
-                user_verdict="pending",
                 tags=tags,
+            )
+            action = "auto_learned"
+            message = (
+                f"Grounding score ({grounding_score:.0%}) exceeds threshold "
+                f"({auto_learn_threshold:.0%}). Decision auto-learned into memory."
+            )
+            logger.info(f"[PostStage3Agent] Auto-learned (grounding={grounding_score:.2%})")
+        else:
+            # Still store episodic record with 'pending' verdict
+            learned = {
+                "episodic": mm.episodic.store(
+                    conversation_id=conversation_id,
+                    query=user_query,
+                    stage1_summary=stage1_results,
+                    aggregate_rankings=aggregate_rankings,
+                    chairman_model=stage3_result.get("model", "unknown"),
+                    chairman_response_preview=stage3_result.get("response", "")[:500],
+                    grounding_score=grounding_score,
+                    cost_summary=cost_summary,
+                    user_verdict="pending",
+                    tags=tags,
+                ),
+                "semantic": None,
+                "procedural": None,
+            }
+            action = "pending_user_decision"
+            message = (
+                f"Grounding score ({grounding_score:.0%}) below auto-learn threshold "
+                f"({auto_learn_threshold:.0%}). Please decide: Learn or Unlearn."
+            )
+            logger.info(f"[PostStage3Agent] Pending user decision (grounding={grounding_score:.2%})")
+    except Exception as e:
+        logger.error(f"[PostStage3Agent] Memory storage failed: {e}", exc_info=True)
+        # Return a partial result so the SSE event still fires
+        return {
+            "gate": "post_stage3",
+            "action": "pending_user_decision",
+            "grounding_score": round(grounding_score, 4),
+            "auto_learn_threshold": auto_learn_threshold,
+            "message": (
+                f"Grounding score ({grounding_score:.0%}). "
+                f"Memory storage encountered an error — please retry Learn action manually."
             ),
-            "semantic": None,
-            "procedural": None,
+            "learned": {"semantic": None, "episodic": None, "procedural": None},
         }
-        action = "pending_user_decision"
-        message = (
-            f"Grounding score ({grounding_score:.0%}) below auto-learn threshold "
-            f"({auto_learn_threshold:.0%}). Please decide: Learn or Unlearn."
-        )
-        logger.info(f"[PostStage3Agent] Pending user decision (grounding={grounding_score:.2%})")
 
     result = {
         "gate": "post_stage3",

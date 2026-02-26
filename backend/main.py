@@ -998,7 +998,8 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
             memory_gate = await memory_task
             if memory_gate.get("memory_context"):
                 augmented_content = memory_gate["augmented_query"]
-            yield f"data: {json.dumps({'type': 'memory_recall', 'data': {k: v for k, v in memory_gate.items() if k != 'memory_context' and k != 'augmented_query'}})}\n\n"
+            memory_recall_data = {k: v for k, v in memory_gate.items() if k != 'memory_context' and k != 'augmented_query'}
+            yield f"data: {json.dumps({'type': 'memory_recall', 'data': memory_recall_data})}\n\n"
 
             # Build user message content for storage (include attachment info)
             storage_content = request.content
@@ -1387,6 +1388,8 @@ Now provide your complete evaluation:"""
                     "grounding_scores": grounding_scores,
                     "evidence": evidence_bundle,
                     "infographic": infographic_data,
+                    "memory_recall": memory_recall_data,
+                    "memory_gate": stage2_gate,
                 },
             )
 
@@ -1448,8 +1451,23 @@ Now provide your complete evaluation:"""
             # Emit learning decision
             if learning_gate and not isinstance(learning_gate, Exception):
                 yield f"data: {json.dumps({'type': 'memory_learning', 'data': learning_gate})}\n\n"
+                # Persist memory_learning + cost_summary in conversation metadata
+                try:
+                    storage.update_last_message_metadata(
+                        user_id, conversation_id,
+                        {"memory_learning": learning_gate, "cost_summary": cost_summary},
+                    )
+                except Exception:
+                    logger.debug("Failed to persist memory_learning metadata")
             elif isinstance(learning_gate, Exception):
                 logger.warning(f"[PostStage3] Non-fatal error: {learning_gate}")
+                # Still persist cost_summary even if learning failed
+                try:
+                    storage.update_last_message_metadata(
+                        user_id, conversation_id, {"cost_summary": cost_summary},
+                    )
+                except Exception:
+                    logger.debug("Failed to persist cost_summary metadata")
 
             # Send completion event
             yield f"data: {json.dumps({'type': 'complete'})}\n\n"

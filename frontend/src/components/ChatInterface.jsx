@@ -369,14 +369,14 @@ export default function ChatInterface({
                   {(msg.infographic || msg.metadata?.infographic) && <InfographicPanel data={msg.infographic || msg.metadata?.infographic} />}
 
                   {/* Cost / Token Burndown */}
-                  {msg.costSummary && <TokenBurndown costSummary={msg.costSummary} />}
+                  {(msg.costSummary || msg.metadata?.cost_summary) && <TokenBurndown costSummary={msg.costSummary || msg.metadata?.cost_summary} />}
 
                   {/* Memory Learn/Unlearn Controls */}
-                  {msg.memoryLearning && (
+                  {(msg.memoryLearning || msg.metadata?.memory_learning) && (
                     <LearnUnlearn
-                      learningData={msg.memoryLearning}
-                      memoryRecall={msg.memoryRecall}
-                      memoryGate={msg.memoryGate}
+                      learningData={msg.memoryLearning || msg.metadata?.memory_learning}
+                      memoryRecall={msg.memoryRecall || msg.metadata?.memory_recall}
+                      memoryGate={msg.memoryGate || msg.metadata?.memory_gate}
                     />
                   )}
                 </div>
