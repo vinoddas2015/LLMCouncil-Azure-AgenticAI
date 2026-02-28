@@ -454,6 +454,17 @@ VALUE PROPOSITION MODE: Structure your answer as:
 - **OUTCOME**: Clinical benefits, safety, transformative impact
 After the VP text, generate infographic JSON with type "value_proposition" and sections: challenge, solution, outcome."""
 
+_MEMORY_ADDON = """
+MEMORY-AWARE SYNTHESIS: You have access to the council's memory system.
+- When a PRIOR DELIBERATION CONTEXT section is present, the user has asked a question similar to one already processed.
+- If a near-duplicate is detected, BEGIN your response with a brief "Memory Advisory" section:
+  > ⚠️ **Memory Advisory**: This query closely matches a previous deliberation (similarity: X%). The council previously answered this with a grounding score of Y%. Consider reviewing the prior result first.
+  > **Suggested alternatives**: <list 2-3 alternative follow-up questions that would build on the prior answer>
+- After the advisory, still provide the full synthesis — the user may want a fresh perspective.
+- When prior domain knowledge or past deliberations are provided, actively cross-reference them with the current council responses. Highlight what is NEW compared to the prior answer, and flag any contradictions.
+- Leverage procedural memories (learned workflows) when applicable to structure your response.
+- NEVER fabricate memory references — only reference memories explicitly provided in the prompt."""
+
 
 def _build_system_message(features: Dict[str, bool]) -> str:
     """Assemble the system message with only the relevant instruction addons."""
@@ -462,6 +473,8 @@ def _build_system_message(features: Dict[str, bool]) -> str:
         parts.append(_CHEMISTRY_ADDON)
     if features.get("needs_vp"):
         parts.append(_VP_ADDON)
+    if features.get("has_memory_context"):
+        parts.append(_MEMORY_ADDON)
     return "\n".join(parts)
 
 
@@ -475,6 +488,8 @@ async def stage3_synthesize_final(
     session_id: Optional[str] = None,
     evidence_context: str = "",
     relevancy_gate: Optional[Dict[str, Dict[str, Any]]] = None,
+    memory_context: str = "",
+    duplicate_episode: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Stage 3: Chairman synthesizes final response.
@@ -538,7 +553,29 @@ Note: This is a follow-up question in an ongoing conversation. Consider the prev
 
     # ── OPT: Adaptive prompt — detect query features, trim prompt ────
     features = _detect_query_features(user_query, stage1_text)
+    # Activate memory addon when memory context or duplicate is present
+    if memory_context or duplicate_episode:
+        features["has_memory_context"] = True
     system_msg = _build_system_message(features)
+
+    # ── Memory context: prior deliberations & domain knowledge ──
+    memory_section = ""
+    if duplicate_episode:
+        sim = duplicate_episode.get("duplicate_similarity", 0)
+        gs = duplicate_episode.get("grounding_score", 0)
+        prev_preview = duplicate_episode.get("chairman_response_preview", "")[:400]
+        prev_query = duplicate_episode.get("query_preview", "")[:200]
+        memory_section += (
+            f"PRIOR DELIBERATION CONTEXT — NEAR-DUPLICATE DETECTED\n"
+            f"  Similarity: {sim:.0%} | Prior Grounding: {gs:.0%}\n"
+            f"  Previous query: \"{prev_query}\"\n"
+            f"  Previous chairman summary: {prev_preview}...\n"
+            f"  ── This user has submitted a very similar query/document before.\n"
+            f"  ── Begin with a Memory Advisory noting this, suggest 2-3 alternative\n"
+            f"     follow-up questions, then provide your full fresh synthesis.\n\n"
+        )
+    if memory_context:
+        memory_section += memory_context + "\n"
 
     # ── Relevancy Gate: annotate excluded responses in the user prompt ──
     gate_section = ""
@@ -566,7 +603,7 @@ STAGE 2 — Rubric Evaluation & Claim Analysis:
 {rubric_section}
 
 {evidence_context}
-{f'Consider the context from the previous conversation.' if context else ''}
+{memory_section}{f'Consider the context from the previous conversation.' if context else ''}
 
 Provide a clear, well-reasoned final answer that represents the council's collective wisdom:"""
 

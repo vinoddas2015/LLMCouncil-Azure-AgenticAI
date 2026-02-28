@@ -1125,8 +1125,15 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
 
             # Guard passed — await memory recall result
             memory_gate = await memory_task
+            raw_memory_context = memory_gate.get("memory_context", "")
+            duplicate_episode = None
             if memory_gate.get("memory_context"):
                 augmented_content = memory_gate["augmented_query"]
+            if memory_gate.get("duplicate_detected") and memory_gate.get("duplicate_episode"):
+                duplicate_episode = {
+                    **memory_gate["duplicate_episode"],
+                    "duplicate_similarity": memory_gate.get("duplicate_similarity", 0),
+                }
             memory_recall_data = {k: v for k, v in memory_gate.items() if k != 'memory_context' and k != 'augmented_query'}
             yield f"data: {json.dumps({'type': 'memory_recall', 'data': memory_recall_data})}\n\n"
 
@@ -1420,6 +1427,8 @@ Now provide your complete evaluation:"""
                     session_id=session_id,
                     evidence_context=evidence_text,
                     relevancy_gate=relevancy_gate,
+                    memory_context=raw_memory_context,
+                    duplicate_episode=duplicate_episode,
                 )
             )
 

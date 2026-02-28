@@ -78,6 +78,35 @@ async def pre_stage1_agent(
         result["augmented_query"] = user_query
         logger.info("[PreStage1Agent] No relevant memories found")
 
+    # ── Duplicate / near-duplicate detection ──────────────────────────
+    # If the user submits the same query or very similar document again,
+    # surface the prior result so the chairman can reference it and the
+    # frontend can suggest retrieval instead of full re-processing.
+    try:
+        dup = mm.episodic.find_duplicate(user_query, similarity_threshold=0.55)
+        if dup:
+            sim = dup.pop("_similarity", 0)
+            result["duplicate_detected"] = True
+            result["duplicate_similarity"] = round(sim, 4)
+            result["duplicate_episode"] = {
+                "id": dup.get("id"),
+                "query_preview": (dup.get("query") or "")[:200],
+                "chairman_model": dup.get("chairman_model"),
+                "chairman_response_preview": (dup.get("chairman_response_preview") or "")[:400],
+                "grounding_score": dup.get("grounding_score"),
+                "conversation_id": dup.get("conversation_id"),
+                "created_at": dup.get("created_at"),
+            }
+            logger.info(
+                f"[PreStage1Agent] Duplicate detected "
+                f"(similarity={sim:.2%}, prev_conv={dup.get('conversation_id')})"
+            )
+        else:
+            result["duplicate_detected"] = False
+    except Exception as e:
+        logger.debug(f"[PreStage1Agent] Duplicate detection skipped: {e}")
+        result["duplicate_detected"] = False
+
     return result
 
 

@@ -248,14 +248,61 @@ class EpisodicMemory:
         for k in keys:
             doc = backend.get(self.COLLECTION, k)
             if doc:
-                # Skip CA snapshots — they share the episodic collection
-                # but are NOT user-facing episodic memories
-                if doc.get("type") == "ca_snapshot":
+                # The episodic collection is shared by multiple subsystems
+                # (ca_snapshot, user_profile_interaction, eca_state).
+                # Only include actual episodic memory entries.
+                if doc.get("type") not in ("episodic", None):
                     continue
                 if include_unlearned or doc.get("status") != "unlearned":
                     entries.append(doc)
         entries.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         return entries
+
+    def find_duplicate(
+        self, query: str, similarity_threshold: float = 0.55,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Check if a near-duplicate episodic memory already exists for this query.
+
+        Uses word-level Jaccard similarity — effective for detecting
+        re-submitted queries or documents even with minor prompt variations.
+
+        Args:
+            query: The new user query (may include extracted document text).
+            similarity_threshold: Jaccard similarity cutoff (0-1).
+
+        Returns:
+            The best-matching episodic memory if above threshold, else None.
+        """
+        all_episodes = self.list_all(include_unlearned=False)
+        if not all_episodes:
+            return None
+
+        query_words = set(query.lower().split())
+        if len(query_words) < 3:
+            return None
+
+        best_match = None
+        best_score = 0.0
+
+        for ep in all_episodes:
+            ep_query = ep.get("query", "")
+            if not ep_query:
+                continue
+            ep_words = set(ep_query.lower().split())
+            if not ep_words:
+                continue
+            intersection = query_words & ep_words
+            union = query_words | ep_words
+            jaccard = len(intersection) / len(union) if union else 0.0
+            if jaccard > best_score:
+                best_score = jaccard
+                best_match = ep
+
+        if best_score >= similarity_threshold and best_match:
+            best_match = {**best_match, "_similarity": round(best_score, 4)}
+            return best_match
+        return None
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
