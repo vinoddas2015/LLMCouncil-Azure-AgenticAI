@@ -11,6 +11,7 @@ import json
 import os
 import asyncio
 import base64
+import random
 from datetime import datetime
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -1294,6 +1295,21 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                 cost_tracker.record("stage1", r["model"], r.get("usage"))
             yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_results})}\n\n"
 
+            # ── Checkpoint: Stage 1 complete ──────────────────────────
+            try:
+                storage.save_pipeline_checkpoint(user_id, conversation_id, {
+                    "completed_stage": "stage1",
+                    "stage1_results": stage1_results,
+                    "augmented_content": augmented_content,
+                    "web_search_enabled": web_search_enabled,
+                    "user_council_models": user_council_models,
+                    "user_chairman_model": user_chairman_model,
+                    "conversation_history": conversation_history,
+                    "raw_memory_context": raw_memory_context if 'raw_memory_context' in dir() else None,
+                })
+            except Exception as e:
+                logger.debug(f"[Checkpoint] Non-fatal save error after Stage 1: {e}")
+
             # Kill switch check between stages
             if kill_switch.is_session_killed(session_id):
                 yield f"data: {json.dumps({'type': 'killed', 'message': 'Council session aborted by user.'})}\n\n"
@@ -1317,13 +1333,27 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                 f"Response {label}:\n{result['response']}"
                 for label, result in zip(_s2_labels, stage1_results)
             ])
-            _s2_ranking_prompt = f"""You are a pharmaceutical domain expert evaluating different responses to the following question:
-{_s2_context_note}
-Question: {augmented_content}
+
+            # ── Position Debiasing (arXiv:2405.19323) ──────────────
+            # Shuffle presentation order PER REVIEWER to mitigate
+            # first-position bias.  Labels stay the same — only the
+            # display order changes.
+            _s2_per_model_responses: dict[str, str] = {}
+            for _s2m in _s2_models:
+                _shuf = list(range(len(stage1_results)))
+                random.shuffle(_shuf)
+                _s2_per_model_responses[_s2m] = "\n\n".join([
+                    f"Response {_s2_labels[i]}:\n{stage1_results[i]['response']}"
+                    for i in _shuf
+                ])
+
+            _s2_ranking_prompt_template = """You are a pharmaceutical domain expert evaluating different responses to the following question:
+{context_note}
+Question: {question}
 
 Here are the responses from different models (anonymized):
 
-{_s2_responses_text}
+{responses_text}
 
 ═══════════════════════════════════════════════════════════
 PART 1 — RUBRIC EVALUATION (Verbalized Sampling)
@@ -1374,11 +1404,19 @@ IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
 - Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
 
 Now provide your complete evaluation:"""
-            _s2_messages = [{"role": "user", "content": _s2_ranking_prompt}]
+
+            # Build per-model debiased messages
+            _s2_per_model_msgs: dict[str, list] = {}
+            for _s2m in _s2_models:
+                _s2_per_model_msgs[_s2m] = [{"role": "user", "content": _s2_ranking_prompt_template.format(
+                    context_note=_s2_context_note,
+                    question=augmented_content,
+                    responses_text=_s2_per_model_responses.get(_s2m, _s2_responses_text),
+                )}]
 
             _s2_tasks = {
                 asyncio.create_task(
-                    query_model(m, _s2_messages, web_search_enabled=web_search_enabled, session_id=session_id)
+                    query_model(m, _s2_per_model_msgs[m], web_search_enabled=web_search_enabled, session_id=session_id)
                 ): m
                 for m in _s2_models
             }
@@ -1423,6 +1461,25 @@ Now provide your complete evaluation:"""
             evidence_bundle = await evidence_task
             yield f"data: {json.dumps({'type': 'evidence_complete', 'data': evidence_bundle})}\n\n"
             yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'grounding_scores': grounding_scores}})}\n\n"
+
+            # ── Checkpoint: Stage 2 complete ──────────────────────────
+            try:
+                storage.save_pipeline_checkpoint(user_id, conversation_id, {
+                    "completed_stage": "stage2",
+                    "stage1_results": stage1_results,
+                    "stage2_results": stage2_results,
+                    "label_to_model": label_to_model,
+                    "aggregate_rankings": aggregate_rankings,
+                    "grounding_scores": grounding_scores,
+                    "augmented_content": augmented_content,
+                    "web_search_enabled": web_search_enabled,
+                    "user_council_models": user_council_models,
+                    "user_chairman_model": user_chairman_model,
+                    "conversation_history": conversation_history,
+                    "raw_memory_context": raw_memory_context if 'raw_memory_context' in dir() else None,
+                })
+            except Exception as e:
+                logger.debug(f"[Checkpoint] Non-fatal save error after Stage 2: {e}")
 
             # ── Stage 2.5: Relevancy Gate ────────────────────────────
             relevancy_gate = compute_relevancy_gate(stage2_results)
@@ -1731,6 +1788,12 @@ Now provide your complete evaluation:"""
             # Send completion event
             yield f"data: {json.dumps({'type': 'complete'})}\n\n"
 
+            # ── Clear pipeline checkpoint on successful completion ──
+            try:
+                storage.clear_pipeline_checkpoint(user_id, conversation_id)
+            except Exception:
+                pass  # non-critical
+
         except KillSwitchError as e:
             # User-triggered abort — graceful termination
             yield f"data: {json.dumps({'type': 'killed', 'message': str(e)})}\n\n"
@@ -1754,6 +1817,399 @@ Now provide your complete evaluation:"""
             "Pragma": "no-cache",
             "Expires": "0",
         }
+    )
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Resume endpoint — self-healing SSE reconnect after network drop
+# ────────────────────────────────────────────────────────────────────────
+
+class ResumeRequest(BaseModel):
+    """Request body for the resume endpoint."""
+    council_models: Optional[List[str]] = None
+    chairman_model: Optional[str] = None
+    web_search_enabled: bool = False
+
+
+@app.post("/api/conversations/{conversation_id}/message/resume")
+async def resume_message_stream(
+    conversation_id: str,
+    request: ResumeRequest,
+    user_id: str = Depends(get_authenticated_user_id),
+):
+    """Resume an interrupted council pipeline from its last checkpoint.
+
+    Reads the progressive checkpoint saved after Stage 1 / Stage 2 and
+    re-runs only the remaining stages, returning SSE events for the
+    uncompleted portion of the pipeline.
+    """
+    conversation = storage.get_conversation(user_id, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    checkpoint = storage.load_pipeline_checkpoint(user_id, conversation_id)
+    if not checkpoint:
+        raise HTTPException(
+            status_code=409,
+            detail="No pipeline checkpoint found — please resend the message.",
+        )
+
+    completed_stage = checkpoint.get("completed_stage")
+    if completed_stage not in ("stage1", "stage2"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Unexpected checkpoint stage: {completed_stage}",
+        )
+
+    session_id = f"{conversation_id}:{uuid.uuid4().hex[:8]}"
+
+    # Reuse keepalive from the main endpoint's closure — define inline
+    async def with_keepalive_resume(inner_gen, interval=10):
+        inner_iter = inner_gen.__aiter__()
+        pending_next = None
+        gen_context = None
+        while True:
+            if pending_next is None:
+                coro = inner_iter.__anext__()
+                if gen_context is not None:
+                    loop = asyncio.get_running_loop()
+                    pending_next = loop.create_task(coro, context=gen_context)
+                else:
+                    pending_next = asyncio.ensure_future(coro)
+            done, _ = await asyncio.wait({pending_next}, timeout=interval)
+            if done:
+                task = pending_next
+                pending_next = None
+                if gen_context is None:
+                    gen_context = task.get_context()
+                try:
+                    yield task.result()
+                except StopAsyncIteration:
+                    break
+            else:
+                yield ": keepalive\n\n"
+
+    async def resume_generator():
+        kill_event = kill_switch.register_session(session_id)
+        cost_tracker = SessionCostTracker()
+        set_memory_user(user_id)
+
+        try:
+            yield f"data: {json.dumps({'type': 'session_start', 'data': {'session_id': session_id}})}\n\n"
+
+            # ── Restore checkpoint data ─────────────────────────────
+            stage1_results = checkpoint["stage1_results"]
+            augmented_content = checkpoint["augmented_content"]
+            web_search_enabled = checkpoint.get("web_search_enabled", request.web_search_enabled)
+            user_council_models = checkpoint.get("user_council_models", request.council_models)
+            user_chairman_model = checkpoint.get("user_chairman_model", request.chairman_model)
+            conversation_history = checkpoint.get("conversation_history", [])
+            raw_memory_context = checkpoint.get("raw_memory_context")
+
+            # Re-emit Stage 1 data so the frontend hydrates its state
+            yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_results})}\n\n"
+
+            if completed_stage == "stage1":
+                # ── Need to run Stage 2 + Stage 3 ──────────────────
+                yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
+                evidence_task = asyncio.create_task(
+                    run_evidence_skills(augmented_content, web_search_enabled=web_search_enabled)
+                )
+
+                _s2_models = user_council_models or COUNCIL_MODELS
+                _s2_labels = [chr(65 + i) for i in range(len(stage1_results))]
+                label_to_model = {
+                    f"Response {label}": result['model']
+                    for label, result in zip(_s2_labels, stage1_results)
+                }
+                _s2_context = build_conversation_context(conversation_history)
+                _s2_context_note = (
+                    f"\nNote: This is a follow-up question in an ongoing conversation.\n{_s2_context}\n"
+                    if _s2_context else ""
+                )
+                _s2_responses_text = "\n\n".join([
+                    f"Response {label}:\n{result['response']}"
+                    for label, result in zip(_s2_labels, stage1_results)
+                ])
+
+                # Position debiasing
+                _s2_per_model_responses: dict[str, str] = {}
+                for _s2m in _s2_models:
+                    _shuf = list(range(len(stage1_results)))
+                    random.shuffle(_shuf)
+                    _s2_per_model_responses[_s2m] = "\n\n".join([
+                        f"Response {_s2_labels[i]}:\n{stage1_results[i]['response']}"
+                        for i in _shuf
+                    ])
+
+                _s2_ranking_prompt_template = """You are a pharmaceutical domain expert evaluating different responses to the following question:
+{context_note}
+Question: {question}
+
+Here are the responses from different models (anonymized):
+
+{responses_text}
+
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+PART 1 \u2014 RUBRIC EVALUATION (Verbalized Sampling)
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+For EACH response, provide a score from 0 to 10 on each criterion below.
+After each score, give a brief justification (1-2 sentences).
+
+Criteria:
+  \u2022 Relevancy (0-10): How directly and completely the response addresses the original question
+  \u2022 Faithfulness (0-10): Factual accuracy, absence of hallucinations, grounded in evidence
+  \u2022 Context Recall (0-10): Coverage of key concepts, dimensions, and nuances raised across all responses
+  \u2022 Output Quality (0-10): Clarity, structure, depth, readability, and overall coherence
+  \u2022 Consensus (0-10): Would other domain experts broadly agree with the claims made?
+
+Format EXACTLY as follows for each response:
+
+RUBRIC Response X:
+  Relevancy: <score>/10 \u2014 <justification>
+  Faithfulness: <score>/10 \u2014 <justification>
+  Context Recall: <score>/10 \u2014 <justification>
+  Output Quality: <score>/10 \u2014 <justification>
+  Consensus: <score>/10 \u2014 <justification>
+
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+PART 2 \u2014 CLAIM CLASSIFICATION (Pharma Safety)
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+For EACH response, classify its major claims in pharmaceutical context:
+  TP (True Positive)  = Correct, verifiable claim relevant to the question
+  FP (False Positive) = Incorrect, misleading, or hallucinated claim
+  FN (False Negative) = Important information the response FAILED to mention
+
+Format EXACTLY as follows for each response:
+
+CLAIMS Response X:
+  TP: <count> \u2014 <brief summary of correct claims>
+  FP: <count> \u2014 <brief summary of incorrect/hallucinated claims, or "None detected">
+  FN: <count> \u2014 <brief summary of important omissions, or "None detected">
+
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+PART 3 \u2014 FINAL RANKING
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+Based on your rubric evaluation and claim analysis above, provide
+your final ranking from best to worst.
+
+IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
+- Start with the line "FINAL RANKING:" (all caps, with colon)
+- Then list the responses from best to worst as a numbered list
+- Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
+
+Now provide your complete evaluation:"""
+
+                _s2_per_model_msgs: dict[str, list] = {}
+                for _s2m in _s2_models:
+                    _s2_per_model_msgs[_s2m] = [{"role": "user", "content": _s2_ranking_prompt_template.format(
+                        context_note=_s2_context_note,
+                        question=augmented_content,
+                        responses_text=_s2_per_model_responses.get(_s2m, _s2_responses_text),
+                    )}]
+
+                _s2_tasks = {
+                    asyncio.create_task(
+                        query_model(m, _s2_per_model_msgs[m], web_search_enabled=web_search_enabled, session_id=session_id)
+                    ): m
+                    for m in _s2_models
+                }
+                stage2_results = []
+                _s2_pending = set(_s2_tasks.keys())
+                _s2_total = len(_s2_models)
+
+                while _s2_pending:
+                    done, _s2_pending = await asyncio.wait(_s2_pending, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        model_name = _s2_tasks[task]
+                        try:
+                            resp = task.result()
+                            if resp is not None:
+                                full_text = resp.get('content', '')
+                                parsed = parse_ranking_from_text(full_text)
+                                rubric = parse_rubric_scores(full_text)
+                                claims = parse_claim_counts(full_text)
+                                result_item = {
+                                    "model": model_name,
+                                    "ranking": full_text,
+                                    "parsed_ranking": parsed,
+                                    "rubric_scores": rubric,
+                                    "claim_counts": claims,
+                                    "usage": resp.get('usage'),
+                                }
+                                stage2_results.append(result_item)
+                                cost_tracker.record("stage2", model_name, resp.get('usage'))
+                                yield f"data: {json.dumps({'type': 'stage2_model_response', 'data': result_item, 'progress': {'completed': len(stage2_results), 'total': _s2_total}})}\n\n"
+                        except Exception as e:
+                            logger.error(f"[Resume-Stage2] {model_name} failed: {e}")
+
+                if len(stage2_results) < MIN_STAGE2_QUORUM:
+                    raise QuorumError(f"Stage 2 quorum not met: got {len(stage2_results)}, need {MIN_STAGE2_QUORUM}")
+
+                aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
+                grounding_scores = compute_response_grounding_scores(stage2_results, label_to_model, aggregate_rankings)
+                evidence_bundle = await evidence_task
+                yield f"data: {json.dumps({'type': 'evidence_complete', 'data': evidence_bundle})}\n\n"
+                yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'grounding_scores': grounding_scores}})}\n\n"
+
+                # Save Stage 2 checkpoint
+                try:
+                    storage.save_pipeline_checkpoint(user_id, conversation_id, {
+                        "completed_stage": "stage2",
+                        "stage1_results": stage1_results,
+                        "stage2_results": stage2_results,
+                        "label_to_model": label_to_model,
+                        "aggregate_rankings": aggregate_rankings,
+                        "grounding_scores": grounding_scores,
+                        "augmented_content": augmented_content,
+                        "web_search_enabled": web_search_enabled,
+                        "user_council_models": user_council_models,
+                        "user_chairman_model": user_chairman_model,
+                        "conversation_history": conversation_history,
+                        "raw_memory_context": raw_memory_context,
+                    })
+                except Exception:
+                    pass
+
+            elif completed_stage == "stage2":
+                # Stage 2 already done — restore its results
+                stage2_results = checkpoint["stage2_results"]
+                label_to_model = checkpoint["label_to_model"]
+                aggregate_rankings = checkpoint["aggregate_rankings"]
+                grounding_scores = checkpoint["grounding_scores"]
+
+                # Re-emit Stage 2 data for frontend hydration
+                yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'grounding_scores': grounding_scores}})}\n\n"
+
+                # Run evidence retrieval (fast, needed for Stage 3)
+                evidence_bundle = await run_evidence_skills(augmented_content, web_search_enabled=web_search_enabled)
+                yield f"data: {json.dumps({'type': 'evidence_complete', 'data': evidence_bundle})}\n\n"
+
+            # ── Relevancy Gate ──────────────────────────────────────
+            relevancy_gate = compute_relevancy_gate(stage2_results)
+            gated_labels = [lbl for lbl, g in relevancy_gate.items() if g.get("gated_out")]
+            yield f"data: {json.dumps({'type': 'relevancy_gate', 'data': {'gate': relevancy_gate, 'gated_labels': gated_labels}})}\n\n"
+
+            # ── Stage 3 ────────────────────────────────────────────
+            yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
+            evidence_text = format_citations_for_prompt(evidence_bundle)
+
+            stage3_result = await stage3_synthesize_final(
+                augmented_content, stage1_results, stage2_results,
+                user_chairman_model, conversation_history, web_search_enabled,
+                session_id=session_id,
+                evidence_context=evidence_text,
+                relevancy_gate=relevancy_gate,
+                memory_context=raw_memory_context,
+            )
+            cost_tracker.record("stage3", stage3_result.get("model", "unknown"), stage3_result.get("usage"))
+
+            # ── Doubting Thomas ─────────────────────────────────────
+            dt_result = None
+            try:
+                yield f"data: {json.dumps({'type': 'doubting_thomas_start'})}\n\n"
+                dt_result = await doubting_thomas_review(
+                    user_query=augmented_content,
+                    draft_response=stage3_result.get("response", ""),
+                    stage1_results=stage1_results,
+                    relevancy_gate=relevancy_gate,
+                    chairman_model=user_chairman_model,
+                    web_search_enabled=web_search_enabled,
+                    session_id=session_id,
+                )
+                if dt_result.get("fix_applied"):
+                    stage3_result["response"] = dt_result["revised_response"]
+                    cost_tracker.record("doubting_thomas", user_chairman_model or "chairman", dt_result.get("usage"))
+                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False)}})}\n\n"
+            except Exception as e:
+                logger.warning(f"[Resume-DT] Non-fatal error: {e}")
+                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False}})}\n\n"
+
+            # ── Citation enrichment ──────────────────────────────────
+            raw_response = stage3_result.get("response", "")
+            infographic_data = extract_infographic(raw_response)
+            stage3_result["response"] = strip_infographic_block(raw_response)
+            stage3_result["response"] = enrich_stage3_citations(stage3_result["response"])
+            try:
+                stage3_result["response"] = await validate_and_fix_citations(stage3_result["response"])
+            except Exception:
+                pass
+
+            yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
+
+            if infographic_data:
+                yield f"data: {json.dumps({'type': 'infographic_complete', 'data': infographic_data})}\n\n"
+
+            # ── Save final assistant message ────────────────────────
+            storage.add_assistant_message(
+                user_id, conversation_id,
+                stage1_results, stage2_results, stage3_result,
+                metadata={
+                    "label_to_model": label_to_model,
+                    "aggregate_rankings": aggregate_rankings,
+                    "grounding_scores": grounding_scores,
+                    "evidence": evidence_bundle,
+                    "infographic": infographic_data,
+                    "relevancy_gate": relevancy_gate,
+                    "doubting_thomas": {
+                        "defect_count": dt_result.get("defect_count", 0) if dt_result else 0,
+                        "needs_fix": dt_result.get("needs_fix", False) if dt_result else False,
+                        "fix_applied": dt_result.get("fix_applied", False) if dt_result else False,
+                    },
+                },
+            )
+
+            # ── Cost summary ────────────────────────────────────────
+            cost_summary = cost_tracker.compute_summary()
+            yield f"data: {json.dumps({'type': 'cost_summary', 'data': cost_summary})}\n\n"
+
+            # ── Agent Team ──────────────────────────────────────────
+            try:
+                agent_team_result = await run_agent_team(
+                    user_query=augmented_content,
+                    stage1_results=stage1_results,
+                    stage2_results=stage2_results,
+                    stage3_result=stage3_result,
+                    aggregate_rankings=aggregate_rankings,
+                    grounding_scores=grounding_scores,
+                    evidence_bundle=evidence_bundle,
+                    cost_summary=cost_summary,
+                    web_search_enabled=web_search_enabled,
+                )
+                if agent_team_result:
+                    yield f"data: {json.dumps({'type': 'agent_team_complete', 'data': agent_team_result})}\n\n"
+                    storage.update_last_message_metadata(user_id, conversation_id, {"agent_team": agent_team_result})
+            except Exception as e:
+                logger.warning(f"[Resume-AgentTeam] Non-fatal error: {e}")
+
+            # ── Clear checkpoint & complete ──────────────────────────
+            try:
+                storage.clear_pipeline_checkpoint(user_id, conversation_id)
+            except Exception:
+                pass
+
+            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+
+        except KillSwitchError as e:
+            yield f"data: {json.dumps({'type': 'killed', 'message': str(e)})}\n\n"
+        except QuorumError as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Self-healing exhausted: {e}', 'code': 'QUORUM_FAILURE'})}\n\n"
+        except Exception as e:
+            logger.error(f"[Resume] Error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            kill_switch.unregister_session(session_id)
+
+    return StreamingResponse(
+        with_keepalive_resume(resume_generator(), interval=10),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 

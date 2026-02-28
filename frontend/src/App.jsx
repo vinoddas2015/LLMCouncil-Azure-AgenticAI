@@ -104,6 +104,10 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [errorBanner, setErrorBanner] = useState(null);
 
+  // Track completed stages for self-healing resume
+  const completedStagesRef = useRef(new Set());
+  const resumeConvIdRef = useRef(null);
+
   // Auto-dismiss error banner after 8 seconds
   useEffect(() => {
     if (!errorBanner) return;
@@ -316,6 +320,10 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
         messages: [...prev.messages, assistantMessage],
       }));
 
+      // Reset resume tracking for this new request
+      completedStagesRef.current = new Set();
+      resumeConvIdRef.current = currentConversationId;
+
       // Send message with streaming (include attachments and preferences)
       await api.sendMessageStream(
         currentConversationId, 
@@ -343,6 +351,7 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             break;
 
           case 'stage1_complete':
+            completedStagesRef.current.add('stage1');
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.stage1 = event.data;
               msg.loading.stage1 = false;
@@ -369,6 +378,7 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             break;
 
           case 'stage2_complete':
+            completedStagesRef.current.add('stage2');
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.stage2 = event.data;
               msg.metadata = event.metadata;
@@ -383,6 +393,7 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             break;
 
           case 'stage3_complete':
+            completedStagesRef.current.add('stage3');
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.stage3 = event.data;
               msg.loading.stage3 = false;
@@ -538,7 +549,15 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
         ? 'Connection to the backend was lost. Please refresh and retry.'
         : rawMsg;
 
-      // Instead of silently removing messages, show an error stage3
+      // Determine if we can offer a resume (at least Stage 1 completed)
+      const hasCheckpoint = completedStagesRef.current.has('stage1') || completedStagesRef.current.has('stage2');
+      const nextStage = completedStagesRef.current.has('stage2')
+        ? 'Stage 3'
+        : completedStagesRef.current.has('stage1')
+        ? 'Stage 2'
+        : null;
+
+      // Show error with resume option if stages were partially completed
       setCurrentConversation((prev) => {
         if (!prev) return prev;
         const messages = [...prev.messages];
@@ -548,16 +567,170 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
           if (lastMsg.role === 'assistant') {
             lastMsg.loading = { stage1: false, stage2: false, stage3: false };
             if (!lastMsg.stage3) {
+              const resumeHint = hasCheckpoint
+                ? `\n\n🔄 **Pipeline checkpoint saved.** Click **Resume** below to continue from ${nextStage}.`
+                : '\n\nYou can try sending your message again.';
               lastMsg.stage3 = {
                 model: 'system',
-                response: `⚠ **Connection Error**\n\n${friendlyMsg}\n\nYou can try sending your message again.`,
+                response: `⚠ **Connection Error**\n\n${friendlyMsg}${resumeHint}`,
               };
+              // Embed resumability flag for ChatInterface to render button
+              lastMsg._canResume = hasCheckpoint;
+              lastMsg._resumeFrom = nextStage;
             }
             messages[idx] = lastMsg;
           } else {
             // Fallback: remove optimistic messages
             return { ...prev, messages: prev.messages.slice(0, -2) };
           }
+        }
+        return { ...prev, messages };
+      });
+      setIsLoading(false);
+    }
+  };
+
+  // ── Self-healing resume: pick up from last checkpoint ──────────
+  const handleResume = async () => {
+    const convId = resumeConvIdRef.current || currentConversationId;
+    if (!convId) return;
+
+    setIsLoading(true);
+
+    // Clear the error stage3 — keep existing stage1/stage2 data
+    setCurrentConversation((prev) => {
+      if (!prev) return prev;
+      const messages = [...prev.messages];
+      const idx = messages.length - 1;
+      if (idx >= 0 && messages[idx].role === 'assistant') {
+        const msg = { ...messages[idx], loading: { ...messages[idx].loading } };
+        // If stage3 was the error placeholder, remove it and show loading
+        if (msg.stage3?.model === 'system') {
+          msg.stage3 = null;
+        }
+        msg._canResume = false;
+        msg.loading = { stage1: false, stage2: false, stage3: true };
+        messages[idx] = msg;
+      }
+      return { ...prev, messages };
+    });
+
+    // Helper reused from handleSendMessage
+    const cloneLastMsg = (prev, updater) => {
+      const messages = [...prev.messages];
+      const idx = messages.length - 1;
+      if (idx < 0) return prev;
+      const msg = { ...messages[idx], loading: { ...messages[idx].loading } };
+      updater(msg);
+      messages[idx] = msg;
+      return { ...prev, messages };
+    };
+    const streamUpdate = batchedStreamUpdate;
+
+    try {
+      await api.resumeStream(convId, (eventType, event) => {
+        switch (eventType) {
+          case 'session_start':
+            setActiveSessionId(event.data?.session_id || null);
+            break;
+          case 'stage1_complete':
+            completedStagesRef.current.add('stage1');
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.stage1 = event.data;
+              msg.loading.stage1 = false;
+            }));
+            break;
+          case 'stage2_start':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.loading.stage2 = true;
+            }));
+            break;
+          case 'stage2_model_response':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              if (!msg.stage2) msg.stage2 = [];
+              msg.stage2 = [...msg.stage2, event.data];
+            }));
+            break;
+          case 'stage2_complete':
+            completedStagesRef.current.add('stage2');
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.stage2 = event.data;
+              msg.metadata = event.metadata;
+              msg.loading.stage2 = false;
+            }));
+            break;
+          case 'stage3_start':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.loading.stage3 = true;
+            }));
+            break;
+          case 'stage3_complete':
+            completedStagesRef.current.add('stage3');
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.stage3 = event.data;
+              msg.loading.stage3 = false;
+            }));
+            break;
+          case 'evidence_complete':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.evidence = event.data;
+            }));
+            break;
+          case 'relevancy_gate':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.relevancyGate = event.data;
+            }));
+            break;
+          case 'cost_summary':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.costSummary = event.data;
+            }));
+            break;
+          case 'infographic_complete':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.infographic = event.data;
+            }));
+            break;
+          case 'agent_team_complete':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.agentTeam = event.data;
+            }));
+            break;
+          case 'doubting_thomas_complete':
+            // DT is informational during resume
+            break;
+          case 'complete':
+            loadConversations();
+            setIsLoading(false);
+            setActiveSessionId(null);
+            break;
+          case 'error':
+            console.error('Resume stream error:', event.message);
+            setIsLoading(false);
+            setActiveSessionId(null);
+            break;
+          default:
+            break;
+        }
+      }, preferences);
+    } catch (error) {
+      console.error('Resume failed:', error);
+      const rawMsg = error?.message || String(error);
+      // Show error but keep existing data
+      setCurrentConversation((prev) => {
+        if (!prev) return prev;
+        const messages = [...prev.messages];
+        const idx = messages.length - 1;
+        if (idx >= 0 && messages[idx].role === 'assistant') {
+          const msg = { ...messages[idx], loading: { stage1: false, stage2: false, stage3: false } };
+          if (!msg.stage3 || msg.stage3.model === 'system') {
+            msg.stage3 = {
+              model: 'system',
+              response: `⚠ **Resume Failed**\n\n${rawMsg}\n\nYou can try again or send a new message.`,
+            };
+          }
+          msg._canResume = completedStagesRef.current.has('stage1') || completedStagesRef.current.has('stage2');
+          messages[idx] = msg;
         }
         return { ...prev, messages };
       });
@@ -618,6 +791,7 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
         <ChatInterface
           conversation={currentConversation}
           onSendMessage={handleSendMessage}
+          onResume={handleResume}
           isLoading={isLoading}
           preferences={preferences}
           onUpdatePreferences={handleSavePreferences}

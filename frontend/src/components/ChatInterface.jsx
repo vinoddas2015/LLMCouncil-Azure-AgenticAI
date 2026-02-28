@@ -33,6 +33,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
 export default function ChatInterface({
   conversation,
   onSendMessage,
+  onResume,
   isLoading,
   preferences,
   onUpdatePreferences,
@@ -364,6 +365,22 @@ export default function ChatInterface({
                   <Suspense fallback={<StageFallback />}>
                     {msg.stage3 && <Stage3 finalResponse={msg.stage3} evidence={msg.evidence || msg.metadata?.evidence} />}
                   </Suspense>
+
+                  {/* Self-healing Resume Button */}
+                  {msg._canResume && !isLoading && onResume && (
+                    <div className="resume-pipeline-banner" role="alert">
+                      <button
+                        className="resume-pipeline-button"
+                        onClick={onResume}
+                        aria-label={`Resume pipeline from ${msg._resumeFrom || 'checkpoint'}`}
+                      >
+                        🔄 Resume from {msg._resumeFrom || 'checkpoint'}
+                      </button>
+                      <span className="resume-hint">
+                        Stages already completed are preserved — only remaining stages will run.
+                      </span>
+                    </div>
+                  )}
 
                   {/* Infographic Panel */}
                   {(msg.infographic || msg.metadata?.infographic) && <InfographicPanel data={msg.infographic || msg.metadata?.infographic} />}

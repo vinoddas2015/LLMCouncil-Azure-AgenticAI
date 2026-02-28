@@ -448,6 +448,103 @@ export const api = {
     }
   },
 
+  /**
+   * Resume an interrupted pipeline from its last checkpoint.
+   * The backend re-emits already-completed stage data so the frontend
+   * can hydrate its state, then continues the remaining stages.
+   *
+   * @param {string} conversationId
+   * @param {Function} onEvent  - same SSE event callback as sendMessageStream
+   * @param {Object} preferences - council_models, chairman_model, web_search_enabled
+   */
+  async resumeStream(conversationId, onEvent, preferences = {}) {
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    let lastActivity = Date.now();
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastActivity > 180_000) {
+        controller.abort();
+        clearInterval(watchdog);
+      }
+    }, 10_000);
+
+    try {
+      const response = await fetchWithAuth(
+        `${API_BASE}/api/conversations/${conversationId}/message/resume`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream',
+            'Connection': 'keep-alive',
+          },
+          body: JSON.stringify({
+            council_models: preferences.council_models || null,
+            chairman_model: preferences.chairman_model || null,
+            web_search_enabled: preferences.web_search_enabled || false,
+          }),
+          signal,
+        }
+      );
+
+      if (!response.ok) {
+        let detail = `HTTP ${response.status}`;
+        try {
+          const body = await response.text();
+          // Try JSON (FastAPI error response)
+          try {
+            const parsed = JSON.parse(body);
+            if (parsed.detail) detail = parsed.detail;
+          } catch {
+            if (body.length < 500) detail = body;
+          }
+        } catch { /* ignore */ }
+        throw new Error(detail);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        lastActivity = Date.now();
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event = JSON.parse(line.slice(6));
+              onEvent(event.type, event);
+            } catch (e) {
+              console.error('Failed to parse resume SSE event:', e);
+            }
+          }
+        }
+      }
+
+      if (buffer.startsWith('data: ')) {
+        try {
+          const event = JSON.parse(buffer.slice(6));
+          onEvent(event.type, event);
+        } catch { /* ignore */ }
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        throw new Error('Connection timed out — please retry.');
+      }
+      throw err;
+    } finally {
+      clearInterval(watchdog);
+    }
+  },
+
   // ────────────────────────────────────────────────────────────────────
   // Kill Switch & Health Monitoring API
   // ────────────────────────────────────────────────────────────────────

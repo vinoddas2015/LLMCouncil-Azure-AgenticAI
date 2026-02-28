@@ -428,3 +428,57 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ── Self-healing Resume Banner ─────────────────────────── */
+.resume-pipeline-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  margin: 12px 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-primary);
+  border-radius: 10px;
+  animation: resumeFadeIn 0.4s ease-out;
+}
+
+@keyframes resumeFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.resume-pipeline-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent-primary);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  min-height: 40px;
+}
+.resume-pipeline-button:hover {
+  background: var(--accent-hover, #0ea5e9);
+  filter: brightness(1.1);
+}
+.resume-pipeline-button:focus-visible {
+  outline: 3px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.resume-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 180px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resume-pipeline-banner { animation: none; }
+}

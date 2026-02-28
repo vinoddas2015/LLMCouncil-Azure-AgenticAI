@@ -391,6 +391,45 @@ def update_conversation_title(user_id: str, conversation_id: str, title: str):
     save_conversation(user_id, conversation)
 
 
+def save_pipeline_checkpoint(
+    user_id: str,
+    conversation_id: str,
+    checkpoint_data: Dict[str, Any],
+):
+    """Save partial pipeline results for resume-on-disconnect.
+
+    Called after each major stage completes so that a network drop
+    doesn't lose work.  The checkpoint is cleared on successful
+    completion by ``clear_pipeline_checkpoint``.
+    """
+    conversation = get_conversation(user_id, conversation_id)
+    if conversation is None:
+        raise ValueError(f"Conversation {conversation_id} not found")
+    conversation["_pipeline_checkpoint"] = checkpoint_data
+    save_conversation(user_id, conversation)
+
+
+def load_pipeline_checkpoint(
+    user_id: str,
+    conversation_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Load pipeline checkpoint, or *None* if no checkpoint exists."""
+    conversation = get_conversation(user_id, conversation_id)
+    if conversation is None:
+        return None
+    return conversation.get("_pipeline_checkpoint")
+
+
+def clear_pipeline_checkpoint(user_id: str, conversation_id: str):
+    """Remove the pipeline checkpoint after successful completion."""
+    conversation = get_conversation(user_id, conversation_id)
+    if conversation is None:
+        return
+    if "_pipeline_checkpoint" in conversation:
+        del conversation["_pipeline_checkpoint"]
+        save_conversation(user_id, conversation)
+
+
 def delete_conversation(user_id: str, conversation_id: str) -> bool:
     """Delete a conversation from storage."""
     uid = _validate_user_id(user_id)
