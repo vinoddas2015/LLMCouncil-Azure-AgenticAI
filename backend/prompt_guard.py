@@ -279,6 +279,8 @@ Rules:
 - If the query mentions a term you do not recognise and it is NOT clearly a scientific/medical term → respond EXACTLY: NO
 - If the query is about general knowledge, entertainment, technology, coding, business, sports, cooking, travel, or any non-life-science topic → respond EXACTLY: NO
 - When file attachments are mentioned (e.g. [Attachments: filename.png]), consider the filename as additional context — a file named 'forensic medicine.png' implies a medical topic
+- If the prompt includes extracted text from attached documents (after '---\nAttached Files:'), evaluate the EXTRACTED CONTENT for domain relevance, not just the user's short query
+- If the user is asking about "this document" / "the file" / "attached data" and the extracted content appears scientific or medical, respond: YES
 - Do NOT guess. If you cannot confidently place the query in a life-science domain, respond: NO
 - Respond with ONLY one word: YES or NO"""
 
@@ -287,7 +289,28 @@ Rules:
 # Main guard function (async — supports LLM relevance check)
 # ═══════════════════════════════════════════════════════════════════
 
-async def evaluate_prompt(prompt: str) -> GuardVerdict:
+# ── Document-referencing patterns ────────────────────────────────
+# Queries that clearly reference an attached document/file should be
+# allowed through when attachments are present — the guard cannot
+# evaluate document *content* from the query text alone.
+_DOCUMENT_REF_PATTERNS = re.compile(
+    r'(?:'
+    r'(?:this|the|that|my|attached|uploaded)\s+'
+    r'(?:document|file|paper|report|pdf|image|slide|spreadsheet|data|attachment|presentation|table|figure|chart|letter)|'
+    r'(?:summarize?|summarise?|analyze|analyse|extract|infer|review|examine|interpret|read|parse|describe)\s+'
+    r'(?:this|the|that|it|these|those|what)|'
+    r'(?:drawn|extracted|inferred|concluded|derived|identified|found)\s+'
+    r'(?:from|in)\s+(?:this|the|that|it)|'
+    r'(?:what|which|how|who|where)\s+.*?\b(?:document|file|attachment|paper|report|pdf|slide|table)\b|'
+    r'\b(?:main|key|important|critical|relevant)\s+'
+    r'(?:findings?|points?|takeaways?|conclusions?|inferences?|insights?|items?)\s+'
+    r'(?:from|in|of)\s+(?:this|the|that)'
+    r')',
+    re.IGNORECASE,
+)
+
+
+async def evaluate_prompt(prompt: str, *, has_attachments: bool = False) -> GuardVerdict:
     """
     Evaluate whether a user prompt is suitable for the LLM Council.
 
@@ -296,7 +319,11 @@ async def evaluate_prompt(prompt: str) -> GuardVerdict:
     don't match any on-topic or off-topic keyword bank.
 
     Args:
-        prompt: The raw user prompt text
+        prompt: The raw user prompt text (may include extracted
+                attachment content when files are attached).
+        has_attachments: True when the request includes file uploads.
+                         Enables document-reference bypass so queries
+                         like "summarize this document" pass through.
 
     Returns:
         GuardVerdict with allowed=True if the prompt may proceed,
@@ -370,6 +397,16 @@ async def evaluate_prompt(prompt: str) -> GuardVerdict:
             message=_REJECTION_MESSAGES["PERSONAL_DATA"],
             internal_reason="PII/PHI pattern matched",
         )
+
+    # ── 5b. Document-reference bypass ──────────────────────────────
+    # When the user has uploaded files and their query clearly
+    # references "this document" / "the attached file" / etc., the
+    # guard cannot judge relevance from the query text alone — the
+    # actual content is embedded in augmented_content and will be
+    # evaluated by the council models.  Allow through.
+    if has_attachments and _DOCUMENT_REF_PATTERNS.search(cleaned):
+        logger.info("[PromptGuard] ALLOWED — document-reference query with attachments")
+        return GuardVerdict(allowed=True)
 
     # ── 6. On-topic / off-topic check ─────────────────────────────
     has_ontopic = bool(_ONTOPIC_KEYWORDS.search(cleaned)) or bool(_CASE_SENSITIVE_ACRONYMS.search(cleaned))
