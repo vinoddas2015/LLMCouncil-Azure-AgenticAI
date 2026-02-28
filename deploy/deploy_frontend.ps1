@@ -37,9 +37,11 @@ Write-Host ""
 Write-Host "Building frontend for Azure..."
 Push-Location $frontendDir
 try {
-    & npx vite build --mode azure 2>&1 | ForEach-Object { Write-Host "  $_" }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: Frontend build failed." -ForegroundColor Red
+    $buildOutput = & node ./node_modules/vite/bin/vite.js build --mode azure 2>&1
+    $buildOutput | ForEach-Object { Write-Host "  $_" }
+    # Check for dist/index.html as success indicator (vite writes warnings to stderr)
+    if (-not (Test-Path (Join-Path $frontendDir "dist\index.html"))) {
+        Write-Host "ERROR: Frontend build failed - dist/index.html not found." -ForegroundColor Red
         exit 1
     }
     Write-Host "Frontend build completed." -ForegroundColor Green
