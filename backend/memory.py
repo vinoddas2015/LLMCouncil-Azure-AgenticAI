@@ -248,6 +248,10 @@ class EpisodicMemory:
         for k in keys:
             doc = backend.get(self.COLLECTION, k)
             if doc:
+                # Skip CA snapshots — they share the episodic collection
+                # but are NOT user-facing episodic memories
+                if doc.get("type") == "ca_snapshot":
+                    continue
                 if include_unlearned or doc.get("status") != "unlearned":
                     entries.append(doc)
         entries.sort(key=lambda x: x.get("created_at", ""), reverse=True)

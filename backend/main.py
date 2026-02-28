@@ -237,9 +237,105 @@ def validate_attachment(attachment: AttachmentData) -> str | None:
 
 
 def extract_file_content_description(attachment: AttachmentData) -> str:
-    """Extract a description of the file content for the LLM context."""
+    """Extract actual text content from an attachment for LLM context.
+
+    Decodes the base64 payload and uses format-specific libraries to
+    extract readable text.  Falls back to a placeholder description
+    when extraction fails or the format is unsupported.
+    """
+    import base64
+    import io
+
     file_type = ALLOWED_MIME_TYPES.get(attachment.type, 'Document')
-    return f"[Attached {file_type} file: {attachment.name} ({attachment.size / 1024:.1f} KB)]"
+    fallback = f"[Attached {file_type} file: {attachment.name} ({attachment.size / 1024:.1f} KB) — content could not be extracted]"
+    MAX_CHARS = 80_000  # ~20k tokens — keep context window manageable
+
+    try:
+        # Strip optional data-URI prefix (e.g. "data:application/pdf;base64,...")
+        raw_b64 = attachment.base64
+        if "," in raw_b64[:80]:
+            raw_b64 = raw_b64.split(",", 1)[1]
+        file_bytes = base64.b64decode(raw_b64)
+        buf = io.BytesIO(file_bytes)
+    except Exception as exc:
+        logger.warning(f"[Attachment] base64 decode failed for {attachment.name}: {exc}")
+        return fallback
+
+    extracted_text: str | None = None
+
+    try:
+        # ── PDF ──────────────────────────────────────────────────
+        if attachment.type == "application/pdf":
+            from PyPDF2 import PdfReader
+            reader = PdfReader(buf)
+            pages = []
+            for i, page in enumerate(reader.pages):
+                text = page.extract_text()
+                if text:
+                    pages.append(f"--- Page {i + 1} ---\n{text}")
+            extracted_text = "\n\n".join(pages) if pages else None
+
+        # ── DOCX ─────────────────────────────────────────────────
+        elif attachment.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            from docx import Document
+            doc = Document(buf)
+            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            extracted_text = "\n\n".join(paragraphs) if paragraphs else None
+
+        # ── PPTX ─────────────────────────────────────────────────
+        elif attachment.type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+            from pptx import Presentation
+            prs = Presentation(buf)
+            slides = []
+            for i, slide in enumerate(prs.slides):
+                texts = []
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        for para in shape.text_frame.paragraphs:
+                            t = para.text.strip()
+                            if t:
+                                texts.append(t)
+                if texts:
+                    slides.append(f"--- Slide {i + 1} ---\n" + "\n".join(texts))
+            extracted_text = "\n\n".join(slides) if slides else None
+
+        # ── XLSX ─────────────────────────────────────────────────
+        elif attachment.type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+            from openpyxl import load_workbook
+            wb = load_workbook(buf, read_only=True, data_only=True)
+            sheets = []
+            for ws in wb.worksheets:
+                rows = []
+                for row in ws.iter_rows(values_only=True):
+                    cells = [str(c) if c is not None else "" for c in row]
+                    if any(cells):
+                        rows.append(" | ".join(cells))
+                if rows:
+                    sheets.append(f"--- Sheet: {ws.title} ---\n" + "\n".join(rows))
+            wb.close()
+            extracted_text = "\n\n".join(sheets) if sheets else None
+
+        # ── Plain Text / Markdown ────────────────────────────────
+        elif attachment.type in ("text/plain", "text/markdown"):
+            extracted_text = file_bytes.decode("utf-8", errors="replace")
+
+    except Exception as exc:
+        logger.warning(f"[Attachment] Text extraction failed for {attachment.name}: {exc}")
+        return fallback
+
+    if not extracted_text or not extracted_text.strip():
+        return fallback
+
+    # Truncate to keep context window manageable
+    if len(extracted_text) > MAX_CHARS:
+        extracted_text = extracted_text[:MAX_CHARS] + "\n\n[… content truncated at 80 000 characters]"
+
+    return (
+        f"=== Content extracted from {file_type} file: {attachment.name} "
+        f"({attachment.size / 1024:.1f} KB) ===\n\n"
+        f"{extracted_text}\n\n"
+        f"=== End of {attachment.name} ==="
+    )
 
 
 async def get_user_id(user_id: str = Header(..., alias="user-id")) -> str:
