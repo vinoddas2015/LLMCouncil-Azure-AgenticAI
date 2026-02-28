@@ -69,6 +69,7 @@ $filesToCopy = @(
     "backend\token_tracking.py"
     "backend\auth.py"
     "backend\health_probe.py"
+    "backend\citation.py"
     "run_server.py"
     "startup.sh"
     ".well-known\agent-card.json"
