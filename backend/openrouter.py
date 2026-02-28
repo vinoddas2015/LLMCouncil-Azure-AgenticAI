@@ -219,6 +219,7 @@ async def query_models_parallel(
     messages: List[Dict[str, str]],
     web_search_enabled: bool = False,
     session_id: Optional[str] = None,
+    per_model_messages: Optional[Dict[str, List[Dict[str, str]]]] = None,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
     """
     Query multiple models in parallel with self-healing:
@@ -228,19 +229,33 @@ async def query_models_parallel(
 
     Args:
         models: List of model identifiers
-        messages: Chat messages
+        messages: Chat messages (default fallback for all models)
         web_search_enabled: Enable web search plugins
         session_id: Kill-switch session ID
+        per_model_messages: Optional dict mapping model → custom messages.
+            When provided, uses model-specific messages instead of the
+            shared ``messages`` list.  Used by Stage 2 position debiasing
+            (arXiv:2405.19323) to give each reviewer a differently-ordered
+            prompt.
 
     Returns:
         Dict mapping model → response (or None)
     """
-    # Sanitize PII once for the entire batch instead of N times per model
+    # Sanitize PII once for the shared fallback messages
     sanitized = _sanitize_messages(messages)
+
+    # Pre-sanitize per-model messages if provided
+    sanitized_per_model: Optional[Dict[str, List[Dict[str, str]]]] = None
+    if per_model_messages:
+        sanitized_per_model = {
+            model: _sanitize_messages(msgs)
+            for model, msgs in per_model_messages.items()
+        }
 
     tasks = [
         query_model(
-            model, sanitized,
+            model,
+            (sanitized_per_model or {}).get(model, sanitized),
             web_search_enabled=web_search_enabled,
             session_id=session_id,
             _pre_sanitized=True,

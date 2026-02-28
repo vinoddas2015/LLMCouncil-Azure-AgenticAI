@@ -1417,6 +1417,12 @@ class ExperientialCoAdaptation:
 
     # ── Combined Adaptation Pass ─────────────────────────────────────
 
+    # ── Gated Reflection threshold (arXiv:2602.13949 §Gated Reflection) ──
+    # Only fire adaptations when grounding falls below τ.  When grounding
+    # is already above the threshold the current parameter set is working
+    # well; adapting would risk overfitting on a lucky trajectory.
+    ADAPTATION_TAU = 0.75  # τ gate — only adapt when grounding < τ
+
     def run_full_adaptation(
         self,
         user_id: str,
@@ -1429,6 +1435,13 @@ class ExperientialCoAdaptation:
         Execute all three adaptation functions in sequence for a given
         council session.
 
+        Implements **Gated Reflection** (arXiv:2602.13949): adaptations
+        only fire when ``grounding_score_overall`` < ``ADAPTATION_TAU``
+        (default 0.75).  When grounding is already high, the current
+        parameters are working — adapting further risks overfitting on
+        a lucky trajectory.  The reward signal is always recorded for
+        EMA tracking even when the gate blocks adaptation.
+
         Args:
             user_id: Current user.
             user_profile: From UserProfileMemory.get_user_profile().
@@ -1437,9 +1450,33 @@ class ExperientialCoAdaptation:
             grounding_score_overall: Scalar 0–1 overall grounding.
 
         Returns:
-            Summary dict with all adapted parameters.
+            Summary dict with all adapted parameters + gating flag.
         """
         reward = self.compute_reward(evidence_bundle)
+
+        # ── τ-gate: skip prompt/rubric adaptation if grounding is strong ──
+        if grounding_score_overall >= self.ADAPTATION_TAU:
+            # Still record reward history + EMA for trend monitoring,
+            # but skip the weight-modifying functions.
+            learning_params = self.adapt_learning(user_id, reward, grounding_score_overall)
+            state = self._get_eca_state(user_id)
+            logger.info(
+                f"[ECA.gated] SKIPPED adaptation for user={user_id} — "
+                f"grounding={grounding_score_overall:.3f} ≥ τ={self.ADAPTATION_TAU} "
+                f"(ema_reward={state.get('ema_reward', 0.5):.3f})"
+            )
+            return {
+                "reward": reward,
+                "prompt_emphasis": state.get("prompt_emphasis", {}),
+                "rubric_weights": state.get("rubric_weights", {}),
+                "learning_params": learning_params,
+                "ema_reward": state.get("ema_reward", 0.5),
+                "adaptation_count": state.get("adaptation_count", 0),
+                "gated": True,
+                "gate_reason": f"grounding {grounding_score_overall:.2f} ≥ τ {self.ADAPTATION_TAU}",
+            }
+
+        # ── Below τ — full adaptation pass ──
         prompt_emphasis = self.adapt_prompt(user_id, user_profile, reward)
         rubric_weights = self.adapt_rubric(user_id, user_profile, grounding_scores)
         learning_params = self.adapt_learning(user_id, reward, grounding_score_overall)
@@ -1451,6 +1488,7 @@ class ExperientialCoAdaptation:
             "learning_params": learning_params,
             "ema_reward": self._get_eca_state(user_id).get("ema_reward", 0.5),
             "adaptation_count": self._get_eca_state(user_id).get("adaptation_count", 0),
+            "gated": False,
         }
 
     # ── Diagnostics ──────────────────────────────────────────────────

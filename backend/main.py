@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from . import storage
-from .council import run_full_council, generate_conversation_title, build_conversation_context, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, stage2_ca_validation_pass, parse_ranking_from_text, parse_rubric_scores, parse_claim_counts, compute_relevancy_gate
+from .council import run_full_council, generate_conversation_title, build_conversation_context, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, stage2_ca_validation_pass, doubting_thomas_review, parse_ranking_from_text, parse_rubric_scores, parse_claim_counts, compute_relevancy_gate
 from .config import OPENROUTER_API_KEY, AVAILABLE_MODELS, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL, COUNCIL_MODELS, GOOGLE_API_KEY, is_google_model
 from .model_sync import sync_models, get_live_models, get_defaults, get_sync_status, periodic_sync_loop
 from .openrouter import query_model
@@ -39,6 +39,7 @@ from .token_tracking import SessionCostTracker
 from .memory import get_memory_manager, get_user_profile_memory, get_eca
 from .memory_store import set_memory_user
 from .prompt_guard import evaluate_prompt
+from . import citation as citation_registry
 from .orchestrator import (
     pre_stage1_agent,
     post_stage2_agent,
@@ -394,6 +395,39 @@ async def health_history(limit: int = 20):
 async def health_failures():
     """Get subsystems with consecutive failures."""
     return health_agent.get_failure_report()
+
+
+# ── Citation Registry ────────────────────────────────────────────────
+
+@app.get("/api/citations")
+async def get_citations(module: Optional[str] = None, q: Optional[str] = None):
+    """
+    Return the citation registry for auditability / traceability.
+
+    Query params:
+        module — filter by backend module (e.g. 'council', 'grounding')
+        q      — full-text search across title, abstract, relevance
+    """
+    if q:
+        return {"citations": citation_registry.search(q)}
+    if module:
+        return {"citations": citation_registry.get_by_module(module)}
+    return {"citations": citation_registry.list_all(), "stats": citation_registry.stats()}
+
+
+@app.get("/api/citations/{citation_id}")
+async def get_citation_detail(citation_id: str):
+    """Return a single citation with APA and BibTeX formatted strings."""
+    cite = citation_registry.get_citation(citation_id)
+    if not cite:
+        raise HTTPException(status_code=404, detail=f"Citation '{citation_id}' not found")
+    return {
+        "citation": cite,
+        "formatted": {
+            "apa": citation_registry.format_apa(citation_id),
+            "bibtex": citation_registry.format_bibtex(citation_id),
+        },
+    }
 
 
 @app.get("/api/models")
@@ -1489,6 +1523,33 @@ Now provide your complete evaluation:"""
                 logger.warning(f"[CA Validation] Non-fatal error: {e}")
                 # Continue without enhanced CA — original grounding_scores remain
 
+            # ── Doubting Thomas: detect-and-fix self-reflection loop ──
+            # (arXiv:2602.03837 §Adversarial Reviewer; arXiv:2602.13949 §Reflection)
+            dt_result = None
+            try:
+                yield f"data: {json.dumps({'type': 'doubting_thomas_start'})}\n\n"
+                dt_result = await doubting_thomas_review(
+                    user_query=augmented_content,
+                    draft_response=stage3_result.get("response", ""),
+                    stage1_results=stage1_results,
+                    relevancy_gate=relevancy_gate,
+                    chairman_model=user_chairman_model,
+                    web_search_enabled=web_search_enabled,
+                    session_id=session_id,
+                )
+                if dt_result.get("fix_applied"):
+                    stage3_result["response"] = dt_result["revised_response"]
+                    # Record DT token usage
+                    cost_tracker.record("doubting_thomas", user_chairman_model or "chairman", dt_result.get("usage"))
+                    logger.info(
+                        f"[Doubting Thomas] Revised synthesis applied — "
+                        f"{dt_result['defect_count']} defect(s) fixed"
+                    )
+                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False)}})}\n\n"
+            except Exception as e:
+                logger.warning(f"[Doubting Thomas] Non-fatal error: {e}")
+                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'error': str(e)}})}\n\n"
+
             # Extract infographic data from the chairman's response
             infographic_data = None
             raw_response = stage3_result.get("response", "")
@@ -1537,6 +1598,11 @@ Now provide your complete evaluation:"""
                     "memory_recall": memory_recall_data,
                     "memory_gate": stage2_gate,
                     "relevancy_gate": relevancy_gate,
+                    "doubting_thomas": {
+                        "defect_count": dt_result.get("defect_count", 0) if dt_result else 0,
+                        "needs_fix": dt_result.get("needs_fix", False) if dt_result else False,
+                        "fix_applied": dt_result.get("fix_applied", False) if dt_result else False,
+                    },
                 },
             )
 

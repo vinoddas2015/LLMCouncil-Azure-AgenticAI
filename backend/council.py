@@ -1,6 +1,18 @@
-"""3-stage LLM Council orchestration with self-healing resilience."""
+"""
+3-stage LLM Council orchestration with self-healing resilience.
+
+Research-backed enhancements:
+  • Position Debiasing (arXiv:2405.19323) — shuffle response order per
+    reviewer to mitigate first-position bias in peer evaluation.
+  • Chairman Self-Reflection (arXiv:2602.03837 §Adversarial Reviewer;
+    arXiv:2602.13949 §Experience-Reflection-Consolidation) — after initial
+    synthesis the chairman reviews its own output for drift / omissions.
+  • Gated Adaptation integration point (arXiv:2602.13949 §Gated Reflection)
+    — ECA adapt_prompt/adapt_rubric fire only when grounding < τ.
+"""
 
 import asyncio
+import copy
 import logging
 import random
 import re
@@ -208,12 +220,28 @@ Note: This is a follow-up question in an ongoing conversation.
 {context}
 """
 
+    # ── Position Debiasing (arXiv:2405.19323) ──────────────────────
+    # Shuffle presentation order PER REVIEWER to mitigate first-position
+    # bias. Labels stay the same, only the display order changes.
+    # Build per-model prompts with independent shuffled orderings.
+    per_model_prompts: Dict[str, str] = {}
+    for model in models_to_use:
+        shuffled_indices = list(range(len(stage1_results)))
+        random.shuffle(shuffled_indices)
+
+        responses_text = "\n\n".join([
+            f"Response {labels[i]}:\n{stage1_results[i]['response']}"
+            for i in shuffled_indices
+        ])
+        per_model_prompts[model] = responses_text
+
+    # Default responses_text for backwards compat (original order)
     responses_text = "\n\n".join([
         f"Response {label}:\n{result['response']}"
         for label, result in zip(labels, stage1_results)
     ])
 
-    ranking_prompt = f"""You are a pharmaceutical domain expert evaluating different responses to the following question:
+    ranking_prompt_template = """You are a pharmaceutical domain expert evaluating different responses to the following question:
 {context_note}
 Question: {user_query}
 
@@ -271,13 +299,29 @@ IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
 
 Now provide your complete evaluation:"""
 
-    messages = [{"role": "user", "content": ranking_prompt}]
+    # Build per-model messages using the per-model debiased prompts
+    per_model_messages: Dict[str, List[Dict[str, str]]] = {}
+    for model in models_to_use:
+        model_prompt = ranking_prompt_template.format(
+            context_note=context_note,
+            user_query=user_query,
+            responses_text=per_model_prompts.get(model, responses_text),
+        )
+        per_model_messages[model] = [{"role": "user", "content": model_prompt}]
+
+    messages = [{"role": "user", "content": ranking_prompt_template.format(
+        context_note=context_note,
+        user_query=user_query,
+        responses_text=responses_text,
+    )}]
 
     # Get rankings from all council models in parallel (with resilience)
+    # Pass per-model messages for position-debiased evaluation
     responses = await query_models_parallel(
         models_to_use, messages,
         web_search_enabled=web_search_enabled,
         session_id=session_id,
+        per_model_messages=per_model_messages,
     )
 
     # Format results
@@ -1104,6 +1148,302 @@ CLAIMS {label}:
         f"[CA Validation] Completed {len(results)}/{len(model_to_info)} probes"
     )
     return results
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Doubting Thomas — Chairman "Detect-and-Fix" Self-Reflection Loop
+# (arXiv:2602.03837 §Adversarial Reviewer; arXiv:2602.13949 §Reflection)
+# ═══════════════════════════════════════════════════════════════════════
+
+# Minimum word count to trigger the loop (skip for short/simple answers)
+_DT_MIN_WORDS = 150
+
+# The Doubting Thomas is intentionally adversarial — it assumes the
+# chairman's draft is wrong until proven otherwise.  The critique is
+# structured so the chairman can parse defects and produce a targeted
+# fix pass without rewriting from scratch.
+
+_DOUBTING_THOMAS_PROMPT = """You are the Doubting Thomas — a relentlessly sceptical peer reviewer
+whose ONLY job is to find flaws in the Chairman's draft synthesis below.
+
+Assume the draft is WRONG until you can verify each claim against the
+original model responses.  Be harsh but fair.
+
+══════════════════════════════════════════════════════════
+ORIGINAL QUESTION:
+{user_query}
+
+══════════════════════════════════════════════════════════
+STAGE 1 — ORIGINAL MODEL RESPONSES:
+{stage1_text}
+
+══════════════════════════════════════════════════════════
+CHAIRMAN'S DRAFT SYNTHESIS:
+{draft_response}
+{gate_note}
+══════════════════════════════════════════════════════════
+EVALUATE the draft on EXACTLY these 5 criteria.  For each, give a
+1-sentence verdict + severity (PASS / MINOR / MAJOR / CRITICAL).
+
+1. DRIFT — Does the draft stay on-topic for the original question, or
+   does it wander into tangential territory?
+2. HALLUCINATION — Does the draft assert facts not present in ANY Stage 1
+   response?  (A claim in the draft must trace to ≥1 model response.)
+3. OMISSION — Are key claims from the top-ranked responses missing?
+4. GATE VIOLATION — Does the draft incorporate content from ⛔ excluded
+   (gated-out) responses?  (If no responses were gated, mark PASS.)
+5. BALANCE — Does the draft over-represent one model while ignoring
+   others of comparable quality?
+
+After the 5 criteria, provide:
+
+DEFECT_COUNT: <number of MINOR + MAJOR + CRITICAL findings>
+NEEDS_FIX: YES | NO
+
+If NEEDS_FIX is YES, add a section:
+FIX_INSTRUCTIONS:
+- <bullet 1: what to fix and how>
+- <bullet 2: …>
+(max 5 bullets)
+"""
+
+_CHAIRMAN_FIX_PROMPT = """You are the Chairman of an LLM Council.  A sceptical Doubting Thomas
+reviewer has identified defects in your first draft.  Your job is to
+produce a REVISED synthesis that fixes EVERY defect listed below while
+preserving all correct content.
+
+══════════════════════════════════════════════════════════
+ORIGINAL QUESTION:
+{user_query}
+
+══════════════════════════════════════════════════════════
+YOUR FIRST DRAFT:
+{draft_response}
+
+══════════════════════════════════════════════════════════
+DOUBTING THOMAS CRITIQUE:
+{critique}
+
+══════════════════════════════════════════════════════════
+RULES FOR THE REVISED SYNTHESIS:
+1. Fix every MINOR / MAJOR / CRITICAL defect identified above.
+2. Do NOT introduce new information beyond what is in the original
+   model responses.
+3. Keep the same overall structure / headings unless the critique
+   specifically flags structure issues.
+4. Preserve all correct content from the first draft verbatim where
+   possible — only change what the critique requires.
+5. If the critique says the draft is fine (NEEDS_FIX: NO), reproduce
+   it unchanged.
+
+Provide the FULL revised synthesis now:"""
+
+
+async def doubting_thomas_review(
+    user_query: str,
+    draft_response: str,
+    stage1_results: List[Dict[str, Any]],
+    relevancy_gate: Optional[Dict[str, Dict[str, Any]]] = None,
+    chairman_model: Optional[str] = None,
+    reviewer_model: Optional[str] = None,
+    web_search_enabled: bool = False,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Doubting Thomas detect-and-fix loop (arXiv:2602.03837, §Adversarial
+    Reviewer; arXiv:2602.13949, §Experience-Reflection-Consolidation).
+
+    1. A sceptical reviewer critiques the chairman's draft for drift,
+       hallucination, omission, gate violations, and balance.
+    2. If NEEDS_FIX == YES, the chairman receives the critique and
+       produces a revised synthesis.
+
+    The loop runs AT MOST once (detect → fix) to bound latency.
+
+    Args:
+        user_query:       The original user question.
+        draft_response:   Chairman's first-pass synthesis.
+        stage1_results:   Stage 1 individual model responses.
+        relevancy_gate:   Optional relevancy gate data (for gate-violation check).
+        chairman_model:   Model ID for the fix pass (defaults to CHAIRMAN_MODEL).
+        reviewer_model:   Model ID for the critique (defaults to chairman_model).
+        web_search_enabled: Enable web search.
+        session_id:       Kill-switch session ID.
+
+    Returns:
+        Dict with keys:
+            critique       — raw Doubting Thomas text
+            defect_count   — int parsed from critique
+            needs_fix      — bool
+            revised_response — str (original if no fix needed)
+            fix_applied    — bool
+            usage          — dict of token usage (critique + fix)
+    """
+    chairman_to_use = chairman_model or CHAIRMAN_MODEL
+    reviewer_to_use = reviewer_model or chairman_to_use
+
+    # Skip for short answers (unlikely to have systemic flaws)
+    word_count = len(draft_response.split())
+    if word_count < _DT_MIN_WORDS:
+        logger.info(
+            f"[Doubting Thomas] Skipped — draft only {word_count} words "
+            f"(threshold {_DT_MIN_WORDS})"
+        )
+        return {
+            "critique": None,
+            "defect_count": 0,
+            "needs_fix": False,
+            "revised_response": draft_response,
+            "fix_applied": False,
+            "usage": {},
+        }
+
+    # Kill switch check
+    if session_id and kill_switch.is_session_killed(session_id):
+        return {
+            "critique": None,
+            "defect_count": 0,
+            "needs_fix": False,
+            "revised_response": draft_response,
+            "fix_applied": False,
+            "usage": {},
+        }
+
+    t0 = time.perf_counter()
+
+    # Build Stage 1 text for the reviewer to cross-reference
+    stage1_text = "\n\n".join([
+        f"Model: {r['model']}\nResponse: {r['response']}"
+        for r in stage1_results
+    ])
+
+    # Note about gated-out responses
+    gate_note = ""
+    if relevancy_gate:
+        excluded = [lbl for lbl, g in relevancy_gate.items() if g.get("gated_out")]
+        if excluded:
+            gate_note = (
+                "\n\n⛔ GATED-OUT RESPONSES (should NOT appear in draft): "
+                + ", ".join(excluded)
+            )
+
+    # ── Step 1: Critique ──────────────────────────────────────────────
+    critique_prompt = _DOUBTING_THOMAS_PROMPT.format(
+        user_query=user_query,
+        stage1_text=stage1_text[:12000],  # cap to avoid token overflow
+        draft_response=draft_response,
+        gate_note=gate_note,
+    )
+    critique_messages = [{"role": "user", "content": critique_prompt}]
+
+    critique_result = await query_model(
+        reviewer_to_use,
+        critique_messages,
+        timeout=90.0,
+        web_search_enabled=False,  # no web search for internal review
+        session_id=session_id,
+    )
+
+    if not critique_result:
+        logger.warning("[Doubting Thomas] Critique call failed — returning draft unchanged")
+        return {
+            "critique": None,
+            "defect_count": 0,
+            "needs_fix": False,
+            "revised_response": draft_response,
+            "fix_applied": False,
+            "usage": {},
+        }
+
+    critique_text = critique_result.get("content", "")
+    critique_usage = critique_result.get("usage", {})
+
+    # ── Parse critique ────────────────────────────────────────────────
+    defect_match = re.search(r"DEFECT_COUNT:\s*(\d+)", critique_text)
+    defect_count = int(defect_match.group(1)) if defect_match else 0
+
+    needs_fix_match = re.search(r"NEEDS_FIX:\s*(YES|NO)", critique_text, re.IGNORECASE)
+    needs_fix = (
+        needs_fix_match.group(1).upper() == "YES" if needs_fix_match else defect_count > 0
+    )
+
+    logger.info(
+        f"[Doubting Thomas] Critique complete — "
+        f"defects={defect_count}, needs_fix={needs_fix}, "
+        f"elapsed={time.perf_counter() - t0:.1f}s"
+    )
+
+    if not needs_fix:
+        return {
+            "critique": critique_text,
+            "defect_count": defect_count,
+            "needs_fix": False,
+            "revised_response": draft_response,
+            "fix_applied": False,
+            "usage": critique_usage,
+        }
+
+    # ── Step 2: Chairman Fix Pass ─────────────────────────────────────
+    if session_id and kill_switch.is_session_killed(session_id):
+        return {
+            "critique": critique_text,
+            "defect_count": defect_count,
+            "needs_fix": True,
+            "revised_response": draft_response,
+            "fix_applied": False,
+            "usage": critique_usage,
+        }
+
+    fix_prompt = _CHAIRMAN_FIX_PROMPT.format(
+        user_query=user_query,
+        draft_response=draft_response,
+        critique=critique_text,
+    )
+    fix_messages = [{"role": "user", "content": fix_prompt}]
+
+    fix_result = await query_model(
+        chairman_to_use,
+        fix_messages,
+        timeout=120.0,
+        web_search_enabled=web_search_enabled,
+        session_id=session_id,
+    )
+
+    if not fix_result:
+        logger.warning("[Doubting Thomas] Fix call failed — returning draft unchanged")
+        return {
+            "critique": critique_text,
+            "defect_count": defect_count,
+            "needs_fix": True,
+            "revised_response": draft_response,
+            "fix_applied": False,
+            "usage": critique_usage,
+        }
+
+    revised = fix_result.get("content", draft_response)
+    fix_usage = fix_result.get("usage", {})
+
+    # Merge usage
+    total_usage = {
+        "prompt_tokens": critique_usage.get("prompt_tokens", 0) + fix_usage.get("prompt_tokens", 0),
+        "completion_tokens": critique_usage.get("completion_tokens", 0) + fix_usage.get("completion_tokens", 0),
+        "total_tokens": critique_usage.get("total_tokens", 0) + fix_usage.get("total_tokens", 0),
+    }
+
+    elapsed = time.perf_counter() - t0
+    logger.info(
+        f"[Doubting Thomas] Fix applied — {defect_count} defect(s) addressed, "
+        f"total elapsed={elapsed:.1f}s"
+    )
+
+    return {
+        "critique": critique_text,
+        "defect_count": defect_count,
+        "needs_fix": True,
+        "revised_response": revised,
+        "fix_applied": True,
+        "usage": total_usage,
+    }
 
 
 async def run_full_council(
