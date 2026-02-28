@@ -112,7 +112,8 @@ def _cosmos_list(user_id: str) -> List[Dict[str, Any]]:
     """List all conversations for a user (metadata only) from Cosmos DB."""
     container = _get_cosmos_container()
     query = (
-        "SELECT c.id, c.created_at, c.title, ARRAY_LENGTH(c.messages) AS message_count "
+        "SELECT c.id, c.created_at, c.title, c.context_tags, "
+        "ARRAY_LENGTH(c.messages) AS message_count "
         "FROM c WHERE c.user_id = @uid"
     )
     params = [{"name": "@uid", "value": user_id}]
@@ -388,6 +389,24 @@ def update_conversation_title(user_id: str, conversation_id: str, title: str):
     if conversation is None:
         raise ValueError(f"Conversation {conversation_id} not found")
     conversation["title"] = title
+    save_conversation(user_id, conversation)
+
+
+def update_conversation_context(
+    user_id: str,
+    conversation_id: str,
+    context_tags: Dict[str, Any],
+):
+    """Save domain/topic classification metadata on a conversation.
+
+    This enables memory and skill retrieval to index conversations
+    by domain (pharma, chemistry, regulatory, etc.), question type,
+    and complexity — improving cross-session learning.
+    """
+    conversation = get_conversation(user_id, conversation_id)
+    if conversation is None:
+        return
+    conversation["context_tags"] = context_tags
     save_conversation(user_id, conversation)
 
 

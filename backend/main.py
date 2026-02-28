@@ -358,6 +358,7 @@ class ConversationMetadata(BaseModel):
     created_at: str
     title: str
     message_count: int
+    context_tags: Optional[Dict[str, Any]] = None
 
 
 class Conversation(BaseModel):
@@ -366,6 +367,7 @@ class Conversation(BaseModel):
     created_at: str
     title: str
     messages: List[Dict[str, Any]]
+    context_tags: Optional[Dict[str, Any]] = None
 
 
 @app.get("/")
@@ -1310,6 +1312,29 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
             except Exception as e:
                 logger.debug(f"[Checkpoint] Non-fatal save error after Stage 1: {e}")
 
+            # ── Early Title Save + Context Classification ─────────
+            # Save title and context tags RIGHT AFTER Stage 1 so the
+            # sidebar updates immediately and memory/skills can index
+            # the conversation by domain even if the pipeline fails.
+            context_tags = None
+            if title_task:
+                try:
+                    title = await title_task
+                    title_task = None  # consumed
+                    storage.update_conversation_title(user_id, conversation_id, title)
+                    yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
+                except Exception as e:
+                    logger.warning(f"[EarlyTitle] Non-fatal: {e}")
+
+            # Classify the query for context tagging (domain, type, complexity)
+            try:
+                from .memory import UserProfileMemory
+                context_tags = UserProfileMemory.classify_query(augmented_content)
+                storage.update_conversation_context(user_id, conversation_id, context_tags)
+                yield f"data: {json.dumps({'type': 'context_classified', 'data': context_tags})}\n\n"
+            except Exception as e:
+                logger.warning(f"[ContextTags] Non-fatal: {e}")
+
             # Kill switch check between stages
             if kill_switch.is_session_killed(session_id):
                 yield f"data: {json.dumps({'type': 'killed', 'message': 'Council session aborted by user.'})}\n\n"
@@ -1633,11 +1658,15 @@ Now provide your complete evaluation:"""
             if infographic_data:
                 yield f"data: {json.dumps({'type': 'infographic_complete', 'data': infographic_data})}\n\n"
 
-            # Wait for title generation if it was started
+            # Title was saved early (after Stage 1). If it wasn't
+            # consumed yet (e.g. Stage 1 had zero results path), save now.
             if title_task:
-                title = await title_task
-                storage.update_conversation_title(user_id, conversation_id, title)
-                yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
+                try:
+                    title = await title_task
+                    storage.update_conversation_title(user_id, conversation_id, title)
+                    yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
+                except Exception:
+                    pass  # non-critical fallback
 
             # Save complete assistant message (including metadata for reload)
             storage.add_assistant_message(
@@ -1660,6 +1689,7 @@ Now provide your complete evaluation:"""
                         "needs_fix": dt_result.get("needs_fix", False) if dt_result else False,
                         "fix_applied": dt_result.get("fix_applied", False) if dt_result else False,
                     },
+                    "context_tags": context_tags,
                 },
             )
 

@@ -91,6 +91,11 @@ export default function Sidebar({
               </div>
               <div className="conversation-meta">
                 {conv.message_count} messages
+                {conv.context_tags?.domain && conv.context_tags.domain !== 'general' && (
+                  <span className="domain-tag" title={`Domain: ${conv.context_tags.domain}`}>
+                    {conv.context_tags.domain}
+                  </span>
+                )}
               </div>
               <button 
                 className="conv-menu-btn"

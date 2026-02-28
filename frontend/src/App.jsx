@@ -256,7 +256,24 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
   };
 
   const handleSendMessage = async (content, attachments = []) => {
-    if (!currentConversationId) return;
+    // Auto-create conversation if none selected (removes manual "+ New Conversation" friction)
+    let convId = currentConversationId;
+    if (!convId) {
+      try {
+        const newConv = await api.createConversation();
+        convId = newConv.id;
+        setConversations(prev => [
+          { id: newConv.id, created_at: newConv.created_at, title: 'New Conversation', message_count: 0 },
+          ...prev,
+        ]);
+        setCurrentConversationId(convId);
+        setCurrentConversation(newConv);
+      } catch (error) {
+        console.error('Auto-create conversation failed:', error);
+        setErrorBanner(`Failed to create conversation: ${error.message}`);
+        return;
+      }
+    }
 
     setIsLoading(true);
     try {
@@ -322,11 +339,11 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
 
       // Reset resume tracking for this new request
       completedStagesRef.current = new Set();
-      resumeConvIdRef.current = currentConversationId;
+      resumeConvIdRef.current = convId;
 
       // Send message with streaming (include attachments and preferences)
       await api.sendMessageStream(
-        currentConversationId, 
+        convId, 
         content, 
         (eventType, event) => {
         switch (eventType) {
@@ -467,8 +484,15 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             }));
             break;
 
+          case 'context_classified':
+            // Store domain/topic context tags for the conversation
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.contextTags = event.data;
+            }));
+            break;
+
           case 'title_complete':
-            // Reload conversations to get updated title
+            // Reload conversations to get updated title + context tags
             loadConversations();
             break;
 
