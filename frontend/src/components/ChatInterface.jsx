@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, lazy, Suspense, memo } from 'react';
+import { useState, useEffect, useRef, useMemo, lazy, Suspense, memo } from 'react';
 import SciMarkdown from './SciMarkdown';
 const Stage1 = lazy(() => import('./Stage1'));
 const Stage2 = lazy(() => import('./Stage2'));
@@ -12,6 +12,57 @@ import './ChatInterface.css';
 
 /** Lightweight placeholder shown while a lazy-loaded Stage chunk is fetched. */
 const StageFallback = () => <div className="stage-loading-placeholder" aria-busy="true">Loading…</div>;
+
+// ── Rotating Quotes ─────────────────────────────────────────────────
+// Displayed in the empty state and during loading to keep the user
+// engaged while the council deliberates.
+
+const COUNCIL_QUOTES = [
+  { text: "Every expert was once a beginner.", author: "Helen Hayes" },
+  { text: "In the middle of difficulty lies opportunity.", author: "Albert Einstein" },
+  { text: "Science is organised knowledge. Wisdom is organised life.", author: "Immanuel Kant" },
+  { text: "The best way to predict the future is to create it.", author: "Peter Drucker" },
+  { text: "Alone we can do so little; together we can do so much.", author: "Helen Keller" },
+  { text: "The whole is greater than the sum of its parts.", author: "Aristotle" },
+  { text: "Not everything that counts can be counted.", author: "William Bruce Cameron" },
+  { text: "The art of medicine consists of amusing the patient while nature cures the disease.", author: "Voltaire" },
+  { text: "Where there is unity, there is always victory.", author: "Publilius Syrus" },
+  { text: "A council of wisdom outweighs a throne of power.", author: "Proverb" },
+  { text: "The measure of intelligence is the ability to change.", author: "Albert Einstein" },
+  { text: "Diversity of opinion in a council breeds clarity of thought.", author: "Herodotus" },
+  { text: "By three methods we may learn wisdom: by reflection, by imitation, and by experience.", author: "Confucius" },
+  { text: "The greatest enemy of knowledge is not ignorance — it is the illusion of knowledge.", author: "Daniel J. Boorstin" },
+  { text: "Research is what I'm doing when I don't know what I'm doing.", author: "Wernher von Braun" },
+];
+
+const LOADING_QUOTES = [
+  "Models are deliberating...",
+  "Gathering collective intelligence...",
+  "Cross-referencing perspectives...",
+  "Applying peer review...",
+  "Synthesising expert opinions...",
+  "Evaluating evidence quality...",
+  "Building consensus...",
+  "Checking for bias...",
+  "Aggregating insights...",
+  "Weighing the council's vote...",
+];
+
+/**
+ * Cycles through an array of items at a fixed interval.
+ * Returns the current item — updates every `intervalMs`.
+ */
+function useRotatingItem(items, intervalMs = 5000, active = true) {
+  const [index, setIndex] = useState(() => Math.floor(Math.random() * items.length));
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => {
+      setIndex(prev => (prev + 1) % items.length);
+    }, intervalMs);
+    return () => clearInterval(id);
+  }, [items.length, intervalMs, active]);
+  return items[index];
+}
 
 // Allowed file types and their MIME types
 const ALLOWED_FILE_TYPES = {
@@ -44,6 +95,10 @@ export default function ChatInterface({
   const [attachmentError, setAttachmentError] = useState(null);
   const [enhanceState, setEnhanceState] = useState(null); // null | 'loading' | 'ready'
   const [enhancedData, setEnhancedData] = useState(null); // { original, enhanced }
+
+  // Rotating quotes for empty state and loading indicator
+  const councilQuote = useRotatingItem(COUNCIL_QUOTES, 6000, !isLoading);
+  const loadingQuote = useRotatingItem(LOADING_QUOTES, 3500, isLoading);
 
   // When no conversation is selected yet (lazy-create mode), render
   // a synthetic empty conversation so the input form is visible and
@@ -331,8 +386,12 @@ export default function ChatInterface({
       <div className="messages-container" ref={messagesContainerRef}>
         {conv.messages.length === 0 ? (
           <div className="empty-state">
-            <h2>Start a conversation</h2>
-            <p>Ask a question to consult the LLM Council</p>
+            <h2>Consult the LLM Council</h2>
+            <p className="empty-state-subtitle">Ask a pharmaceutical, scientific, or clinical question</p>
+            <blockquote className="rotating-quote" aria-live="polite">
+              <p>"{councilQuote.text}"</p>
+              <footer>— {councilQuote.author}</footer>
+            </blockquote>
           </div>
         ) : (
           conv.messages.map((msg, index) => (
@@ -439,7 +498,7 @@ export default function ChatInterface({
         {isLoading && !conv.messages.some(m => m.loading) && (
           <div className="loading-indicator">
             <div className="spinner"></div>
-            <span>Consulting the council...</span>
+            <span className="loading-quote" aria-live="polite">{loadingQuote}</span>
           </div>
         )}
 

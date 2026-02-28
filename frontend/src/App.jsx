@@ -109,6 +109,12 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
   const completedStagesRef = useRef(new Set());
   const resumeConvIdRef = useRef(null);
 
+  // Guard: when handleSendMessage auto-creates a conversation and sets
+  // currentConversationId, the useEffect below would fire loadConversation
+  // which fetches the (empty) backend data and OVERWRITES the optimistic
+  // user + assistant messages.  This ref suppresses that load.
+  const skipNextConvLoadRef = useRef(false);
+
   // Auto-dismiss error banner after 8 seconds
   useEffect(() => {
     if (!errorBanner) return;
@@ -177,6 +183,13 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
   // Load conversation details when selected
   useEffect(() => {
     if (currentConversationId) {
+      // Skip if handleSendMessage just auto-created this conversation
+      // (the optimistic messages are already in state — reloading from
+      // the backend would overwrite them with an empty / stale copy).
+      if (skipNextConvLoadRef.current) {
+        skipNextConvLoadRef.current = false;
+        return;
+      }
       loadConversation(currentConversationId);
     }
   }, [currentConversationId]);
@@ -270,6 +283,9 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
           { id: newConv.id, created_at: newConv.created_at, title: 'New Conversation', message_count: 0 },
           ...prev,
         ]);
+        // Tell the useEffect NOT to reload this conversation from the backend
+        // — we'll add optimistic messages below and don't want them overwritten.
+        skipNextConvLoadRef.current = true;
         setCurrentConversationId(convId);
         setCurrentConversation(newConv);
       } catch (error) {
