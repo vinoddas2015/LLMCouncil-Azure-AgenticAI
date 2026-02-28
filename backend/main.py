@@ -851,6 +851,7 @@ async def apply_memory_decision(request: MemoryDecisionRequest, user_id: str = D
         memory_type=request.memory_type,
         memory_id=request.memory_id,
         reason=request.reason or "",
+        user_id=user_id,
     )
     if not result.get("success"):
         raise HTTPException(status_code=404, detail="Memory entry not found or invalid decision")
@@ -931,13 +932,30 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
         Uses asyncio.create_task so that the inner generator's
         __anext__() is never cancelled — asyncio.wait_for would
         cancel it on timeout, corrupting the generator state.
+
+        Context Propagation:
+        The inner generator (event_generator) sets ContextVars like
+        _current_memory_user during its first __anext__() invocation.
+        Since ensure_future() creates a new Task for each __anext__()
+        with a fresh context copy, those ContextVars would be lost.
+        We capture the context from the first Task (which ran the
+        generator's setup code), then reuse it for all subsequent
+        Tasks so that ContextVars persist across yields.
         """
         inner_iter = inner_gen.__aiter__()
         pending_next = None          # the Task for __anext__()
+        gen_context = None           # captured from first Task for propagation
 
         while True:
             if pending_next is None:
-                pending_next = asyncio.ensure_future(inner_iter.__anext__())
+                coro = inner_iter.__anext__()
+                if gen_context is not None:
+                    # Reuse the generator's context so ContextVars
+                    # (e.g. _current_memory_user) persist across yields
+                    loop = asyncio.get_running_loop()
+                    pending_next = loop.create_task(coro, context=gen_context)
+                else:
+                    pending_next = asyncio.ensure_future(coro)
 
             done, _ = await asyncio.wait({pending_next}, timeout=interval)
 
@@ -945,6 +963,13 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                 # The inner generator yielded a value (or raised)
                 task = pending_next
                 pending_next = None
+
+                # After the first iteration, capture the Task's context
+                # which includes ContextVars set by the generator (e.g.
+                # set_memory_user).  All future Tasks reuse this context.
+                if gen_context is None:
+                    gen_context = task.get_context()
+
                 try:
                     yield task.result()          # may raise StopAsyncIteration
                 except StopAsyncIteration:
@@ -988,7 +1013,7 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                 if att_names:
                     guard_input = f"{guard_input} [Attachments: {', '.join(att_names)}]"
             guard_task = asyncio.create_task(evaluate_prompt(guard_input))
-            memory_task = asyncio.create_task(pre_stage1_agent(augmented_content, conversation_id))
+            memory_task = asyncio.create_task(pre_stage1_agent(augmented_content, conversation_id, user_id=user_id))
 
             guard_verdict = await guard_task
             if not guard_verdict.allowed:
@@ -1305,7 +1330,8 @@ Now provide your complete evaluation:"""
             # Fire post-Stage 2 agent in parallel (doesn't block Stage 3)
             post_stage2_task = asyncio.create_task(
                 post_stage2_agent(
-                    augmented_content, grounding_scores, aggregate_rankings
+                    augmented_content, grounding_scores, aggregate_rankings,
+                    user_id=user_id,
                 )
             )
 
@@ -1342,6 +1368,7 @@ Now provide your complete evaluation:"""
 
                     # Persist CA snapshots for cross-session tracking
                     try:
+                        set_memory_user(user_id)  # re-set after yield boundary
                         memory_mgr = get_memory_manager()
                         for resp in grounding_scores.get("per_response", []):
                             ca = resp.get("context_awareness")
@@ -1438,6 +1465,7 @@ Now provide your complete evaluation:"""
                     stage3_result=stage3_result,
                     grounding_score=overall_grounding,
                     cost_summary=cost_summary,
+                    user_id=user_id,
                 )
             )
 
@@ -1487,6 +1515,7 @@ Now provide your complete evaluation:"""
             # ── OPT-6: User Behaviour Learning + ECA Adaptation ───
             # Non-blocking: record user profile and run adaptation loop.
             try:
+                set_memory_user(user_id)  # re-set after yield boundary
                 upm = get_user_profile_memory()
                 eca = get_eca()
 

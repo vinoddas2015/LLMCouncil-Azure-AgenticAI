@@ -28,6 +28,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from .memory import get_memory_manager, MemoryManager
+from .memory_store import set_memory_user
 
 logger = logging.getLogger("llm_council.orchestrator")
 
@@ -39,6 +40,7 @@ logger = logging.getLogger("llm_council.orchestrator")
 async def pre_stage1_agent(
     user_query: str,
     conversation_id: str,
+    user_id: str | None = None,
 ) -> Dict[str, Any]:
     """
     Runs before Stage 1 begins.
@@ -46,6 +48,8 @@ async def pre_stage1_agent(
     - Formats them as prompt context.
     - Returns augmented query + memory metadata.
     """
+    if user_id:
+        set_memory_user(user_id)
     mm = get_memory_manager()
     memories = mm.recall_for_query(user_query)
 
@@ -85,6 +89,7 @@ async def post_stage2_agent(
     user_query: str,
     grounding_scores: Dict[str, Any],
     aggregate_rankings: List[Dict[str, Any]],
+    user_id: str | None = None,
 ) -> Dict[str, Any]:
     """
     Runs after Stage 2 completes.
@@ -92,6 +97,8 @@ async def post_stage2_agent(
     - Flags if current deliberation is significantly above/below average.
     - Recommends confidence adjustment.
     """
+    if user_id:
+        set_memory_user(user_id)
     mm = get_memory_manager()
     current_score = grounding_scores.get("overall_score", 0)
 
@@ -162,6 +169,7 @@ async def post_stage3_agent(
     cost_summary: Optional[Dict[str, Any]] = None,
     auto_learn_threshold: float = 0.75,
     tags: Optional[List[str]] = None,
+    user_id: str | None = None,
 ) -> Dict[str, Any]:
     """
     Runs after Stage 3 (chairman synthesis) completes.
@@ -169,6 +177,8 @@ async def post_stage3_agent(
     - Otherwise → mark as pending for user decision.
     - Returns learning summary + prompt for user action.
     """
+    if user_id:
+        set_memory_user(user_id)
     try:
         mm = get_memory_manager()
     except Exception as e:
@@ -267,11 +277,14 @@ async def user_gate_agent(
     memory_type: str,  # "semantic" | "episodic" | "procedural"
     memory_id: str,
     reason: str = "",
+    user_id: str | None = None,
 ) -> Dict[str, Any]:
     """
     Applies the user's explicit learn/unlearn decision.
     Can be called at any stage from the frontend.
     """
+    if user_id:
+        set_memory_user(user_id)
     mm = get_memory_manager()
 
     if decision == "learn":
