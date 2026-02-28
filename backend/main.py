@@ -552,10 +552,34 @@ async def enhance_prompt(request: EnhancePromptRequest):
     """
     Enhance a user's prompt to be more specific, detailed, and effective.
     Uses a fast model (gemini-2.5-flash) to generate an improved version.
+
+    Follow-up aware: If the prompt targets a specific Stage or model
+    (e.g. "Regarding Stage 2: ..."), the routing prefix is preserved
+    verbatim and only the question body is enhanced.
     """
     if not request.content.strip():
         raise HTTPException(status_code=400, detail="Prompt content is required")
 
+    # ── Detect and extract follow-up routing prefix ──────────────
+    _RE_ENHANCE_STAGE = re.compile(
+        rf"^({_FOLLOWUP_PREFIX}\s+Stage\s*\d){_SEPARATOR}(.+)",
+        re.DOTALL | re.IGNORECASE,
+    )
+    _RE_ENHANCE_MODEL = re.compile(
+        rf"^({_FOLLOWUP_PREFIX}\s+.+?(?:'s|'s|'s)\s+response){_SEPARATOR}(.+)",
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    followup_prefix = ""
+    question_body = request.content.strip()
+
+    m = _RE_ENHANCE_STAGE.match(question_body) or _RE_ENHANCE_MODEL.match(question_body)
+    if m:
+        followup_prefix = m.group(1).strip()   # e.g. "Regarding Stage 2"
+        question_body = m.group(2).strip()      # the actual question
+        logger.info("[enhance-prompt] Detected follow-up prefix: '%s'", followup_prefix)
+
+    # ── System prompt for the enhancer ───────────────────────────
     enhance_system = """You are an expert prompt engineer for a pharmaceutical research LLM council. Your job is to MODESTLY improve a user's prompt — not to inflate or fabricate.
 
 CRITICAL RULES:
@@ -567,22 +591,33 @@ CRITICAL RULES:
 6. Do NOT add boilerplate phrases like "Provide a comprehensive scientific and technical elucidation" or "Elaborate on its utility across stages such as…". Write naturally.
 7. Do NOT answer the question — only improve the phrasing.
 8. Return ONLY the improved prompt text — no preamble, no explanation, no surrounding quotes.
+9. Do NOT add any follow-up routing prefix (like "Regarding Stage 2:" or "About gpt-5.2's response:"). The system handles routing separately — you should only return the enhanced QUESTION.
 
 EXAMPLES:
 - Input: "What is metformin?" → "What is metformin, including its mechanism of action, primary indications, and key safety considerations?"
 - Input: "What is clawdbot?" → "What is clawdbot?"  (unknown term — return as-is or nearly as-is)
 - Input: "Compare SGLT2 inhibitors" → "Compare the major SGLT2 inhibitors (empagliflozin, dapagliflozin, canagliflozin) in terms of cardiovascular outcomes, renal benefits, and safety profiles based on recent clinical trial data."
-- Input: "Tell me a joke" → "Tell me a joke"  (off-topic — return as-is)"""
+- Input: "Tell me a joke" → "Tell me a joke"  (off-topic — return as-is)
+- Input: "Need bit more clarity on FN:3" → "Could you elaborate on FN:3 — Under-emphasizes emicizumab's role — with more detail on the supporting evidence?"  (follow-up question — improve clarity, keep original references)"""
 
     messages = [
         {"role": "system", "content": enhance_system},
-        {"role": "user", "content": f"Enhance this prompt (follow the critical rules strictly):\n\n{request.content}"}
+        {"role": "user", "content": f"Enhance this prompt (follow the critical rules strictly):\n\n{question_body}"}
     ]
 
     try:
         response = await query_model("gemini-2.5-flash", messages, timeout=30.0)
         if response and response.get('content'):
-            enhanced = response['content'].strip().strip('"\'')
+            enhanced_body = response['content'].strip().strip('"\'')
+
+            # Re-attach the follow-up routing prefix if one was detected
+            if followup_prefix:
+                enhanced = f"{followup_prefix}: {enhanced_body}"
+                logger.info("[enhance-prompt] Re-attached prefix → '%s: %s…'",
+                            followup_prefix, enhanced_body[:60])
+            else:
+                enhanced = enhanced_body
+
             return {
                 "original": request.content,
                 "enhanced": enhanced,
