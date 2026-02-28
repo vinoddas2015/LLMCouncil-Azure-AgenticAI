@@ -1297,10 +1297,16 @@ async def _run_targeted_followup(
 ):
     """Async generator yielding SSE events for a targeted follow-up.
 
-    This skips Stages 1 & 2 and directly queries the chairman with the
-    referenced content.  The agent team still fires for analysis.
+    Routing rules:
+    - Stage 1 target  → Re-query all council models with the follow-up question
+    - Stage 2 target  → Re-query all council models for peer evaluation of the follow-up
+    - Stage 3 target  → Chairman-only synthesis (fast path)
+    - Model target    → Chairman answers about that specific model's response (fast path)
+
+    The agent team still fires for analysis in all cases.
     """
     from .config import DEFAULT_CHAIRMAN_MODEL as _DEFAULT_CHAIRMAN
+    from .config import COUNCIL_MODELS as _COUNCIL_MODELS
 
     chairman = user_chairman_model or _DEFAULT_CHAIRMAN
     target_type = targeted["type"]
@@ -1317,29 +1323,204 @@ async def _run_targeted_followup(
     prev_grounding = prev_meta.get("grounding_scores", {})
     prev_evidence = prev_meta.get("evidence", {})
 
-    # ── Tell frontend we are on the fast path ──
+    # ── Tell frontend we are on the targeted path ──
     yield f"data: {json.dumps({'type': 'targeted_followup_start', 'data': {'target_type': target_type, 'target': target_label}})}\n\n"
+
+    # ── Route based on target ────────────────────────────────────
+    if target_type == "stage" and target_label == "Stage 1":
+        # ━━ STAGE 1 FOLLOW-UP: Re-query all council models ━━━━━━
+        logger.info("[Targeted Follow-Up] Stage 1 → re-running council models")
+        yield f"data: {json.dumps({'type': 'stage1_start'})}\n\n"
+
+        s1_models = user_council_models or _COUNCIL_MODELS
+        s1_context = build_conversation_context(conversation_history)
+        s1_query = f"{s1_context}Current question (follow-up): {user_question}" if s1_context else user_question
+        s1_messages = [{"role": "user", "content": s1_query}]
+
+        SPEED_S1_MAX_TOKENS = 2048 if speed_mode else None
+
+        pending_tasks = {}
+        for model in s1_models:
+            task = asyncio.create_task(
+                query_model(model, s1_messages,
+                            timeout=SPEED_TIMEOUT,
+                            web_search_enabled=web_search_enabled,
+                            session_id=session_id,
+                            max_retries=1,
+                            max_tokens=SPEED_S1_MAX_TOKENS)
+            )
+            pending_tasks[task] = model
+
+        stage1_results = []
+        s1_failed_models = []
+        s1_used_models = set(s1_models)
+        s1_total = len(s1_models)
+
+        while pending_tasks:
+            done, _ = await asyncio.wait(
+                pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in done:
+                model = pending_tasks.pop(task)
+                try:
+                    response = task.result()
+                    if response is not None:
+                        result_item = {
+                            "model": model,
+                            "response": response.get("content", ""),
+                            "usage": response.get("usage"),
+                        }
+                        stage1_results.append(result_item)
+                        yield f"data: {json.dumps({'type': 'stage1_model_complete', 'data': result_item, 'progress': {'completed': len(stage1_results), 'failed': len(s1_failed_models), 'total': s1_total}})}\n\n"
+                    else:
+                        s1_failed_models.append(model)
+                except Exception as e:
+                    logger.error(f"[Targeted S1] {model} raised: {e}")
+                    s1_failed_models.append(model)
+
+        # Self-healing fallbacks
+        if s1_failed_models and len(stage1_results) < len(s1_models):
+            for failed_model in s1_failed_models:
+                fallback = resolve_fallback(failed_model, s1_used_models)
+                if fallback:
+                    s1_used_models.add(fallback)
+                    fb_resp = await query_model(fallback, s1_messages,
+                                                web_search_enabled=web_search_enabled,
+                                                session_id=session_id)
+                    if fb_resp is not None:
+                        result_item = {
+                            "model": f"{fallback} (fallback for {failed_model})",
+                            "response": fb_resp.get("content", ""),
+                            "usage": fb_resp.get("usage"),
+                        }
+                        stage1_results.append(result_item)
+                        yield f"data: {json.dumps({'type': 'stage1_model_complete', 'data': result_item, 'progress': {'completed': len(stage1_results), 'failed': len(s1_failed_models), 'total': s1_total}})}\n\n"
+
+        for r in stage1_results:
+            cost_tracker.record("stage1", r["model"], r.get("usage"))
+        yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_results})}\n\n"
+
+        # Save — Stage 1 only, carry forward previous Stage 2/3
+        storage.add_assistant_message(
+            user_id, conversation_id,
+            stage1_results, prev_s2, prev_s3,
+            metadata={
+                "label_to_model": prev_meta.get("label_to_model", {}),
+                "aggregate_rankings": prev_rankings,
+                "grounding_scores": prev_grounding,
+                "evidence": prev_evidence,
+                "targeted_followup": {"type": target_type, "target": target_label},
+            },
+        )
+
+        # Agent team
+        agent_team_result = None
+        try:
+            agent_team_result = await run_agent_team(
+                user_query=user_query,
+                stage1_results=stage1_results,
+                stage2_results=prev_s2,
+                stage3_result=prev_s3,
+                aggregate_rankings=prev_rankings,
+                grounding_scores=prev_grounding,
+                evidence_bundle=prev_evidence,
+                cost_summary=cost_tracker.summary(),
+                web_search_enabled=web_search_enabled,
+            )
+        except Exception as e:
+            logger.warning(f"[Targeted S1] Agent team error: {e}")
+
+        cost_summary = cost_tracker.summary()
+        yield f"data: {json.dumps({'type': 'cost_summary', 'data': cost_summary})}\n\n"
+        if agent_team_result:
+            yield f"data: {json.dumps({'type': 'agent_team_complete', 'data': agent_team_result})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+        return
+
+    elif target_type == "stage" and target_label == "Stage 2":
+        # ━━ STAGE 2 FOLLOW-UP: Re-run peer rankings with the follow-up context ━━
+        logger.info("[Targeted Follow-Up] Stage 2 → re-running peer evaluations")
+
+        # Build context: previous Stage 1 responses + follow-up question
+        context_lines = []
+        for r in (prev_s1 or []):
+            model_name = r.get("model", "unknown")
+            resp_text = (r.get("response", "") or "")[:2000]
+            context_lines.append(f"**{model_name}**:\n{resp_text}")
+        context_block = "\n\n---\n\n".join(context_lines)
+
+        focused_prompt = f"""The user previously asked a question and the council provided Stage 1 responses.
+The user now has a follow-up question specifically about the Stage 2 peer evaluations.
+
+--- ORIGINAL STAGE 1 RESPONSES ---
+{context_block[:8000]}
+
+--- FOLLOW-UP QUESTION ---
+{user_question}
+
+Re-evaluate the Stage 1 responses in light of this follow-up question.
+Provide detailed peer evaluation addressing the specific follow-up concern.
+Maintain pharmaceutical domain expertise and cite evidence where applicable."""
+
+        yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
+
+        try:
+            chairman_response = await query_model(
+                chairman, [{"role": "user", "content": focused_prompt}],
+                timeout=SPEED_TIMEOUT, max_tokens=SPEED_S3_MAX_TOKENS,
+                session_id=session_id,
+            )
+        except Exception as e:
+            logger.error(f"[Targeted S2] Chairman query failed: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Follow-up query failed: {e}'})}\n\n"
+            return
+
+        stage3_result = {
+            "model": chairman,
+            "response": enrich_stage3_citations((chairman_response or {}).get("content", "")),
+        }
+        yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
+
+        cost_summary = cost_tracker.summary()
+        yield f"data: {json.dumps({'type': 'cost_summary', 'data': cost_summary})}\n\n"
+
+        agent_team_result = None
+        try:
+            agent_team_result = await run_agent_team(
+                user_query=user_query, stage1_results=prev_s1,
+                stage2_results=prev_s2, stage3_result=stage3_result,
+                aggregate_rankings=prev_rankings, grounding_scores=prev_grounding,
+                evidence_bundle=prev_evidence, cost_summary=cost_summary,
+                web_search_enabled=web_search_enabled,
+            )
+        except Exception as e:
+            logger.warning(f"[Targeted S2] Agent team error: {e}")
+        if agent_team_result:
+            yield f"data: {json.dumps({'type': 'agent_team_complete', 'data': agent_team_result})}\n\n"
+
+        storage.add_assistant_message(
+            user_id, conversation_id, prev_s1, prev_s2, stage3_result,
+            metadata={
+                "label_to_model": prev_meta.get("label_to_model", {}),
+                "aggregate_rankings": prev_rankings,
+                "grounding_scores": prev_grounding,
+                "evidence": prev_evidence,
+                "targeted_followup": {"type": target_type, "target": target_label},
+                **({"agent_team": agent_team_result} if agent_team_result else {}),
+            },
+        )
+        yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+        return
+
+    # ━━ STAGE 3 / MODEL TARGET: Chairman-only fast path ━━━━━━━━━
+    # (original behavior: Stage 3 follow-ups and model-specific follow-ups)
+    logger.info("[Targeted Follow-Up] %s → chairman fast path", target_label)
 
     # ── Build a focused prompt for the chairman ──
     if target_type == "stage":
-        if target_label in ("Stage 1", "Stage 2"):
-            # For Stage 1 or 2, provide a summary of the data
-            if target_label == "Stage 1":
-                context_lines = []
-                for r in (reference_data or []):
-                    model_name = r.get("model", "unknown")
-                    resp_text = (r.get("response", "") or "")[:2000]
-                    context_lines.append(f"**{model_name}**:\n{resp_text}")
-                context_block = "\n\n---\n\n".join(context_lines)
-            else:  # Stage 2
-                context_lines = []
-                for r in (reference_data or []):
-                    reviewer = r.get("model", "unknown")
-                    eval_text = (r.get("evaluation", "") or "")[:2000]
-                    context_lines.append(f"**Reviewer {reviewer}**:\n{eval_text}")
-                context_block = "\n\n---\n\n".join(context_lines)
-        else:  # Stage 3
-            context_block = reference_data if isinstance(reference_data, str) else json.dumps(reference_data)
+        # Stage 3
+        context_block = reference_data if isinstance(reference_data, str) else json.dumps(reference_data)
     else:  # model
         context_block = (
             f"**{targeted.get('full_model_id', target_label)}**'s response:\n\n"
@@ -1412,7 +1593,6 @@ Maintain pharmaceutical domain expertise and cite evidence where applicable."""
         yield f"data: {json.dumps({'type': 'agent_team_complete', 'data': agent_team_result})}\n\n"
 
     # ── Save assistant message ──
-    # For targeted follow-ups we store previous Stage 1/2 data with the new Stage 3
     storage.add_assistant_message(
         user_id,
         conversation_id,

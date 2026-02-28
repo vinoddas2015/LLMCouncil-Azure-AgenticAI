@@ -139,6 +139,22 @@ export default function ChatInterface({
     scrollToBottom();
   }, [conversation]);
 
+  // Auto-scroll during streaming — fires when loading state changes
+  useEffect(() => {
+    if (!conversation) return;
+    const msgs = conversation.messages || [];
+    const last = msgs[msgs.length - 1];
+    if (last?.loading?.stage1 || last?.loading?.stage2 || last?.loading?.stage3) {
+      // During active streaming, keep scrolling to bottom unless user scrolled away
+      scrollToBottom();
+    }
+  }, [
+    conversation?.messages?.length,
+    conversation?.messages?.[conversation?.messages?.length - 1]?.stage1?.length,
+    conversation?.messages?.[conversation?.messages?.length - 1]?.stage3,
+    conversation?.messages?.[conversation?.messages?.length - 1]?.loading,
+  ]);
+
   const validateFile = (file) => {
     // Check file type — also allow by extension for .md files (browsers may report text/plain)
     const isAllowedType = ALLOWED_FILE_TYPES[file.type];
@@ -234,6 +250,8 @@ export default function ChatInterface({
     e.preventDefault();
     const anyUploading = attachments.some(a => a.uploading);
     if ((input.trim() || attachments.length > 0) && !anyUploading && !isLoading && !enhanceState && !isBlocked) {
+      // Force scroll to bottom when user sends a new message
+      scrollToBottom(true);
       const promptText = input.trim();
       const currentAttachments = [...attachments];
 

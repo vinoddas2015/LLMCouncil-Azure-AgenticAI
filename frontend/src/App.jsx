@@ -372,15 +372,19 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             setActiveSessionId(event.data?.session_id || null);
             break;
 
-          case 'targeted_followup_start':
-            // Fast-path follow-up: skip Stage 1/2 loading, jump straight to Stage 3
+          case 'targeted_followup_start': {
+            // Route to the correct loading state based on target
+            const tgt = event.data?.target || '';
+            const isStage1 = tgt === 'Stage 1';
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
-              msg.loading.stage1 = false;
+              msg.loading.stage1 = isStage1;
               msg.loading.stage2 = false;
-              msg.loading.stage3 = true;
+              msg.loading.stage3 = !isStage1;
               msg.targetedFollowup = event.data; // {target_type, target}
+              if (isStage1) msg.stage1Progress = { completed: 0, failed: 0, total: 0 };
             }));
             break;
+          }
 
           case 'stage1_start':
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
