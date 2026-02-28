@@ -459,6 +459,16 @@ export default function ChatInterface({
                     {msg.stage3 && <Stage3 finalResponse={msg.stage3} evidence={msg.evidence || msg.metadata?.evidence} />}
                   </Suspense>
 
+                  {/* Empty assistant message fallback — pipeline errored or data missing */}
+                  {!msg.stage1 && !msg.stage2 && !msg.stage3
+                    && !msg.loading?.stage1 && !msg.loading?.stage2 && !msg.loading?.stage3
+                    && !isLoading && (
+                    <div className="pipeline-error-state" role="alert">
+                      <span className="pipeline-error-icon">⚠️</span>
+                      <span>Council response unavailable — the pipeline may have encountered an error. Try sending your question again.</span>
+                    </div>
+                  )}
+
                   {/* Self-healing Resume Button */}
                   {msg._canResume && !isLoading && onResume && (
                     <div className="resume-pipeline-banner" role="alert">

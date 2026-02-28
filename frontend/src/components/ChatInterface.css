@@ -542,6 +542,25 @@
   cursor: not-allowed;
 }
 
+/* ── Pipeline Error State (empty assistant message) ─────── */
+.pipeline-error-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  margin: 12px 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-warning, #f59e0b);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+.pipeline-error-icon {
+  font-size: 1.3rem;
+  flex-shrink: 0;
+}
+
 /* ── Self-healing Resume Banner ─────────────────────────── */
 .resume-pipeline-banner {
   display: flex;

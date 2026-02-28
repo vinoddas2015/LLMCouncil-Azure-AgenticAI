@@ -1082,13 +1082,42 @@ async def delete_memory_entry(memory_type: str, memory_id: str, user_id: str = D
 #  and route directly to the chairman with the referenced content.
 # ═══════════════════════════════════════════════════════════════════════
 
-# Patterns the frontend chips inject (see ChatInterface.jsx)
+# ── Targeted Follow-Up Patterns ────────────────────────────────────
+# These detect when a user is asking about a SPECIFIC stage or model
+# from the previous council response.  Detection is intentionally
+# generous — both chip-generated prefixes ("Regarding Stage 3: …")
+# and free-form user text ("Regarding Stage 3, …" or "About Stage
+# 3 - tell me more") should match.
+#
+# Separator after "Stage N" / "response" is flexible:
+#   colon, comma, semicolon, dash (any kind), period, or nothing.
+#
+# Prefixes accepted: Regarding, About, Re, On, For, Expand on,
+#   Elaborate on, Tell me more about, More on, Concerning.
+# ──────────────────────────────────────────────────────────────────
+
+_FOLLOWUP_PREFIX = r"(?:Regarding|About|Re:?|On|For|Expand\s+on|Elaborate\s+on|Tell\s+me\s+more\s+about|More\s+on|Concerning)"
+_SEPARATOR = r"\s*[,:;\-–—.!?]?\s*"
+
 _RE_STAGE_FOLLOWUP = re.compile(
-    r"^Regarding (Stage \d):\s*(.+)", re.DOTALL | re.IGNORECASE
+    rf"^{_FOLLOWUP_PREFIX}\s+(Stage\s*\d){_SEPARATOR}(.+)",
+    re.DOTALL | re.IGNORECASE,
 )
 _RE_MODEL_FOLLOWUP = re.compile(
-    r"^Regarding (.+?)(?:'s|'s) response:\s*(.+)", re.DOTALL | re.IGNORECASE
+    rf"^{_FOLLOWUP_PREFIX}\s+(.+?)(?:'s|'s|'s)\s+response{_SEPARATOR}(.+)",
+    re.DOTALL | re.IGNORECASE,
 )
+
+# Fallback: detect "Stage N" anywhere in the first 60 chars when there
+# IS a previous assistant message — catches patterns like
+# "please list … from Stage 3" or "what did Stage 1 say about…"
+_RE_STAGE_MENTION = re.compile(
+    r"\b(Stage\s*(\d))\b", re.IGNORECASE
+)
+
+# Fallback: detect a known model short-name anywhere in the first 80
+# chars — catches "what did gpt-5.2 think about …"
+# (populated dynamically from the previous assistant message's Stage 1)
 
 
 def _detect_targeted_followup(
@@ -1119,13 +1148,9 @@ def _detect_targeted_followup(
     if last_assistant is None:
         return None
 
-    # ── Stage-targeted follow-up ──
-    m = _RE_STAGE_FOLLOWUP.match(content)
-    if m:
-        stage_label = m.group(1)          # "Stage 1" / "Stage 2" / "Stage 3"
-        user_question = m.group(2).strip()
-        stage_num = stage_label[-1]        # "1", "2", "3"
-
+    def _build_stage_result(stage_label: str, user_question: str) -> dict:
+        """Build the targeted follow-up dict for a stage reference."""
+        stage_num = stage_label.strip()[-1]  # "1", "2", "3"
         reference_data = None
         if stage_num == "1":
             reference_data = last_assistant.get("stage1", [])
@@ -1134,10 +1159,9 @@ def _detect_targeted_followup(
         elif stage_num == "3":
             s3 = last_assistant.get("stage3", {})
             reference_data = s3.get("response", "") if isinstance(s3, dict) else s3
-
         return {
             "type": "stage",
-            "target_label": stage_label,
+            "target_label": f"Stage {stage_num}",
             "user_question": user_question,
             "reference_data": reference_data,
             "prev_stage1": last_assistant.get("stage1", []),
@@ -1146,7 +1170,30 @@ def _detect_targeted_followup(
             "prev_metadata": last_assistant.get("metadata", {}),
         }
 
-    # ── Model-targeted follow-up ──
+    def _build_model_result(model_short: str, full_model_id: str,
+                            model_response: str, user_question: str) -> dict:
+        """Build the targeted follow-up dict for a model reference."""
+        return {
+            "type": "model",
+            "target_label": model_short,
+            "full_model_id": full_model_id,
+            "user_question": user_question,
+            "reference_data": model_response,
+            "prev_stage1": last_assistant.get("stage1", []),
+            "prev_stage2": last_assistant.get("stage2", []),
+            "prev_stage3": last_assistant.get("stage3", {}),
+            "prev_metadata": last_assistant.get("metadata", {}),
+        }
+
+    # ── PRIMARY: Stage-targeted follow-up (prefix match) ──
+    m = _RE_STAGE_FOLLOWUP.match(content)
+    if m:
+        stage_label = m.group(1)          # "Stage 1" / "Stage 2" / "Stage 3"
+        user_question = m.group(2).strip()
+        logger.info(f"[Targeted Follow-Up Detection] PRIMARY stage match: '{stage_label}' from prefix pattern")
+        return _build_stage_result(stage_label, user_question)
+
+    # ── PRIMARY: Model-targeted follow-up (prefix match) ──
     m = _RE_MODEL_FOLLOWUP.match(content)
     if m:
         model_short = m.group(1).strip()   # e.g. "gpt-5.2"
@@ -1164,22 +1211,36 @@ def _detect_targeted_followup(
                 full_model_id = mid
                 break
 
-        if model_response is None:
-            # No matching model found — fall back to full pipeline
-            return None
+        if model_response is not None:
+            logger.info(f"[Targeted Follow-Up Detection] PRIMARY model match: '{model_short}' from prefix pattern")
+            return _build_model_result(model_short, full_model_id, model_response, user_question)
 
-        return {
-            "type": "model",
-            "target_label": model_short,
-            "full_model_id": full_model_id,
-            "user_question": user_question,
-            "reference_data": model_response,
-            "prev_stage1": s1_results,
-            "prev_stage2": last_assistant.get("stage2", []),
-            "prev_stage3": last_assistant.get("stage3", {}),
-            "prev_metadata": last_assistant.get("metadata", {}),
-        }
+    # ── FALLBACK: Stage mention in the first 80 chars ──
+    # Catches: "please list hemophilia centers from Stage 3",
+    #          "can you expand the Stage 1 answer", etc.
+    head = content[:80]
+    stage_mentions = list(_RE_STAGE_MENTION.finditer(head))
+    if stage_mentions:
+        # Use the LAST Stage mention (most likely the target)
+        last_match = stage_mentions[-1]
+        stage_label = last_match.group(1)  # e.g. "Stage 3"
+        # Use full content as the question (can't reliably split)
+        logger.info(f"[Targeted Follow-Up Detection] FALLBACK stage mention: '{stage_label}' in first 80 chars")
+        return _build_stage_result(stage_label, content)
 
+    # ── FALLBACK: Model short-name mention in the first 80 chars ──
+    s1_results = last_assistant.get("stage1", [])
+    if s1_results:
+        content_lower = head.lower()
+        for r in s1_results:
+            mid = r.get("model", "")
+            short = (mid.split("/")[-1] if "/" in mid else mid).lower()
+            if short and short in content_lower:
+                model_response = r.get("response", "")
+                logger.info(f"[Targeted Follow-Up Detection] FALLBACK model mention: '{short}' in first 80 chars")
+                return _build_model_result(short, mid, model_response, content)
+
+    logger.debug(f"[Targeted Follow-Up Detection] No match for: {content[:100]!r}")
     return None
 
 
