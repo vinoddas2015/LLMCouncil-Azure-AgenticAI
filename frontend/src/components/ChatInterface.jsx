@@ -44,8 +44,13 @@ export default function ChatInterface({
   const [enhanceState, setEnhanceState] = useState(null); // null | 'loading' | 'ready'
   const [enhancedData, setEnhancedData] = useState(null); // { original, enhanced }
 
+  // When no conversation is selected yet (lazy-create mode), render
+  // a synthetic empty conversation so the input form is visible and
+  // the user can start typing immediately.
+  const conv = conversation || { messages: [], blocked: false };
+
   // Conversation blocked by prompt guard — disable all input
-  const isBlocked = !!(conversation?.blocked);
+  const isBlocked = !!(conv?.blocked);
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -283,27 +288,20 @@ export default function ChatInterface({
     }
   };
 
-  if (!conversation) {
-    return (
-      <div className="chat-interface" id="main-content" role="main">
-        <div className="empty-state">
-          <h2>Welcome to LLM Council</h2>
-          <p>Create a new conversation to get started</p>
-        </div>
-      </div>
-    );
+  if (!conv) {
+    return null; // defensive — should never happen since conv has a default
   }
 
   return (
     <div className="chat-interface" id="main-content" role="main">
       <div className="messages-container" ref={messagesContainerRef}>
-        {conversation.messages.length === 0 ? (
+        {conv.messages.length === 0 ? (
           <div className="empty-state">
             <h2>Start a conversation</h2>
             <p>Ask a question to consult the LLM Council</p>
           </div>
         ) : (
-          conversation.messages.map((msg, index) => (
+          conv.messages.map((msg, index) => (
             <div key={index} className="message-group">
               {msg.role === 'user' ? (
                 <div className="user-message">
@@ -402,7 +400,7 @@ export default function ChatInterface({
           ))
         )}
 
-        {isLoading && !conversation.messages.some(m => m.loading) && (
+        {isLoading && !conv.messages.some(m => m.loading) && (
           <div className="loading-indicator">
             <div className="spinner"></div>
             <span>Consulting the council...</span>
@@ -431,7 +429,7 @@ export default function ChatInterface({
       {/* Always show input form - for both new conversations and follow-ups */}
       <form className="input-form" onSubmit={handleSubmit}>
         {/* Follow-up quick-select chips (only show after first exchange) */}
-        {conversation.messages.length > 0 && (
+        {conv.messages.length > 0 && (
           <div className="followup-options">
             <span className="followup-label">Focus on:</span>
             {['Stage 1', 'Stage 2', 'Stage 3'].map((stage) => (
@@ -450,7 +448,7 @@ export default function ChatInterface({
             ))}
             {/* Show council member chips from the last assistant message */}
             {(() => {
-              const lastAssistant = [...conversation.messages].reverse().find(m => m.role === 'assistant');
+              const lastAssistant = [...conv.messages].reverse().find(m => m.role === 'assistant');
               const models = lastAssistant?.stage1?.map(r => r.model) || [];
               const uniqueModels = [...new Set(models)];
               return uniqueModels.slice(0, 5).map((model) => {
@@ -547,7 +545,7 @@ export default function ChatInterface({
             className="message-input"
             placeholder={isBlocked
               ? "This conversation has been closed. Please start a new conversation."
-              : conversation.messages.length > 0 
+              : conv.messages.length > 0 
                 ? "Ask a follow-up question... (Shift+Enter for new line, Enter to send)" 
                 : "Ask your question... (Shift+Enter for new line, Enter to send)"}
             value={input}
@@ -562,14 +560,14 @@ export default function ChatInterface({
             className="send-button"
             disabled={(!input.trim() && attachments.length === 0) || isLoading || !!enhanceState || isBlocked}
           >
-            {conversation.messages.length > 0 ? 'Follow Up' : 'Send'}
+            {conv.messages.length > 0 ? 'Follow Up' : 'Send'}
           </button>
         </div>
         
         <div className="input-hint">
           {isBlocked
             ? "🛡️ This conversation is closed — please start a new conversation"
-            : conversation.messages.length > 0 
+            : conv.messages.length > 0 
               ? "Continue the conversation with follow-up questions" 
               : "Paste images or attach PDF, PPTX, XLSX, DOCX, MD files (max 10MB each)"}
         </div>

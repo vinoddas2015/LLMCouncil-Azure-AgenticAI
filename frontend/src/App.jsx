@@ -157,7 +157,9 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
     loadingConvsRef.current = true;
     try {
       const convs = await api.listConversations();
-      setConversations(convs);
+      // Filter out empty conversations (0 messages) that were created
+      // before the lazy-create logic was added.  Keeps sidebar clean.
+      setConversations(convs.filter(c => c.message_count > 0));
     } catch (error) {
       console.error('Failed to load conversations:', error);
       setErrorBanner(`Failed to load conversations: ${error.message}`);
@@ -189,19 +191,14 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
     }
   };
 
-  const handleNewConversation = async () => {
-    try {
-      const newConv = await api.createConversation();
-      setConversations([
-        { id: newConv.id, created_at: newConv.created_at, message_count: 0 },
-        ...conversations,
-      ]);
-      setCurrentConversationId(newConv.id);
-      setErrorBanner(null); // Clear any previous error
-    } catch (error) {
-      console.error('Failed to create conversation:', error);
-      setErrorBanner(`Failed to create conversation: ${error.message}`);
-    }
+  const handleNewConversation = () => {
+    // Just clear the current selection — the actual backend conversation
+    // is created lazily in handleSendMessage when the user sends the
+    // first message.  This prevents empty "New Conversation" entries
+    // from accumulating in storage.
+    setCurrentConversationId(null);
+    setCurrentConversation(null);
+    setErrorBanner(null);
   };
 
   const handleSelectConversation = (id) => {
