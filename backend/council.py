@@ -522,43 +522,23 @@ def _build_system_message(features: Dict[str, bool]) -> str:
     return "\n".join(parts)
 
 
-async def stage3_synthesize_final(
+def build_stage3_prompt(
     user_query: str,
     stage1_results: List[Dict[str, Any]],
     stage2_results: List[Dict[str, Any]],
     chairman_model: Optional[str] = None,
     conversation_history: Optional[List[Dict[str, Any]]] = None,
-    web_search_enabled: bool = False,
-    session_id: Optional[str] = None,
     evidence_context: str = "",
     relevancy_gate: Optional[Dict[str, Dict[str, Any]]] = None,
     memory_context: str = "",
     duplicate_episode: Optional[Dict[str, Any]] = None,
-    max_tokens: Optional[int] = None,
-    timeout: Optional[float] = None,
-) -> Dict[str, Any]:
-    """
-    Stage 3: Chairman synthesizes final response.
-    Self-healing: retries chairman, falls back to alternate models if chairman fails.
-
-    Args:
-        user_query: The original user query
-        stage1_results: Individual model responses from Stage 1
-        stage2_results: Rankings from Stage 2
-        chairman_model: Optional chairman model ID (defaults to CHAIRMAN_MODEL)
-        conversation_history: Optional list of previous messages for context
-        web_search_enabled: Whether to enable Google web search via MyGenAssist
-        session_id: Kill switch session ID
+) -> tuple:
+    """Build the Stage 3 chairman prompt (no API call).
 
     Returns:
-        Dict with 'model' and 'response' keys
+        (messages, chairman_to_use) — the chat messages list and resolved model ID.
     """
-    # Kill switch gate
-    if session_id and kill_switch.is_session_killed(session_id):
-        raise KillSwitchError(f"Session {session_id} killed before Stage 3")
-
     chairman_to_use = chairman_model or CHAIRMAN_MODEL
-    t0 = time.perf_counter()
 
     # Build context for follow-up questions
     context = build_conversation_context(conversation_history)
@@ -657,6 +637,49 @@ Provide a clear, well-reasoned final answer that represents the council's collec
         {"role": "system", "content": system_msg},
         {"role": "user", "content": user_prompt},
     ]
+
+    return messages, chairman_to_use
+
+
+async def stage3_synthesize_final(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage2_results: List[Dict[str, Any]],
+    chairman_model: Optional[str] = None,
+    conversation_history: Optional[List[Dict[str, Any]]] = None,
+    web_search_enabled: bool = False,
+    session_id: Optional[str] = None,
+    evidence_context: str = "",
+    relevancy_gate: Optional[Dict[str, Dict[str, Any]]] = None,
+    memory_context: str = "",
+    duplicate_episode: Optional[Dict[str, Any]] = None,
+    max_tokens: Optional[int] = None,
+    timeout: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Stage 3: Chairman synthesizes final response.
+    Self-healing: retries chairman, falls back to alternate models if chairman fails.
+
+    Returns:
+        Dict with 'model' and 'response' keys
+    """
+    # Kill switch gate
+    if session_id and kill_switch.is_session_killed(session_id):
+        raise KillSwitchError(f"Session {session_id} killed before Stage 3")
+
+    t0 = time.perf_counter()
+
+    messages, chairman_to_use = build_stage3_prompt(
+        user_query=user_query,
+        stage1_results=stage1_results,
+        stage2_results=stage2_results,
+        chairman_model=chairman_model,
+        conversation_history=conversation_history,
+        evidence_context=evidence_context,
+        relevancy_gate=relevancy_gate,
+        memory_context=memory_context,
+        duplicate_episode=duplicate_episode,
+    )
 
     # ── OPT: Speculative Racing — fire chairman + 1 racer in parallel ──
     # If the primary chairman fails or is slow, the racer provides a

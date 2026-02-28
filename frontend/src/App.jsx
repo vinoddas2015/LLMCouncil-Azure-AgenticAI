@@ -440,10 +440,26 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
           case 'stage3_start':
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.loading.stage3 = true;
+              // Initialize stage3 shell for progressive streaming
+              if (!msg.stage3) {
+                msg.stage3 = { model: '', response: '' };
+              }
+            }));
+            break;
+
+          case 'stage3_chunk':
+            // Progressive token streaming — append chunk to response
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              if (!msg.stage3) {
+                msg.stage3 = { model: '', response: '' };
+              }
+              msg.stage3.response += event.data.text || '';
+              msg.loading.stage3 = false;
             }));
             break;
 
           case 'stage3_complete':
+            // Final post-processed response replaces streamed text
             completedStagesRef.current.add('stage3');
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.stage3 = event.data;
@@ -720,6 +736,18 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
           case 'stage3_start':
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.loading.stage3 = true;
+              if (!msg.stage3) {
+                msg.stage3 = { model: '', response: '' };
+              }
+            }));
+            break;
+          case 'stage3_chunk':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              if (!msg.stage3) {
+                msg.stage3 = { model: '', response: '' };
+              }
+              msg.stage3.response += event.data.text || '';
+              msg.loading.stage3 = false;
             }));
             break;
           case 'stage3_complete':

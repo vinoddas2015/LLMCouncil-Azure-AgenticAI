@@ -146,6 +146,124 @@ async def _raw_query_model(
     }
 
 
+# ── Streaming API support ────────────────────────────────────────────
+
+async def query_model_stream(
+    model: str,
+    messages: List[Dict[str, str]],
+    timeout: float = 120.0,
+    web_search_enabled: bool = False,
+    session_id: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+):
+    """
+    Stream a model response token-by-token.
+
+    Yields:
+        str: Text chunks as they arrive from the API.
+
+    After all chunks are yielded, the final yield is a dict with 'usage' info
+    (or None if usage is unavailable).
+
+    Usage pattern::
+
+        full_text = ""
+        async for chunk in query_model_stream(model, messages):
+            if isinstance(chunk, dict):
+                usage = chunk.get("usage")
+            else:
+                full_text += chunk
+
+    """
+    # Kill switch check
+    if session_id and kill_switch.is_session_killed(session_id):
+        logger.warning(f"[query_model_stream] Session {session_id} killed — skipping {model}")
+        return
+
+    # Circuit breaker check
+    if not circuit_breaker.can_attempt(model):
+        logger.warning(f"[query_model_stream] Circuit OPEN for {model} — skipping")
+        return
+
+    sanitized = _sanitize_messages(messages)
+
+    # Google models — fall back to non-streaming (google_provider API differs)
+    if is_google_model(model):
+        from .google_provider import query_google_model
+        raw_model = strip_google_prefix(model)
+        result = await query_google_model(raw_model, sanitized, timeout, web_search_enabled, max_tokens=max_tokens)
+        if result:
+            circuit_breaker.record_success(model)
+            yield result.get("content", "")
+            yield {"usage": result.get("usage")}
+        else:
+            circuit_breaker.record_failure(model, "Google model returned None")
+        return
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "model": model,
+        "messages": sanitized,
+        "stream": True,
+    }
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    if web_search_enabled:
+        payload["plugins"] = ["web_search_google"]
+
+    client = _get_shared_client()
+    try:
+        async with client.stream(
+            "POST",
+            OPENROUTER_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=timeout,
+        ) as response:
+            response.raise_for_status()
+            usage_data = None
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    import json as _json
+                    chunk = _json.loads(data_str)
+                    # Extract usage from the final chunk (some APIs send it)
+                    if chunk.get("usage"):
+                        usage_data = chunk["usage"]
+                    choices = chunk.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        text = delta.get("content")
+                        if text:
+                            yield text
+                except Exception:
+                    continue  # skip malformed chunks
+
+            circuit_breaker.record_success(model)
+            # Yield usage info as final dict sentinel
+            yield {
+                "usage": {
+                    "prompt_tokens": (usage_data or {}).get("prompt_tokens", 0),
+                    "completion_tokens": (usage_data or {}).get("completion_tokens", 0),
+                    "total_tokens": (usage_data or {}).get("prompt_tokens", 0)
+                                  + (usage_data or {}).get("completion_tokens", 0),
+                } if usage_data else None
+            }
+
+    except Exception as e:
+        circuit_breaker.record_failure(model, str(e))
+        logger.error(f"[query_model_stream] {model} streaming failed: {e}")
+        # Yield nothing — caller can fall back to non-streaming
+
+
 async def query_model(
     model: str,
     messages: List[Dict[str, str]],

@@ -114,7 +114,7 @@ def _cosmos_list(user_id: str) -> List[Dict[str, Any]]:
     query = (
         "SELECT c.id, c.created_at, c.title, c.context_tags, "
         "ARRAY_LENGTH(c.messages) AS message_count "
-        "FROM c WHERE c.user_id = @uid"
+        "FROM c WHERE c.user_id = @uid AND ARRAY_LENGTH(c.messages) > 0"
     )
     params = [{"name": "@uid", "value": user_id}]
     items = list(container.query_items(

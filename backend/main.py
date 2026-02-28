@@ -20,10 +20,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from . import storage
-from .council import run_full_council, generate_conversation_title, build_conversation_context, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, stage2_ca_validation_pass, doubting_thomas_review, parse_ranking_from_text, parse_rubric_scores, parse_claim_counts, compute_relevancy_gate
+from .council import run_full_council, generate_conversation_title, build_conversation_context, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, build_stage3_prompt, calculate_aggregate_rankings, stage2_ca_validation_pass, doubting_thomas_review, parse_ranking_from_text, parse_rubric_scores, parse_claim_counts, compute_relevancy_gate
 from .config import OPENROUTER_API_KEY, AVAILABLE_MODELS, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL, COUNCIL_MODELS, GOOGLE_API_KEY, is_google_model
 from .model_sync import sync_models, get_live_models, get_defaults, get_sync_status, periodic_sync_loop
-from .openrouter import query_model
+from .openrouter import query_model, query_model_stream
 from .resilience import (
     kill_switch,
     circuit_breaker,
@@ -2241,19 +2241,18 @@ Now provide your complete evaluation:"""
                     )
                 )
 
-            # Fire Stage 3 as a task so it starts immediately
-            stage3_task = asyncio.create_task(
-                stage3_synthesize_final(
-                    augmented_content, stage1_results, stage2_results,
-                    user_chairman_model, conversation_history, web_search_enabled,
-                    session_id=session_id,
-                    evidence_context=evidence_text,
-                    relevancy_gate=relevancy_gate,
-                    memory_context=raw_memory_context,
-                    duplicate_episode=duplicate_episode,
-                    max_tokens=SPEED_S3_MAX_TOKENS,
-                    timeout=SPEED_TIMEOUT,
-                )
+            # Fire Stage 3 via token-by-token streaming for faster TTFB
+            # Build Stage 3 prompt (pure computation, no API call)
+            stage3_messages, chairman_to_use = build_stage3_prompt(
+                user_query=augmented_content,
+                stage1_results=stage1_results,
+                stage2_results=stage2_results,
+                chairman_model=user_chairman_model,
+                conversation_history=conversation_history,
+                evidence_context=evidence_text,
+                relevancy_gate=relevancy_gate,
+                memory_context=raw_memory_context,
+                duplicate_episode=duplicate_episode,
             )
 
             # Fire post-Stage 2 agent in parallel (doesn't block Stage 3)
@@ -2270,14 +2269,57 @@ Now provide your complete evaluation:"""
 
             # Kill switch check (cancel running tasks if killed)
             if kill_switch.is_session_killed(session_id):
-                stage3_task.cancel()
                 if ca_validation_task:
                     ca_validation_task.cancel()
                 yield f"data: {json.dumps({'type': 'killed', 'message': 'Council session aborted by user.'})}\n\n"
                 return
 
-            # Await Stage 3 (already running in background)
-            stage3_result = await stage3_task
+            # ── Stream Stage 3 tokens ────────────────────────────────
+            streamed_text = ""
+            stage3_usage = None
+            stream_succeeded = False
+            try:
+                async for chunk in query_model_stream(
+                    chairman_to_use,
+                    stage3_messages,
+                    timeout=SPEED_TIMEOUT or 150.0,
+                    web_search_enabled=web_search_enabled,
+                    session_id=session_id,
+                    max_tokens=SPEED_S3_MAX_TOKENS,
+                ):
+                    if isinstance(chunk, dict):
+                        # Final sentinel with usage info
+                        stage3_usage = chunk.get("usage")
+                    else:
+                        streamed_text += chunk
+                        yield f"data: {json.dumps({'type': 'stage3_chunk', 'data': {'text': chunk}})}\n\n"
+                if streamed_text:
+                    stream_succeeded = True
+                    logger.info(f"[Stage3] Streaming complete — {len(streamed_text)} chars from {chairman_to_use}")
+            except Exception as e:
+                logger.warning(f"[Stage3] Streaming failed ({e}), falling back to non-streaming")
+
+            # If streaming produced no text, fall back to non-streaming with speculative racing
+            if stream_succeeded:
+                stage3_result = {
+                    "model": chairman_to_use,
+                    "response": streamed_text,
+                    "usage": stage3_usage,
+                }
+            else:
+                stage3_result = await stage3_synthesize_final(
+                    augmented_content, stage1_results, stage2_results,
+                    user_chairman_model, conversation_history, web_search_enabled,
+                    session_id=session_id,
+                    evidence_context=evidence_text,
+                    relevancy_gate=relevancy_gate,
+                    memory_context=raw_memory_context,
+                    duplicate_episode=duplicate_episode,
+                    max_tokens=SPEED_S3_MAX_TOKENS,
+                    timeout=SPEED_TIMEOUT,
+                )
+                logger.info(f"[Stage3] Fallback completed — {stage3_result.get('model', 'unknown')}")
+
             # Record Stage 3 token usage
             cost_tracker.record("stage3", stage3_result.get("model", "unknown"), stage3_result.get("usage"))
 
@@ -2839,20 +2881,61 @@ Now provide your complete evaluation:"""
             gated_labels = [lbl for lbl, g in relevancy_gate.items() if g.get("gated_out")]
             yield f"data: {json.dumps({'type': 'relevancy_gate', 'data': {'gate': relevancy_gate, 'gated_labels': gated_labels}})}\n\n"
 
-            # ── Stage 3 ────────────────────────────────────────────
+            # ── Stage 3 (streaming) ────────────────────────────────
             yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
             evidence_text = format_citations_for_prompt(evidence_bundle)
 
-            stage3_result = await stage3_synthesize_final(
-                augmented_content, stage1_results, stage2_results,
-                user_chairman_model, conversation_history, web_search_enabled,
-                session_id=session_id,
+            # Build prompt, stream tokens, fallback to non-streaming
+            stage3_messages_tf, chairman_to_use_tf = build_stage3_prompt(
+                user_query=augmented_content,
+                stage1_results=stage1_results,
+                stage2_results=stage2_results,
+                chairman_model=user_chairman_model,
+                conversation_history=conversation_history,
                 evidence_context=evidence_text,
                 relevancy_gate=relevancy_gate,
                 memory_context=raw_memory_context,
-                max_tokens=SPEED_S3_MAX_TOKENS,
-                timeout=SPEED_TIMEOUT,
             )
+
+            streamed_text_tf = ""
+            stage3_usage_tf = None
+            stream_ok_tf = False
+            try:
+                async for chunk in query_model_stream(
+                    chairman_to_use_tf,
+                    stage3_messages_tf,
+                    timeout=SPEED_TIMEOUT or 150.0,
+                    web_search_enabled=web_search_enabled,
+                    session_id=session_id,
+                    max_tokens=SPEED_S3_MAX_TOKENS,
+                ):
+                    if isinstance(chunk, dict):
+                        stage3_usage_tf = chunk.get("usage")
+                    else:
+                        streamed_text_tf += chunk
+                        yield f"data: {json.dumps({'type': 'stage3_chunk', 'data': {'text': chunk}})}\n\n"
+                if streamed_text_tf:
+                    stream_ok_tf = True
+            except Exception as e:
+                logger.warning(f"[Stage3-TF] Streaming failed ({e}), falling back")
+
+            if stream_ok_tf:
+                stage3_result = {
+                    "model": chairman_to_use_tf,
+                    "response": streamed_text_tf,
+                    "usage": stage3_usage_tf,
+                }
+            else:
+                stage3_result = await stage3_synthesize_final(
+                    augmented_content, stage1_results, stage2_results,
+                    user_chairman_model, conversation_history, web_search_enabled,
+                    session_id=session_id,
+                    evidence_context=evidence_text,
+                    relevancy_gate=relevancy_gate,
+                    memory_context=raw_memory_context,
+                    max_tokens=SPEED_S3_MAX_TOKENS,
+                    timeout=SPEED_TIMEOUT,
+                )
             cost_tracker.record("stage3", stage3_result.get("model", "unknown"), stage3_result.get("usage"))
 
             # ── Doubting Thomas ─────────────────────────────────────

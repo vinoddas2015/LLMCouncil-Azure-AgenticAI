@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, lazy, Suspense, memo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, memo } from 'react';
 import SciMarkdown from './SciMarkdown';
 const Stage1 = lazy(() => import('./Stage1'));
 const Stage2 = lazy(() => import('./Stage2'));
@@ -112,24 +112,34 @@ export default function ChatInterface({
   const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
   const userScrolledAwayRef = useRef(false);
+  const isStreamingRef = useRef(false);
 
-  const scrollToBottom = (force = false) => {
+  const scrollToBottom = useCallback((force = false) => {
     if (!messagesContainerRef.current) return;
-    // Only auto-scroll if user is near the bottom (within 200px) or forced
-    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    if (force || distanceFromBottom < 200) {
+    // During active streaming: always scroll unless user grabbed the scrollbar
+    // Outside streaming: only scroll if near the bottom (within 200px)
+    if (force || !userScrolledAwayRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  };
+  }, []);
 
-  // Track whether user manually scrolled up
+  // Track whether user manually scrolled up (only while streaming)
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
+    let lastScrollTop = container.scrollTop;
     const handleScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = container;
-      userScrolledAwayRef.current = (scrollHeight - scrollTop - clientHeight) > 200;
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+      // User scrolled UP → they want to read previous content
+      if (scrollTop < lastScrollTop && distanceFromBottom > 300) {
+        userScrolledAwayRef.current = true;
+      }
+      // User scrolled back to near bottom → re-enable auto-scroll
+      if (distanceFromBottom < 100) {
+        userScrolledAwayRef.current = false;
+      }
+      lastScrollTop = scrollTop;
     };
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
@@ -139,20 +149,23 @@ export default function ChatInterface({
     scrollToBottom();
   }, [conversation]);
 
-  // Auto-scroll during streaming — fires when loading state changes
+  // Auto-scroll during streaming — fires as content arrives
   useEffect(() => {
     if (!conversation) return;
     const msgs = conversation.messages || [];
     const last = msgs[msgs.length - 1];
-    if (last?.loading?.stage1 || last?.loading?.stage2 || last?.loading?.stage3) {
-      // During active streaming, keep scrolling to bottom unless user scrolled away
+    const streaming = !!(last?.loading?.stage1 || last?.loading?.stage2 || last?.loading?.stage3);
+    isStreamingRef.current = streaming;
+    if (streaming) {
       scrollToBottom();
     }
   }, [
     conversation?.messages?.length,
     conversation?.messages?.[conversation?.messages?.length - 1]?.stage1?.length,
-    conversation?.messages?.[conversation?.messages?.length - 1]?.stage3,
+    conversation?.messages?.[conversation?.messages?.length - 1]?.stage2?.length,
+    conversation?.messages?.[conversation?.messages?.length - 1]?.stage3?.response,
     conversation?.messages?.[conversation?.messages?.length - 1]?.loading,
+    scrollToBottom,
   ]);
 
   const validateFile = (file) => {
@@ -250,7 +263,8 @@ export default function ChatInterface({
     e.preventDefault();
     const anyUploading = attachments.some(a => a.uploading);
     if ((input.trim() || attachments.length > 0) && !anyUploading && !isLoading && !enhanceState && !isBlocked) {
-      // Force scroll to bottom when user sends a new message
+      // Reset scroll tracking and force scroll to bottom for new message
+      userScrolledAwayRef.current = false;
       scrollToBottom(true);
       const promptText = input.trim();
       const currentAttachments = [...attachments];
