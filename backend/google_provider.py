@@ -3,7 +3,7 @@
 import httpx
 import logging
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from .config import GOOGLE_API_KEY
 from .security import redact_pii
@@ -57,6 +57,7 @@ async def query_google_model(
     messages: List[Dict[str, str]],
     timeout: float = 120.0,
     web_search_enabled: bool = False,
+    max_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Call a Google AI Studio model.  Returns the same dict structure as
@@ -96,6 +97,10 @@ async def query_google_model(
     }
 
     payload: Dict[str, Any] = {"contents": contents}
+
+    # Speed Mode: cap response length
+    if max_tokens is not None:
+        payload["generationConfig"] = {"maxOutputTokens": max_tokens}
 
     # Optional: enable Google Search grounding
     if web_search_enabled:

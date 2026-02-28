@@ -8,6 +8,7 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
   const [selectedCouncil, setSelectedCouncil] = useState([]);
   const [selectedChairman, setSelectedChairman] = useState('');
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [speedMode, setSpeedMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [syncing, setSyncing] = useState(false);
@@ -36,6 +37,7 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
     }
 
     setWebSearchEnabled(!!preferences.web_search_enabled);
+    setSpeedMode(!!preferences.speed_mode);
   }, [preferences, defaults]);
 
   const loadModels = async () => {
@@ -86,6 +88,7 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
       council_models: selectedCouncil,
       chairman_model: selectedChairman,
       web_search_enabled: webSearchEnabled,
+      speed_mode: speedMode,
     });
     onClose();
   };
@@ -94,6 +97,7 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
     setSelectedCouncil(defaults.council_models);
     setSelectedChairman(defaults.chairman_model);
     setWebSearchEnabled(false);
+    setSpeedMode(false);
   };
 
   const loadSyncStatus = async () => {
@@ -231,6 +235,29 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
             </div>
 
             {/* Web Search toggle moved to input area — see ChatInterface.jsx */}
+
+            <div className="settings-section">
+              <h3>⚡ Speed Mode</h3>
+              <p className="settings-description">
+                Accelerate the council pipeline by streamlining evaluations. Stage 2 uses a simplified ranking prompt (no claim analysis), skips Doubting Thomas self-reflection, and reduces model timeouts.
+              </p>
+              <div className="web-search-toggle">
+                <div className="toggle-info">
+                  <span className="toggle-label">Turbo Pipeline</span>
+                  <span className="toggle-description">
+                    {speedMode ? '⚡ Speed mode ON — faster responses, streamlined evaluations' : 'Standard pipeline — full rubric evaluation + claim analysis'}
+                  </span>
+                </div>
+                <label className="toggle-switch" aria-label="Toggle speed mode">
+                  <input
+                    type="checkbox"
+                    checked={speedMode}
+                    onChange={(e) => setSpeedMode(e.target.checked)}
+                  />
+                  <span className="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
 
             <div className="settings-section">
               <h3>🤖 A2A Agent Cards</h3>

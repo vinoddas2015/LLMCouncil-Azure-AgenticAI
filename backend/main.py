@@ -12,6 +12,7 @@ import os
 import asyncio
 import base64
 import random
+import re
 from datetime import datetime
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -203,6 +204,7 @@ class SendMessageRequest(BaseModel):
     council_models: Optional[List[str]] = None
     chairman_model: Optional[str] = None
     web_search_enabled: bool = False
+    speed_mode: bool = False
 
 
 class EnhancePromptRequest(BaseModel):
@@ -1074,6 +1076,269 @@ async def delete_memory_entry(memory_type: str, memory_id: str, user_id: str = D
     raise HTTPException(status_code=404, detail="Memory entry not found")
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  Targeted Follow-Up Helpers
+#  When the user clicks a FOCUS ON chip, we skip the 3-stage pipeline
+#  and route directly to the chairman with the referenced content.
+# ═══════════════════════════════════════════════════════════════════════
+
+# Patterns the frontend chips inject (see ChatInterface.jsx)
+_RE_STAGE_FOLLOWUP = re.compile(
+    r"^Regarding (Stage \d):\s*(.+)", re.DOTALL | re.IGNORECASE
+)
+_RE_MODEL_FOLLOWUP = re.compile(
+    r"^Regarding (.+?)(?:'s|'s) response:\s*(.+)", re.DOTALL | re.IGNORECASE
+)
+
+
+def _detect_targeted_followup(
+    content: str, conversation_history: list
+) -> Optional[dict]:
+    """Return a dict describing the targeted follow-up, or *None*.
+
+    The returned dict has keys:
+        type          – "stage" | "model"
+        target_label  – e.g. "Stage 3" or "gpt-5.2"
+        user_question – the actual question text (after the prefix)
+        reference_data – the referenced stage/model content from the last
+                         assistant message
+        prev_stage1   – full Stage 1 results (for agent team)
+        prev_stage2   – full Stage 2 results (for agent team)
+        prev_stage3   – full Stage 3 result  (for agent team)
+        prev_metadata – metadata from last assistant message
+    """
+    if not content or not conversation_history:
+        return None
+
+    # Find the last assistant message
+    last_assistant = None
+    for msg in reversed(conversation_history):
+        if msg.get("role") == "assistant":
+            last_assistant = msg
+            break
+    if last_assistant is None:
+        return None
+
+    # ── Stage-targeted follow-up ──
+    m = _RE_STAGE_FOLLOWUP.match(content)
+    if m:
+        stage_label = m.group(1)          # "Stage 1" / "Stage 2" / "Stage 3"
+        user_question = m.group(2).strip()
+        stage_num = stage_label[-1]        # "1", "2", "3"
+
+        reference_data = None
+        if stage_num == "1":
+            reference_data = last_assistant.get("stage1", [])
+        elif stage_num == "2":
+            reference_data = last_assistant.get("stage2", [])
+        elif stage_num == "3":
+            s3 = last_assistant.get("stage3", {})
+            reference_data = s3.get("response", "") if isinstance(s3, dict) else s3
+
+        return {
+            "type": "stage",
+            "target_label": stage_label,
+            "user_question": user_question,
+            "reference_data": reference_data,
+            "prev_stage1": last_assistant.get("stage1", []),
+            "prev_stage2": last_assistant.get("stage2", []),
+            "prev_stage3": last_assistant.get("stage3", {}),
+            "prev_metadata": last_assistant.get("metadata", {}),
+        }
+
+    # ── Model-targeted follow-up ──
+    m = _RE_MODEL_FOLLOWUP.match(content)
+    if m:
+        model_short = m.group(1).strip()   # e.g. "gpt-5.2"
+        user_question = m.group(2).strip()
+
+        # Find the matching model's Stage 1 response
+        s1_results = last_assistant.get("stage1", [])
+        model_response = None
+        full_model_id = model_short
+        for r in s1_results:
+            mid = r.get("model", "")
+            short = mid.split("/")[-1] if "/" in mid else mid
+            if short.lower() == model_short.lower() or mid.lower() == model_short.lower():
+                model_response = r.get("response", "")
+                full_model_id = mid
+                break
+
+        if model_response is None:
+            # No matching model found — fall back to full pipeline
+            return None
+
+        return {
+            "type": "model",
+            "target_label": model_short,
+            "full_model_id": full_model_id,
+            "user_question": user_question,
+            "reference_data": model_response,
+            "prev_stage1": s1_results,
+            "prev_stage2": last_assistant.get("stage2", []),
+            "prev_stage3": last_assistant.get("stage3", {}),
+            "prev_metadata": last_assistant.get("metadata", {}),
+        }
+
+    return None
+
+
+async def _run_targeted_followup(
+    *,
+    targeted: dict,
+    user_query: str,
+    conversation_history: list,
+    conversation_id: str,
+    user_id: str,
+    user_chairman_model: Optional[str],
+    user_council_models: Optional[list],
+    web_search_enabled: bool,
+    speed_mode: bool,
+    session_id: str,
+    SPEED_TIMEOUT: float,
+    SPEED_S3_MAX_TOKENS: Optional[int],
+    cost_tracker,
+):
+    """Async generator yielding SSE events for a targeted follow-up.
+
+    This skips Stages 1 & 2 and directly queries the chairman with the
+    referenced content.  The agent team still fires for analysis.
+    """
+    from .config import DEFAULT_CHAIRMAN_MODEL as _DEFAULT_CHAIRMAN
+
+    chairman = user_chairman_model or _DEFAULT_CHAIRMAN
+    target_type = targeted["type"]
+    target_label = targeted["target_label"]
+    user_question = targeted["user_question"]
+    reference_data = targeted["reference_data"]
+
+    # Re-use previous pipeline results for agents
+    prev_s1 = targeted["prev_stage1"]
+    prev_s2 = targeted["prev_stage2"]
+    prev_s3 = targeted["prev_stage3"]
+    prev_meta = targeted["prev_metadata"]
+    prev_rankings = prev_meta.get("aggregate_rankings", [])
+    prev_grounding = prev_meta.get("grounding_scores", {})
+    prev_evidence = prev_meta.get("evidence", {})
+
+    # ── Tell frontend we are on the fast path ──
+    yield f"data: {json.dumps({'type': 'targeted_followup_start', 'data': {'target_type': target_type, 'target': target_label}})}\n\n"
+
+    # ── Build a focused prompt for the chairman ──
+    if target_type == "stage":
+        if target_label in ("Stage 1", "Stage 2"):
+            # For Stage 1 or 2, provide a summary of the data
+            if target_label == "Stage 1":
+                context_lines = []
+                for r in (reference_data or []):
+                    model_name = r.get("model", "unknown")
+                    resp_text = (r.get("response", "") or "")[:2000]
+                    context_lines.append(f"**{model_name}**:\n{resp_text}")
+                context_block = "\n\n---\n\n".join(context_lines)
+            else:  # Stage 2
+                context_lines = []
+                for r in (reference_data or []):
+                    reviewer = r.get("model", "unknown")
+                    eval_text = (r.get("evaluation", "") or "")[:2000]
+                    context_lines.append(f"**Reviewer {reviewer}**:\n{eval_text}")
+                context_block = "\n\n---\n\n".join(context_lines)
+        else:  # Stage 3
+            context_block = reference_data if isinstance(reference_data, str) else json.dumps(reference_data)
+    else:  # model
+        context_block = (
+            f"**{targeted.get('full_model_id', target_label)}**'s response:\n\n"
+            + (reference_data or "")
+        )
+
+    focused_prompt = f"""The user previously asked a question and received a council deliberation.
+Now they have a follow-up question specifically about {target_label}{'`s response' if target_type == 'model' else ''}.
+
+--- REFERENCED CONTENT ---
+{context_block[:8000]}
+
+--- FOLLOW-UP QUESTION ---
+{user_question}
+
+Provide a thorough, direct answer to the follow-up question.
+Focus specifically on the referenced content above.
+If the user asks for elaboration, provide deeper analysis.
+If they ask for comparison, compare with what other council members said.
+Maintain pharmaceutical domain expertise and cite evidence where applicable."""
+
+    # ── Query chairman ──
+    yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
+
+    try:
+        chairman_response = await query_model(
+            chairman,
+            [{"role": "user", "content": focused_prompt}],
+            timeout=SPEED_TIMEOUT,
+            max_tokens=SPEED_S3_MAX_TOKENS,
+            session_id=session_id,
+        )
+    except Exception as e:
+        logger.error(f"[Targeted Follow-Up] Chairman query failed: {e}")
+        yield f"data: {json.dumps({'type': 'error', 'message': f'Follow-up query failed: {e}'})}\n\n"
+        return
+
+    stage3_result = {
+        "model": chairman,
+        "response": (chairman_response or {}).get("content", ""),
+    }
+
+    # Enrich citations
+    stage3_result["response"] = enrich_stage3_citations(stage3_result["response"])
+
+    yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
+
+    # ── Cost tracking ──
+    cost_summary = cost_tracker.summary()
+    yield f"data: {json.dumps({'type': 'cost_summary', 'data': cost_summary})}\n\n"
+
+    # ── Agent Team (same as full pipeline — still fires) ──
+    agent_team_result = None
+    try:
+        agent_team_result = await run_agent_team(
+            user_query=user_query,
+            stage1_results=prev_s1,
+            stage2_results=prev_s2,
+            stage3_result=stage3_result,
+            aggregate_rankings=prev_rankings,
+            grounding_scores=prev_grounding,
+            evidence_bundle=prev_evidence,
+            cost_summary=cost_summary,
+            web_search_enabled=web_search_enabled,
+        )
+    except Exception as e:
+        logger.warning(f"[Targeted Follow-Up] Agent team error: {e}")
+
+    if agent_team_result:
+        yield f"data: {json.dumps({'type': 'agent_team_complete', 'data': agent_team_result})}\n\n"
+
+    # ── Save assistant message ──
+    # For targeted follow-ups we store previous Stage 1/2 data with the new Stage 3
+    storage.add_assistant_message(
+        user_id,
+        conversation_id,
+        prev_s1,       # carry forward Stage 1
+        prev_s2,       # carry forward Stage 2
+        stage3_result,
+        metadata={
+            "label_to_model": prev_meta.get("label_to_model", {}),
+            "aggregate_rankings": prev_rankings,
+            "grounding_scores": prev_grounding,
+            "evidence": prev_evidence,
+            "targeted_followup": {
+                "type": target_type,
+                "target": target_label,
+            },
+            **({"agent_team": agent_team_result} if agent_team_result else {}),
+        },
+    )
+
+    yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+
+
 @app.post("/api/conversations/{conversation_id}/message/stream")
 async def send_message_stream(conversation_id: str, request: SendMessageRequest, user_id: str = Depends(get_authenticated_user_id)):
     """
@@ -1110,6 +1375,125 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
     user_council_models = request.council_models
     user_chairman_model = request.chairman_model
     web_search_enabled = request.web_search_enabled
+    speed_mode = request.speed_mode
+
+    # ── Speed Mode parameters ──────────────────────────────────────
+    # When speed_mode is enabled, reduce timeouts and cap token output
+    # to make every stage respond faster.
+    SPEED_TIMEOUT = 60.0 if speed_mode else 120.0
+    SPEED_S1_MAX_TOKENS = 2048 if speed_mode else None
+    SPEED_S2_MAX_TOKENS = 1536 if speed_mode else None
+    SPEED_S3_MAX_TOKENS = 4096 if speed_mode else None
+
+    # ── Stage 2 prompt builder ─────────────────────────────────────
+    def _build_stage2_prompt(is_speed: bool) -> str:
+        """Return the Stage 2 ranking prompt.
+
+        In speed mode the claim-classification Part 2 is skipped entirely,
+        cutting the generated output roughly in half and significantly
+        reducing model latency.
+        """
+        if is_speed:
+            return """You are a pharmaceutical domain expert evaluating different responses to the following question:
+{context_note}
+Question: {question}
+
+Here are the responses from different models (anonymized):
+
+{responses_text}
+
+═══════════════════════════════════════════════════════════
+PART 1 — RUBRIC EVALUATION
+═══════════════════════════════════════════════════════════
+For EACH response, provide a score from 0 to 10 on each criterion below.
+After each score, give a brief justification (1 sentence).
+
+Criteria:
+  • Relevancy (0-10): How directly and completely the response addresses the original question
+  • Faithfulness (0-10): Factual accuracy, absence of hallucinations
+  • Context Recall (0-10): Coverage of key concepts and nuances
+  • Output Quality (0-10): Clarity, structure, depth
+  • Consensus (0-10): Would other domain experts broadly agree?
+
+Format EXACTLY as follows for each response:
+
+RUBRIC Response X:
+  Relevancy: <score>/10 — <justification>
+  Faithfulness: <score>/10 — <justification>
+  Context Recall: <score>/10 — <justification>
+  Output Quality: <score>/10 — <justification>
+  Consensus: <score>/10 — <justification>
+
+═══════════════════════════════════════════════════════════
+FINAL RANKING
+═══════════════════════════════════════════════════════════
+Based on your rubric evaluation above, provide your final ranking
+from best to worst.
+
+IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
+- Start with the line "FINAL RANKING:" (all caps, with colon)
+- Then list the responses from best to worst as a numbered list
+- Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
+
+Now provide your complete evaluation:"""
+        # ── Full prompt (default) ──────────────────────────────────
+        return """You are a pharmaceutical domain expert evaluating different responses to the following question:
+{context_note}
+Question: {question}
+
+Here are the responses from different models (anonymized):
+
+{responses_text}
+
+═══════════════════════════════════════════════════════════
+PART 1 — RUBRIC EVALUATION (Verbalized Sampling)
+═══════════════════════════════════════════════════════════
+For EACH response, provide a score from 0 to 10 on each criterion below.
+After each score, give a brief justification (1-2 sentences).
+
+Criteria:
+  • Relevancy (0-10): How directly and completely the response addresses the original question
+  • Faithfulness (0-10): Factual accuracy, absence of hallucinations, grounded in evidence
+  • Context Recall (0-10): Coverage of key concepts, dimensions, and nuances raised across all responses
+  • Output Quality (0-10): Clarity, structure, depth, readability, and overall coherence
+  • Consensus (0-10): Would other domain experts broadly agree with the claims made?
+
+Format EXACTLY as follows for each response:
+
+RUBRIC Response X:
+  Relevancy: <score>/10 — <justification>
+  Faithfulness: <score>/10 — <justification>
+  Context Recall: <score>/10 — <justification>
+  Output Quality: <score>/10 — <justification>
+  Consensus: <score>/10 — <justification>
+
+═══════════════════════════════════════════════════════════
+PART 2 — CLAIM CLASSIFICATION (Pharma Safety)
+═══════════════════════════════════════════════════════════
+For EACH response, classify its major claims in pharmaceutical context:
+  TP (True Positive)  = Correct, verifiable claim relevant to the question
+  FP (False Positive) = Incorrect, misleading, or hallucinated claim
+  FN (False Negative) = Important information the response FAILED to mention
+
+Format EXACTLY as follows for each response:
+
+CLAIMS Response X:
+  TP: <count> — <brief summary of correct claims>
+  FP: <count> — <brief summary of incorrect/hallucinated claims, or "None detected">
+  FN: <count> — <brief summary of important omissions, or "None detected">
+
+═══════════════════════════════════════════════════════════
+PART 3 — FINAL RANKING
+═══════════════════════════════════════════════════════════
+Based on your rubric evaluation and claim analysis above, provide
+your final ranking from best to worst.
+
+IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
+- Start with the line "FINAL RANKING:" (all caps, with colon)
+- Then list the responses from best to worst as a numbered list
+- Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
+
+Now provide your complete evaluation:"""
 
     # Generate a unique session ID for kill switch tracking
     session_id = f"{conversation_id}:{uuid.uuid4().hex[:8]}"
@@ -1248,6 +1632,40 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
             # Add user message
             storage.add_user_message(user_id, conversation_id, storage_content)
 
+            # ── Targeted Follow-Up Detection ─────────────────────────
+            # When the user clicks a FOCUS ON chip (Stage X or model name),
+            # the frontend prepends "Regarding Stage X: " or "Regarding
+            # <model>'s response: " to the user's question.  In these cases
+            # we skip the full 3-stage pipeline and instead send the
+            # referenced content directly to the chairman for a focused
+            # answer.  Agent team still fires for analysis.
+            _targeted_followup = _detect_targeted_followup(
+                augmented_content, conversation_history
+            )
+            if _targeted_followup:
+                logger.info(
+                    f"[Targeted Follow-Up] type={_targeted_followup['type']}, "
+                    f"target={_targeted_followup.get('target_label', 'N/A')}"
+                )
+                # Yield the targeted follow-up path (much faster)
+                async for event in _run_targeted_followup(
+                    targeted=_targeted_followup,
+                    user_query=augmented_content,
+                    conversation_history=conversation_history,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    user_chairman_model=user_chairman_model,
+                    user_council_models=user_council_models,
+                    web_search_enabled=web_search_enabled,
+                    speed_mode=speed_mode,
+                    session_id=session_id,
+                    SPEED_TIMEOUT=SPEED_TIMEOUT,
+                    SPEED_S3_MAX_TOKENS=SPEED_S3_MAX_TOKENS,
+                    cost_tracker=cost_tracker,
+                ):
+                    yield event
+                return  # exit event_generator — targeted path is complete
+
             # Start title generation in parallel (don't await yet)
             title_task = None
             if is_first_message:
@@ -1278,9 +1696,11 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
             for model in s1_models:
                 task = asyncio.create_task(
                     query_model(model, s1_messages,
+                                timeout=SPEED_TIMEOUT,
                                 web_search_enabled=web_search_enabled,
                                 session_id=session_id,
-                                max_retries=1)
+                                max_retries=1,
+                                max_tokens=SPEED_S1_MAX_TOKENS)
                 )
                 pending_tasks[task] = model
 
@@ -1431,63 +1851,7 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest,
                     for i in _shuf
                 ])
 
-            _s2_ranking_prompt_template = """You are a pharmaceutical domain expert evaluating different responses to the following question:
-{context_note}
-Question: {question}
-
-Here are the responses from different models (anonymized):
-
-{responses_text}
-
-═══════════════════════════════════════════════════════════
-PART 1 — RUBRIC EVALUATION (Verbalized Sampling)
-═══════════════════════════════════════════════════════════
-For EACH response, provide a score from 0 to 10 on each criterion below.
-After each score, give a brief justification (1-2 sentences).
-
-Criteria:
-  • Relevancy (0-10): How directly and completely the response addresses the original question
-  • Faithfulness (0-10): Factual accuracy, absence of hallucinations, grounded in evidence
-  • Context Recall (0-10): Coverage of key concepts, dimensions, and nuances raised across all responses
-  • Output Quality (0-10): Clarity, structure, depth, readability, and overall coherence
-  • Consensus (0-10): Would other domain experts broadly agree with the claims made?
-
-Format EXACTLY as follows for each response:
-
-RUBRIC Response X:
-  Relevancy: <score>/10 — <justification>
-  Faithfulness: <score>/10 — <justification>
-  Context Recall: <score>/10 — <justification>
-  Output Quality: <score>/10 — <justification>
-  Consensus: <score>/10 — <justification>
-
-═══════════════════════════════════════════════════════════
-PART 2 — CLAIM CLASSIFICATION (Pharma Safety)
-═══════════════════════════════════════════════════════════
-For EACH response, classify its major claims in pharmaceutical context:
-  TP (True Positive)  = Correct, verifiable claim relevant to the question
-  FP (False Positive) = Incorrect, misleading, or hallucinated claim
-  FN (False Negative) = Important information the response FAILED to mention
-
-Format EXACTLY as follows for each response:
-
-CLAIMS Response X:
-  TP: <count> — <brief summary of correct claims>
-  FP: <count> — <brief summary of incorrect/hallucinated claims, or "None detected">
-  FN: <count> — <brief summary of important omissions, or "None detected">
-
-═══════════════════════════════════════════════════════════
-PART 3 — FINAL RANKING
-═══════════════════════════════════════════════════════════
-Based on your rubric evaluation and claim analysis above, provide
-your final ranking from best to worst.
-
-IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
-- Start with the line "FINAL RANKING:" (all caps, with colon)
-- Then list the responses from best to worst as a numbered list
-- Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
-
-Now provide your complete evaluation:"""
+            _s2_ranking_prompt_template = _build_stage2_prompt(speed_mode)
 
             # Build per-model debiased messages
             _s2_per_model_msgs: dict[str, list] = {}
@@ -1500,7 +1864,11 @@ Now provide your complete evaluation:"""
 
             _s2_tasks = {
                 asyncio.create_task(
-                    query_model(m, _s2_per_model_msgs[m], web_search_enabled=web_search_enabled, session_id=session_id)
+                    query_model(m, _s2_per_model_msgs[m],
+                                timeout=SPEED_TIMEOUT,
+                                web_search_enabled=web_search_enabled,
+                                session_id=session_id,
+                                max_tokens=SPEED_S2_MAX_TOKENS)
                 ): m
                 for m in _s2_models
             }
@@ -1583,16 +1951,19 @@ Now provide your complete evaluation:"""
             evidence_text = format_citations_for_prompt(evidence_bundle)
 
             # Fire CA validation pass in parallel with Stage 3 (lightweight probes)
-            ca_validation_task = asyncio.create_task(
-                stage2_ca_validation_pass(
-                    augmented_content,
-                    stage1_results,
-                    label_to_model,
-                    user_council_models,
-                    web_search_enabled,
-                    session_id=session_id,
+            # Skip in speed mode to reduce latency
+            ca_validation_task = None
+            if not speed_mode:
+                ca_validation_task = asyncio.create_task(
+                    stage2_ca_validation_pass(
+                        augmented_content,
+                        stage1_results,
+                        label_to_model,
+                        user_council_models,
+                        web_search_enabled,
+                        session_id=session_id,
+                    )
                 )
-            )
 
             # Fire Stage 3 as a task so it starts immediately
             stage3_task = asyncio.create_task(
@@ -1604,6 +1975,8 @@ Now provide your complete evaluation:"""
                     relevancy_gate=relevancy_gate,
                     memory_context=raw_memory_context,
                     duplicate_episode=duplicate_episode,
+                    max_tokens=SPEED_S3_MAX_TOKENS,
+                    timeout=SPEED_TIMEOUT,
                 )
             )
 
@@ -1622,7 +1995,8 @@ Now provide your complete evaluation:"""
             # Kill switch check (cancel running tasks if killed)
             if kill_switch.is_session_killed(session_id):
                 stage3_task.cancel()
-                ca_validation_task.cancel()
+                if ca_validation_task:
+                    ca_validation_task.cancel()
                 yield f"data: {json.dumps({'type': 'killed', 'message': 'Council session aborted by user.'})}\n\n"
                 return
 
@@ -1632,64 +2006,71 @@ Now provide your complete evaluation:"""
             cost_tracker.record("stage3", stage3_result.get("model", "unknown"), stage3_result.get("usage"))
 
             # Await CA validation (should be done — ran during Stage 3)
-            try:
-                ca_validation_results = await ca_validation_task
-                if ca_validation_results:
-                    # Record CA validation token usage
-                    for model_name, val_data in ca_validation_results.items():
-                        if val_data.get("usage"):
-                            cost_tracker.record("ca_validation", model_name, val_data["usage"])
-                    # Enhance grounding scores with multi-round CA data
-                    grounding_scores = enhance_ca_with_validation(
-                        grounding_scores, ca_validation_results, label_to_model
-                    )
-                    yield f"data: {json.dumps({'type': 'ca_validation_complete', 'data': {'models_probed': len(ca_validation_results), 'grounding_scores': grounding_scores}})}\n\n"
-                    logger.info(f"[CA Validation] Enhanced CA for {len(ca_validation_results)} models")
+            # Skipped in speed mode (ca_validation_task is None)
+            if ca_validation_task is not None:
+                try:
+                    ca_validation_results = await ca_validation_task
+                    if ca_validation_results:
+                        # Record CA validation token usage
+                        for model_name, val_data in ca_validation_results.items():
+                            if val_data.get("usage"):
+                                cost_tracker.record("ca_validation", model_name, val_data["usage"])
+                        # Enhance grounding scores with multi-round CA data
+                        grounding_scores = enhance_ca_with_validation(
+                            grounding_scores, ca_validation_results, label_to_model
+                        )
+                        yield f"data: {json.dumps({'type': 'ca_validation_complete', 'data': {'models_probed': len(ca_validation_results), 'grounding_scores': grounding_scores}})}\n\n"
+                        logger.info(f"[CA Validation] Enhanced CA for {len(ca_validation_results)} models")
 
-                    # Persist CA snapshots for cross-session tracking
-                    try:
-                        set_memory_user(user_id)  # re-set after yield boundary
-                        memory_mgr = get_memory_manager()
-                        for resp in grounding_scores.get("per_response", []):
-                            ca = resp.get("context_awareness")
-                            if ca and ca.get("score") is not None:
-                                memory_mgr.store_ca_snapshot(
-                                    conversation_id=conversation_id,
-                                    model=resp["model"],
-                                    ca_data=ca,
-                                )
-                    except Exception as e:
-                        logger.debug(f"[CA Tracking] Non-fatal persistence error: {e}")
-            except Exception as e:
-                logger.warning(f"[CA Validation] Non-fatal error: {e}")
-                # Continue without enhanced CA — original grounding_scores remain
+                        # Persist CA snapshots for cross-session tracking
+                        try:
+                            set_memory_user(user_id)  # re-set after yield boundary
+                            memory_mgr = get_memory_manager()
+                            for resp in grounding_scores.get("per_response", []):
+                                ca = resp.get("context_awareness")
+                                if ca and ca.get("score") is not None:
+                                    memory_mgr.store_ca_snapshot(
+                                        conversation_id=conversation_id,
+                                        model=resp["model"],
+                                        ca_data=ca,
+                                    )
+                        except Exception as e:
+                            logger.debug(f"[CA Tracking] Non-fatal persistence error: {e}")
+                except Exception as e:
+                    logger.warning(f"[CA Validation] Non-fatal error: {e}")
+                    # Continue without enhanced CA — original grounding_scores remain
 
             # ── Doubting Thomas: detect-and-fix self-reflection loop ──
             # (arXiv:2602.03837 §Adversarial Reviewer; arXiv:2602.13949 §Reflection)
+            # Skipped in speed mode to reduce latency
             dt_result = None
-            try:
-                yield f"data: {json.dumps({'type': 'doubting_thomas_start'})}\n\n"
-                dt_result = await doubting_thomas_review(
-                    user_query=augmented_content,
-                    draft_response=stage3_result.get("response", ""),
-                    stage1_results=stage1_results,
-                    relevancy_gate=relevancy_gate,
-                    chairman_model=user_chairman_model,
-                    web_search_enabled=web_search_enabled,
-                    session_id=session_id,
-                )
-                if dt_result.get("fix_applied"):
-                    stage3_result["response"] = dt_result["revised_response"]
-                    # Record DT token usage
-                    cost_tracker.record("doubting_thomas", user_chairman_model or "chairman", dt_result.get("usage"))
-                    logger.info(
-                        f"[Doubting Thomas] Revised synthesis applied — "
-                        f"{dt_result['defect_count']} defect(s) fixed"
+            if not speed_mode:
+                try:
+                    yield f"data: {json.dumps({'type': 'doubting_thomas_start'})}\n\n"
+                    dt_result = await doubting_thomas_review(
+                        user_query=augmented_content,
+                        draft_response=stage3_result.get("response", ""),
+                        stage1_results=stage1_results,
+                        relevancy_gate=relevancy_gate,
+                        chairman_model=user_chairman_model,
+                        web_search_enabled=web_search_enabled,
+                        session_id=session_id,
                     )
-                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False)}})}\n\n"
-            except Exception as e:
-                logger.warning(f"[Doubting Thomas] Non-fatal error: {e}")
-                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'error': str(e)}})}\n\n"
+                    if dt_result.get("fix_applied"):
+                        stage3_result["response"] = dt_result["revised_response"]
+                        # Record DT token usage
+                        cost_tracker.record("doubting_thomas", user_chairman_model or "chairman", dt_result.get("usage"))
+                        logger.info(
+                            f"[Doubting Thomas] Revised synthesis applied — "
+                            f"{dt_result['defect_count']} defect(s) fixed"
+                        )
+                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False)}})}\n\n"
+                except Exception as e:
+                    logger.warning(f"[Doubting Thomas] Non-fatal error: {e}")
+                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'error': str(e)}})}\n\n"
+            else:
+                # Speed mode: emit skipped events so frontend doesn't wait
+                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'skipped': True}})}\n\n"
 
             # Extract infographic data from the chairman's response
             infographic_data = None
@@ -1704,12 +2085,14 @@ Now provide your complete evaluation:"""
             )
 
             # ── Citation Validator: verify URLs are reachable, fix broken ones ──
-            try:
-                stage3_result["response"] = await validate_and_fix_citations(
-                    stage3_result["response"]
-                )
-            except Exception as e:
-                logger.warning(f"[Citation Validator] Non-fatal error: {e}")
+            # Skipped in speed mode (URL validation is I/O-heavy)
+            if not speed_mode:
+                try:
+                    stage3_result["response"] = await validate_and_fix_citations(
+                        stage3_result["response"]
+                    )
+                except Exception as e:
+                    logger.warning(f"[Citation Validator] Non-fatal error: {e}")
 
             yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
 
@@ -1918,6 +2301,7 @@ class ResumeRequest(BaseModel):
     council_models: Optional[List[str]] = None
     chairman_model: Optional[str] = None
     web_search_enabled: bool = False
+    speed_mode: bool = False
 
 
 @app.post("/api/conversations/{conversation_id}/message/resume")
@@ -2190,39 +2574,46 @@ Now provide your complete evaluation:"""
                 evidence_context=evidence_text,
                 relevancy_gate=relevancy_gate,
                 memory_context=raw_memory_context,
+                max_tokens=SPEED_S3_MAX_TOKENS,
+                timeout=SPEED_TIMEOUT,
             )
             cost_tracker.record("stage3", stage3_result.get("model", "unknown"), stage3_result.get("usage"))
 
             # ── Doubting Thomas ─────────────────────────────────────
+            # Skipped in speed mode
             dt_result = None
-            try:
-                yield f"data: {json.dumps({'type': 'doubting_thomas_start'})}\n\n"
-                dt_result = await doubting_thomas_review(
-                    user_query=augmented_content,
-                    draft_response=stage3_result.get("response", ""),
-                    stage1_results=stage1_results,
-                    relevancy_gate=relevancy_gate,
-                    chairman_model=user_chairman_model,
-                    web_search_enabled=web_search_enabled,
-                    session_id=session_id,
-                )
-                if dt_result.get("fix_applied"):
-                    stage3_result["response"] = dt_result["revised_response"]
-                    cost_tracker.record("doubting_thomas", user_chairman_model or "chairman", dt_result.get("usage"))
-                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False)}})}\n\n"
-            except Exception as e:
-                logger.warning(f"[Resume-DT] Non-fatal error: {e}")
-                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False}})}\n\n"
+            if not speed_mode:
+                try:
+                    yield f"data: {json.dumps({'type': 'doubting_thomas_start'})}\n\n"
+                    dt_result = await doubting_thomas_review(
+                        user_query=augmented_content,
+                        draft_response=stage3_result.get("response", ""),
+                        stage1_results=stage1_results,
+                        relevancy_gate=relevancy_gate,
+                        chairman_model=user_chairman_model,
+                        web_search_enabled=web_search_enabled,
+                        session_id=session_id,
+                    )
+                    if dt_result.get("fix_applied"):
+                        stage3_result["response"] = dt_result["revised_response"]
+                        cost_tracker.record("doubting_thomas", user_chairman_model or "chairman", dt_result.get("usage"))
+                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False)}})}\n\n"
+                except Exception as e:
+                    logger.warning(f"[Resume-DT] Non-fatal error: {e}")
+                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False}})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'skipped': True}})}\n\n"
 
             # ── Citation enrichment ──────────────────────────────────
             raw_response = stage3_result.get("response", "")
             infographic_data = extract_infographic(raw_response)
             stage3_result["response"] = strip_infographic_block(raw_response)
             stage3_result["response"] = enrich_stage3_citations(stage3_result["response"])
-            try:
-                stage3_result["response"] = await validate_and_fix_citations(stage3_result["response"])
-            except Exception:
-                pass
+            if not speed_mode:
+                try:
+                    stage3_result["response"] = await validate_and_fix_citations(stage3_result["response"])
+                except Exception:
+                    pass
 
             yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
 

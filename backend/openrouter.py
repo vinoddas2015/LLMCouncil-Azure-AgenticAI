@@ -65,6 +65,7 @@ async def _raw_query_model(
     timeout: float = 120.0,
     web_search_enabled: bool = False,
     _pre_sanitized: bool = False,
+    max_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Low-level HTTP call to the API.  Raises on failure (no swallowing).
@@ -74,7 +75,7 @@ async def _raw_query_model(
     if is_google_model(model):
         from .google_provider import query_google_model
         raw_model = strip_google_prefix(model)
-        return await query_google_model(raw_model, messages, timeout, web_search_enabled)
+        return await query_google_model(raw_model, messages, timeout, web_search_enabled, max_tokens=max_tokens)
 
     # ── Bayer myGenAssist (default) ──
     headers = {
@@ -88,6 +89,10 @@ async def _raw_query_model(
         "model": model,
         "messages": sanitized_messages,
     }
+
+    # Speed Mode: cap response length
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
 
     # Enable multi-modal (text + image) output for Gemini models
     if model.startswith("gemini"):
@@ -149,6 +154,7 @@ async def query_model(
     session_id: Optional[str] = None,
     max_retries: int = 2,
     _pre_sanitized: bool = False,
+    max_tokens: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Query a single model with self-healing resilience:
@@ -191,6 +197,7 @@ async def query_model(
             timeout,
             web_search_enabled,
             True,  # _pre_sanitized — always True here, we sanitized above
+            max_tokens,
             max_retries=max_retries,
             base_delay=0.5,
             max_delay=3.0,
@@ -220,6 +227,7 @@ async def query_models_parallel(
     web_search_enabled: bool = False,
     session_id: Optional[str] = None,
     per_model_messages: Optional[Dict[str, List[Dict[str, str]]]] = None,
+    max_tokens: Optional[int] = None,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
     """
     Query multiple models in parallel with self-healing:
@@ -259,6 +267,7 @@ async def query_models_parallel(
             web_search_enabled=web_search_enabled,
             session_id=session_id,
             _pre_sanitized=True,
+            max_tokens=max_tokens,
         )
         for model in models
     ]

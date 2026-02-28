@@ -391,7 +391,9 @@ export default function ChatInterface({
                   {msg.loading?.stage3 && (
                     <div className="stage-loading">
                       <div className="spinner"></div>
-                      <span>Running Stage 3: Final synthesis...</span>
+                      <span>{msg.targetedFollowup
+                        ? `⚡ Focused follow-up on ${msg.targetedFollowup.target}...`
+                        : 'Running Stage 3: Final synthesis...'}</span>
                     </div>
                   )}
                   <Suspense fallback={<StageFallback />}>
@@ -582,6 +584,24 @@ export default function ChatInterface({
             title={preferences?.web_search_enabled ? 'Web Search: ON — click to disable' : 'Web Search: OFF — click to enable'}
           >
             🌐
+          </button>
+
+          {/* Speed Mode Toggle — visible quick toggle */}
+          <button
+            type="button"
+            className={`speed-mode-btn ${preferences?.speed_mode ? 'active' : ''}`}
+            onClick={() => {
+              if (onUpdatePreferences && preferences) {
+                onUpdatePreferences({
+                  ...preferences,
+                  speed_mode: !preferences.speed_mode,
+                });
+              }
+            }}
+            disabled={isLoading || isBlocked}
+            title={preferences?.speed_mode ? 'Speed Mode: ON — faster pipeline, streamlined evaluations. Click to disable' : 'Speed Mode: OFF — full pipeline with claim analysis. Click to enable'}
+          >
+            ⚡
           </button>
 
           <textarea

@@ -431,6 +431,7 @@ export const api = {
             council_models: preferences.council_models || null,
             chairman_model: preferences.chairman_model || null,
             web_search_enabled: preferences.web_search_enabled || false,
+            speed_mode: preferences.speed_mode || false,
           }),
           signal,
         }
@@ -529,6 +530,7 @@ export const api = {
             council_models: preferences.council_models || null,
             chairman_model: preferences.chairman_model || null,
             web_search_enabled: preferences.web_search_enabled || false,
+            speed_mode: preferences.speed_mode || false,
           }),
           signal,
         }

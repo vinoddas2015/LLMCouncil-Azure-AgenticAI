@@ -534,6 +534,8 @@ async def stage3_synthesize_final(
     relevancy_gate: Optional[Dict[str, Dict[str, Any]]] = None,
     memory_context: str = "",
     duplicate_episode: Optional[Dict[str, Any]] = None,
+    max_tokens: Optional[int] = None,
+    timeout: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Stage 3: Chairman synthesizes final response.
@@ -665,8 +667,10 @@ Provide a clear, well-reasoned final answer that represents the council's collec
         """Wrapper that tags the result with model/label for identification."""
         resp = await query_model(
             model, messages,
+            timeout=timeout,
             web_search_enabled=web_search_enabled,
             session_id=session_id,
+            max_tokens=max_tokens,
         )
         return (model, label, resp)
 
@@ -678,7 +682,7 @@ Provide a clear, well-reasoned final answer that represents the council's collec
         done, pending = await asyncio.wait(
             {primary_task, racer_task},
             return_when=asyncio.FIRST_COMPLETED,
-            timeout=150,
+            timeout=timeout or 150,
         )
 
         # Process the winner
@@ -741,8 +745,10 @@ Provide a clear, well-reasoned final answer that represents the council's collec
         # No racer available — single primary query
         response = await query_model(
             chairman_to_use, messages,
+            timeout=timeout,
             web_search_enabled=web_search_enabled,
             session_id=session_id,
+            max_tokens=max_tokens,
         )
         if response is not None:
             elapsed = time.perf_counter() - t0
@@ -770,8 +776,10 @@ Provide a clear, well-reasoned final answer that represents the council's collec
         logger.info(f"[Stage3] Trying fallback chairman: {fallback_chairman}")
         fb_response = await query_model(
             fallback_chairman, messages,
+            timeout=timeout,
             web_search_enabled=web_search_enabled,
             session_id=session_id,
+            max_tokens=max_tokens,
         )
         if fb_response is not None:
             health_monitor.log_healing_action("chairman_fallback_success", {

@@ -464,6 +464,46 @@
   cursor: not-allowed;
 }
 
+/* ── Speed Mode Toggle Button ── */
+.speed-mode-btn {
+  padding: 14px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  font-size: 18px;
+  cursor: pointer;
+  transition: all 0.2s;
+  align-self: flex-end;
+  position: relative;
+}
+
+.speed-mode-btn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  border-color: var(--accent-primary);
+}
+
+.speed-mode-btn.active {
+  background: rgba(251, 191, 36, 0.15);
+  border-color: #f59e0b;
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.3);
+}
+
+.speed-mode-btn.active::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  background: #f59e0b;
+  border-radius: 50%;
+}
+
+.speed-mode-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ── Self-healing Resume Banner ─────────────────────────── */
 .resume-pipeline-banner {
   display: flex;

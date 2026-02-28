@@ -22,7 +22,7 @@ const loadPreferences = () => {
   } catch (e) {
     console.error('Failed to load preferences:', e);
   }
-  return { council_models: null, chairman_model: null, web_search_enabled: false };
+  return { council_models: null, chairman_model: null, web_search_enabled: false, speed_mode: false };
 };
 
 // Save preferences to localStorage
@@ -103,6 +103,7 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
   const [preferences, setPreferences] = useState(loadPreferences);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [errorBanner, setErrorBanner] = useState(null);
+  const [loadingConversation, setLoadingConversation] = useState(false);
 
   // Track completed stages for self-healing resume
   const completedStagesRef = useRef(new Set());
@@ -183,11 +184,17 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
   // (loadConversations is defined above as a useCallback)
 
   const loadConversation = async (id) => {
+    setLoadingConversation(true);
     try {
       const conv = await api.getConversation(id);
       setCurrentConversation(conv);
     } catch (error) {
       console.error('Failed to load conversation:', error);
+      setErrorBanner(`Failed to load conversation: ${error.message}`);
+      // Reset to empty state so the user isn't stuck
+      setCurrentConversation(null);
+    } finally {
+      setLoadingConversation(false);
     }
   };
 
@@ -347,6 +354,16 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
           case 'session_start':
             // Capture session ID for kill switch targeting
             setActiveSessionId(event.data?.session_id || null);
+            break;
+
+          case 'targeted_followup_start':
+            // Fast-path follow-up: skip Stage 1/2 loading, jump straight to Stage 3
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.loading.stage1 = false;
+              msg.loading.stage2 = false;
+              msg.loading.stage3 = true;
+              msg.targetedFollowup = event.data; // {target_type, target}
+            }));
             break;
 
           case 'stage1_start':
@@ -809,14 +826,21 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             <button onClick={() => setErrorBanner(null)} aria-label="Dismiss error">&times;</button>
           </div>
         )}
-        <ChatInterface
-          conversation={currentConversation}
-          onSendMessage={handleSendMessage}
-          onResume={handleResume}
-          isLoading={isLoading}
-          preferences={preferences}
-          onUpdatePreferences={handleSavePreferences}
-        />
+        {loadingConversation ? (
+          <div className="conversation-loading" role="status" aria-live="polite">
+            <div className="spinner"></div>
+            <span>Loading conversation...</span>
+          </div>
+        ) : (
+          <ChatInterface
+            conversation={currentConversation}
+            onSendMessage={handleSendMessage}
+            onResume={handleResume}
+            isLoading={isLoading}
+            preferences={preferences}
+            onUpdatePreferences={handleSavePreferences}
+          />
+        )}
       </main>
       <aside aria-label="3D Prompt Atlas">
         <PromptAtlas3D
