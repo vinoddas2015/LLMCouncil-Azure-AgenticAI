@@ -306,6 +306,41 @@
   cursor: not-allowed;
 }
 
+/* ── Upload progress bar inside attachment chip ─────────────── */
+.attachment-progress {
+  position: relative;
+  width: 60px;
+  height: 6px;
+  background: var(--border-default);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.attachment-progress-bar {
+  position: absolute;
+  inset: 0;
+  background: var(--accent-primary, #3b82f6);
+  border-radius: 3px;
+  transition: width 0.15s ease;
+}
+
+.attachment-progress-text {
+  position: absolute;
+  right: -30px;
+  top: -4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.attachment-cloud {
+  font-size: 14px;
+  color: var(--accent-primary, #3b82f6);
+  flex-shrink: 0;
+  title: 'Azure Blob';
+}
+
 .attachment-error {
   width: 100%;
   padding: 8px 12px;

@@ -188,11 +188,12 @@ class CreateConversationRequest(BaseModel):
 
 
 class AttachmentData(BaseModel):
-    """Attachment file data."""
+    """Attachment file data — supports both base64 inline and Azure Blob upload."""
     name: str
     type: str
     size: int
-    base64: str
+    base64: str = ""        # Inline content (legacy / local dev)
+    blob_name: str = ""     # Azure Blob reference (cloud — SAS upload)
 
 
 class SendMessageRequest(BaseModel):
@@ -224,26 +225,32 @@ ALLOWED_MIME_TYPES = {
     'image/svg+xml': 'Image (SVG)',
 }
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE_BLOB = 200 * 1024 * 1024   # 200 MB via Azure Blob SAS upload
+MAX_FILE_SIZE_INLINE = 10 * 1024 * 1024  # 10 MB via base64 JSON body
 
 
 def validate_attachment(attachment: AttachmentData) -> str | None:
     """Validate an attachment. Returns error message if invalid, None if valid."""
     if attachment.type not in ALLOWED_MIME_TYPES:
         return f"Invalid file type: {attachment.type}. Allowed: PDF, PPTX, XLSX, DOCX"
-    
-    if attachment.size > MAX_FILE_SIZE:
-        return f"File too large: {attachment.name}. Maximum: 10MB"
-    
+
+    # Blob-uploaded files have a higher limit
+    limit = MAX_FILE_SIZE_BLOB if attachment.blob_name else MAX_FILE_SIZE_INLINE
+    if attachment.size > limit:
+        limit_mb = limit // (1024 * 1024)
+        return f"File too large: {attachment.name}. Maximum: {limit_mb}MB"
+
     return None
 
 
 def extract_file_content_description(attachment: AttachmentData) -> str:
     """Extract actual text content from an attachment for LLM context.
 
-    Decodes the base64 payload and uses format-specific libraries to
-    extract readable text.  Falls back to a placeholder description
-    when extraction fails or the format is unsupported.
+    Supports two modes:
+    - **Blob mode** (``blob_name`` set): downloads bytes from Azure Blob Storage
+    - **Inline mode** (``base64`` set): decodes the base64 payload
+
+    Falls back to a placeholder description when extraction fails.
     """
     import base64
     import io
@@ -253,14 +260,22 @@ def extract_file_content_description(attachment: AttachmentData) -> str:
     MAX_CHARS = 80_000  # ~20k tokens — keep context window manageable
 
     try:
-        # Strip optional data-URI prefix (e.g. "data:application/pdf;base64,...")
-        raw_b64 = attachment.base64
-        if "," in raw_b64[:80]:
-            raw_b64 = raw_b64.split(",", 1)[1]
-        file_bytes = base64.b64decode(raw_b64)
-        buf = io.BytesIO(file_bytes)
+        if attachment.blob_name:
+            # ── Blob mode: download from Azure Blob Storage ──────
+            from .storage import download_attachment_blob
+            file_bytes = download_attachment_blob(attachment.blob_name)
+            buf = io.BytesIO(file_bytes)
+        else:
+            # ── Inline mode: decode base64 payload ───────────────
+            raw_b64 = attachment.base64
+            if not raw_b64:
+                return fallback
+            if "," in raw_b64[:80]:
+                raw_b64 = raw_b64.split(",", 1)[1]
+            file_bytes = base64.b64decode(raw_b64)
+            buf = io.BytesIO(file_bytes)
     except Exception as exc:
-        logger.warning(f"[Attachment] base64 decode failed for {attachment.name}: {exc}")
+        logger.warning(f"[Attachment] data load failed for {attachment.name}: {exc}")
         return fallback
 
     extracted_text: str | None = None
@@ -480,6 +495,54 @@ async def trigger_model_sync():
 async def model_sync_status():
     """Get the current model sync status and last sync time."""
     return get_sync_status()
+
+
+# ── Attachment Blob Upload (SAS token) ────────────────────────────────
+
+class UploadUrlRequest(BaseModel):
+    """Request a SAS URL for direct-to-blob attachment upload."""
+    filename: str
+    content_type: str
+    size: int
+
+
+class UploadUrlResponse(BaseModel):
+    """SAS URL + blob reference returned to the frontend."""
+    upload_url: str
+    blob_name: str
+
+
+@app.post("/api/attachments/upload-url", response_model=UploadUrlResponse)
+async def get_upload_url(
+    request: UploadUrlRequest,
+    user_id: str = Depends(get_authenticated_user_id),
+):
+    """Generate a time-limited SAS URL for the browser to PUT a file directly
+    into Azure Blob Storage, bypassing App Service body-size limits.
+    """
+    from .storage import is_blob_configured, generate_attachment_upload_url
+
+    if not is_blob_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Blob storage not configured — use inline base64 upload",
+        )
+
+    if request.content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid file type: {request.content_type}")
+
+    if request.size > MAX_FILE_SIZE_BLOB:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum: {MAX_FILE_SIZE_BLOB // (1024*1024)}MB",
+        )
+
+    upload_url, blob_name = generate_attachment_upload_url(
+        user_id=user_id,
+        filename=request.filename,
+        content_type=request.content_type,
+    )
+    return UploadUrlResponse(upload_url=upload_url, blob_name=blob_name)
 
 
 @app.post("/api/enhance-prompt")

@@ -28,7 +28,8 @@ const ALLOWED_FILE_TYPES = {
   'image/svg+xml': { ext: '.svg', name: 'SVG' },
 };
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
+const MAX_FILE_SIZE_BLOB   = 200 * 1024 * 1024; // 200MB via Azure Blob SAS upload
+const MAX_FILE_SIZE_INLINE = 10 * 1024 * 1024;  // 10MB via base64 JSON body (fallback)
 
 export default function ChatInterface({
   conversation,
@@ -92,9 +93,9 @@ export default function ChatInterface({
       return `Invalid file type. Allowed: ${allowedExts}`;
     }
     
-    // Check file size
-    if (file.size > MAX_FILE_SIZE) {
-      return `File too large. Maximum size: ${MAX_FILE_SIZE / (1024 * 1024)}MB`;
+    // Check file size — blob upload supports 200MB, inline fallback 10MB
+    if (file.size > MAX_FILE_SIZE_BLOB) {
+      return `File too large. Maximum size: ${MAX_FILE_SIZE_BLOB / (1024 * 1024)}MB`;
     }
     
     // Check if file already attached
@@ -115,22 +116,54 @@ export default function ChatInterface({
         setAttachmentError(error);
         continue;
       }
-      
-      // Read file as base64
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result.split(',')[1]; // Remove data:...;base64, prefix
-        setAttachments(prev => [...prev, {
-          name: file.name,
-          type: file.type,
-          size: file.size,
-          base64: base64,
-        }]);
-      };
-      reader.onerror = () => {
-        setAttachmentError(`Failed to read file: ${file.name}`);
-      };
-      reader.readAsDataURL(file);
+
+      // Unique ID for tracking upload state
+      const uid = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+      // Add file entry immediately (with uploading state)
+      setAttachments(prev => [...prev, {
+        _uid: uid,
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        base64: '',
+        blob_name: '',
+        uploading: true,
+        progress: 0,
+      }]);
+
+      // Try Azure Blob SAS upload first; fall back to base64
+      try {
+        const { upload_url, blob_name } = await api.getUploadUrl(file.name, file.type, file.size);
+        await api.uploadToBlob(upload_url, file, (pct) => {
+          setAttachments(prev => prev.map(a =>
+            a._uid === uid ? { ...a, progress: pct } : a
+          ));
+        });
+        // Upload complete — store blob reference
+        setAttachments(prev => prev.map(a =>
+          a._uid === uid ? { ...a, uploading: false, progress: 100, blob_name } : a
+        ));
+      } catch {
+        // Blob not available — fall back to base64 (respects inline limit)
+        if (file.size > MAX_FILE_SIZE_INLINE) {
+          setAttachments(prev => prev.filter(a => a._uid !== uid));
+          setAttachmentError(`File too large for inline upload: ${file.name}. Maximum: ${MAX_FILE_SIZE_INLINE / (1024 * 1024)}MB`);
+          continue;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = reader.result.split(',')[1];
+          setAttachments(prev => prev.map(a =>
+            a._uid === uid ? { ...a, uploading: false, progress: 100, base64 } : a
+          ));
+        };
+        reader.onerror = () => {
+          setAttachments(prev => prev.filter(a => a._uid !== uid));
+          setAttachmentError(`Failed to read file: ${file.name}`);
+        };
+        reader.readAsDataURL(file);
+      }
     }
     
     // Reset file input
@@ -144,7 +177,8 @@ export default function ChatInterface({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if ((input.trim() || attachments.length > 0) && !isLoading && !enhanceState && !isBlocked) {
+    const anyUploading = attachments.some(a => a.uploading);
+    if ((input.trim() || attachments.length > 0) && !anyUploading && !isLoading && !enhanceState && !isBlocked) {
       const promptText = input.trim();
       const currentAttachments = [...attachments];
 
@@ -477,15 +511,24 @@ export default function ChatInterface({
         {attachments.length > 0 && (
           <div className="attachments-preview">
             {attachments.map((file, index) => (
-              <div key={index} className="attachment-chip">
+              <div key={file._uid || index} className="attachment-chip">
                 <span className="attachment-icon">{getFileIcon(file.type)}</span>
                 <span className="attachment-name">{file.name}</span>
                 <span className="attachment-size">({formatFileSize(file.size)})</span>
+                {file.uploading && (
+                  <span className="attachment-progress">
+                    <span className="attachment-progress-bar" style={{ width: `${file.progress}%` }} />
+                    <span className="attachment-progress-text">{file.progress}%</span>
+                  </span>
+                )}
+                {!file.uploading && file.blob_name && (
+                  <span className="attachment-cloud" title="Uploaded to Azure Blob">☁</span>
+                )}
                 <button
                   type="button"
                   className="attachment-remove"
                   onClick={() => removeAttachment(index)}
-                  disabled={isLoading}
+                  disabled={isLoading || file.uploading}
                 >
                   ×
                 </button>
@@ -558,7 +601,7 @@ export default function ChatInterface({
           <button
             type="submit"
             className="send-button"
-            disabled={(!input.trim() && attachments.length === 0) || isLoading || !!enhanceState || isBlocked}
+            disabled={(!input.trim() && attachments.length === 0) || attachments.some(a => a.uploading) || isLoading || !!enhanceState || isBlocked}
           >
             {conv.messages.length > 0 ? 'Follow Up' : 'Send'}
           </button>
@@ -569,7 +612,7 @@ export default function ChatInterface({
             ? "🛡️ This conversation is closed — please start a new conversation"
             : conv.messages.length > 0 
               ? "Continue the conversation with follow-up questions" 
-              : "Paste images or attach PDF, PPTX, XLSX, DOCX, MD files (max 10MB each)"}
+              : "Paste images or attach PDF, PPTX, XLSX, DOCX, MD files (max 200MB each via Azure Blob)"}
         </div>
       </form>
     </div>

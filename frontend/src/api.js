@@ -239,6 +239,51 @@ export const api = {
   },
 
   /**
+   * Request a SAS URL for direct-to-blob attachment upload.
+   * Returns { upload_url, blob_name } or throws if blob storage is unavailable.
+   */
+  async getUploadUrl(filename, contentType, size) {
+    const response = await fetchWithAuth(`${API_BASE}/api/attachments/upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, content_type: contentType, size }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.detail || `Upload URL failed: HTTP ${response.status}`);
+    }
+    return response.json();
+  },
+
+  /**
+   * Upload a file directly to Azure Blob Storage via SAS URL.
+   * Uses XMLHttpRequest for upload progress tracking.
+   * @param {string} sasUrl - The SAS URL returned by getUploadUrl
+   * @param {File} file - The File object to upload
+   * @param {function} onProgress - Callback: (percentComplete: number) => void
+   * @returns {Promise<void>}
+   */
+  uploadToBlob(sasUrl, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) {
+          onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`Blob upload failed: HTTP ${xhr.status}`));
+      };
+      xhr.onerror = () => reject(new Error('Blob upload network error'));
+      xhr.open('PUT', sasUrl);
+      xhr.setRequestHeader('x-ms-blob-type', 'BlockBlob');
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+      xhr.send(file);
+    });
+  },
+
+  /**
    * List all conversations.
    */
   async listConversations() {
@@ -380,7 +425,8 @@ export const api = {
               name: a.name,
               type: a.type,
               size: a.size,
-              base64: a.base64,
+              base64: a.base64 || '',
+              blob_name: a.blob_name || '',
             })),
             council_models: preferences.council_models || null,
             chairman_model: preferences.chairman_model || null,

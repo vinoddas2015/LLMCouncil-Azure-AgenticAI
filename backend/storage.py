@@ -146,6 +146,68 @@ def _get_blob_service():
     return _blob_service_client
 
 
+# ── Attachment Blob Helpers (SAS upload / download) ───────────────────
+
+def _parse_storage_conn_field(field: str) -> str:
+    """Extract a named field from the Azure Storage connection string.
+
+    Azure AccountKey values contain '=' characters (base64), so a simple
+    ``split("=")`` would break.  Instead we locate the field prefix and
+    find the next ';' delimiter.
+    """
+    prefix = f"{field}="
+    start = AZURE_STORAGE_CONNECTION_STRING.find(prefix)
+    if start == -1:
+        return ""
+    start += len(prefix)
+    end = AZURE_STORAGE_CONNECTION_STRING.find(";", start)
+    return AZURE_STORAGE_CONNECTION_STRING[start:end] if end != -1 else AZURE_STORAGE_CONNECTION_STRING[start:]
+
+
+def is_blob_configured() -> bool:
+    """Return True when Azure Blob Storage credentials are available."""
+    return bool(AZURE_STORAGE_CONNECTION_STRING)
+
+
+def generate_attachment_upload_url(user_id: str, filename: str, content_type: str) -> tuple:
+    """Generate a SAS URL for direct browser upload to the *attachments* container.
+
+    Returns ``(upload_url, blob_name)`` where *upload_url* is a fully-qualified
+    Azure Blob SAS URL valid for 30 minutes with write-only permissions.
+    """
+    import uuid
+    from datetime import datetime, timedelta, timezone
+    from azure.storage.blob import generate_blob_sas, BlobSasPermissions
+
+    account_name = _parse_storage_conn_field("AccountName")
+    account_key = _parse_storage_conn_field("AccountKey")
+    container = AZURE_BLOB_ATTACHMENTS_CONTAINER
+
+    # Unique blob name: {user_id}/{uuid}_{filename}
+    safe_name = filename.replace("/", "_").replace("\\", "_")
+    blob_name = f"{_validate_user_id(user_id)}/{uuid.uuid4().hex[:12]}_{safe_name}"
+
+    sas_token = generate_blob_sas(
+        account_name=account_name,
+        container_name=container,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(write=True, create=True),
+        expiry=datetime.now(timezone.utc) + timedelta(minutes=30),
+        content_type=content_type,
+    )
+
+    upload_url = f"https://{account_name}.blob.core.windows.net/{container}/{blob_name}?{sas_token}"
+    return upload_url, blob_name
+
+
+def download_attachment_blob(blob_name: str) -> bytes:
+    """Download an attachment from the *attachments* container and return raw bytes."""
+    container_client = _get_blob_service().get_container_client(AZURE_BLOB_ATTACHMENTS_CONTAINER)
+    blob_client = container_client.get_blob_client(blob_name)
+    return blob_client.download_blob().readall()
+
+
 def _get_container_client():
     """Get the container client for conversations."""
     return _get_blob_service().get_container_client(AZURE_STORAGE_CONTAINER)
