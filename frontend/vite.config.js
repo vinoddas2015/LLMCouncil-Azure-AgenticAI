@@ -14,6 +14,7 @@ export default defineConfig({
           'katex': ['katex', 'rehype-katex', 'remark-math'],
           'markdown': ['react-markdown', 'remark-gfm', 'rehype-raw'],
           'msal': ['@azure/msal-browser', '@azure/msal-react'],
+          'speech': ['microsoft-cognitiveservices-speech-sdk'],
         },
       },
     },

@@ -209,6 +209,20 @@ export function getUserId() {
 
 export const api = {
   /**
+   * Get a short-lived Azure Speech SDK authorization token.
+   * Returns { token, region } or null if Speech is not configured.
+   */
+  async getSpeechToken() {
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/api/speech/token`);
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
+  },
+
+  /**
    * Get available models and defaults.
    */
   async getModels() {

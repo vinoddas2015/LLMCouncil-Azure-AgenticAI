@@ -417,6 +417,43 @@ async def health_failures():
     return health_agent.get_failure_report()
 
 
+# ── Azure Speech Token (for frontend Speech SDK) ────────────────────
+
+_AZURE_SPEECH_KEY    = os.getenv("AZURE_SPEECH_KEY", "")
+_AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "eastus")
+
+@app.get("/api/speech/token")
+async def speech_token():
+    """
+    Issue a short-lived authorization token for the Azure Speech SDK.
+
+    The frontend calls this instead of embedding the Speech key directly.
+    Tokens are valid for 10 minutes; the SDK auto-refreshes via this
+    endpoint when needed.
+    """
+    if not _AZURE_SPEECH_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Azure Speech not configured — AZURE_SPEECH_KEY missing",
+        )
+    import httpx
+    token_url = (
+        f"https://{_AZURE_SPEECH_REGION}.api.cognitive.microsoft.com"
+        "/sts/v1.0/issueToken"
+    )
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=10) as client:
+            resp = await client.post(
+                token_url,
+                headers={"Ocp-Apim-Subscription-Key": _AZURE_SPEECH_KEY},
+            )
+            resp.raise_for_status()
+            return {"token": resp.text, "region": _AZURE_SPEECH_REGION}
+    except Exception as e:
+        logger.error(f"Speech token fetch failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch speech token")
+
+
 # ── Citation Registry ────────────────────────────────────────────────
 
 @app.get("/api/citations")

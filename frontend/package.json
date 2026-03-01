@@ -28,6 +28,7 @@
     "html2canvas-pro": "^2.0.1",
     "jspdf": "^4.2.0",
     "katex": "^0.16.33",
+    "microsoft-cognitiveservices-speech-sdk": "^1.48.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
