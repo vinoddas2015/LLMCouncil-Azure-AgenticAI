@@ -146,6 +146,29 @@ class HealthProbeAgent:
         except Exception as e:
             return {"status": "error", "error": str(e)[:200]}
 
+    async def check_blob_storage(self) -> Dict[str, Any]:
+        """Check Azure Blob Storage connectivity and SAS URL generation."""
+        try:
+            from .storage import is_blob_configured, generate_attachment_upload_url
+            if not is_blob_configured():
+                return {"status": "warning", "configured": False, "detail": "Blob storage not configured — SAS uploads unavailable"}
+
+            # Verify SAS token generation works (does NOT upload anything)
+            upload_url, blob_name = generate_attachment_upload_url(
+                user_id="health-check",
+                filename="probe.tmp",
+                content_type="application/octet-stream",
+            )
+            sas_ok = upload_url.startswith("https://") and "sig=" in upload_url
+            return {
+                "status": "ok" if sas_ok else "error",
+                "configured": True,
+                "sas_generation": "ok" if sas_ok else "failed",
+                "container": "attachments",
+            }
+        except Exception as e:
+            return {"status": "error", "configured": True, "error": str(e)[:200]}
+
     async def run_deep_check(self) -> Dict[str, Any]:
         """Run all health checks in parallel and return comprehensive status."""
         t0 = time.monotonic()
@@ -156,10 +179,11 @@ class HealthProbeAgent:
             self.check_memory_store(),
             self.check_models(),
             self.check_resilience(),
+            self.check_blob_storage(),
             return_exceptions=True,
         )
 
-        check_names = ["cosmos_db", "api_key", "memory_store", "models", "resilience"]
+        check_names = ["cosmos_db", "api_key", "memory_store", "models", "resilience", "blob_storage"]
         subsystems = {}
         overall = "ok"
 

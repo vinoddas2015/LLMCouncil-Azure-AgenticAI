@@ -539,12 +539,17 @@ async def get_upload_url(
             detail=f"File too large. Maximum: {MAX_FILE_SIZE_BLOB // (1024*1024)}MB",
         )
 
-    upload_url, blob_name = generate_attachment_upload_url(
-        user_id=user_id,
-        filename=request.filename,
-        content_type=request.content_type,
-    )
-    return UploadUrlResponse(upload_url=upload_url, blob_name=blob_name)
+    try:
+        upload_url, blob_name = generate_attachment_upload_url(
+            user_id=user_id,
+            filename=request.filename,
+            content_type=request.content_type,
+        )
+        logger.info(f"[SAS Upload] Generated URL for {request.filename} ({request.size} bytes) → {blob_name}")
+        return UploadUrlResponse(upload_url=upload_url, blob_name=blob_name)
+    except Exception as exc:
+        logger.error(f"[SAS Upload] Failed to generate URL for {request.filename}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"SAS URL generation failed: {exc}")
 
 
 @app.post("/api/enhance-prompt")
