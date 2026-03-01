@@ -6,10 +6,11 @@
  * resource or npm package required.
  *
  * Design:
- *   - Toggle mic button sits in the input-row alongside 📎 🌐 ⚡
+ *   - Toggle mic button sits in the input toolbar alongside 📎 🌐 ⚡
  *   - Continuous recognition: finalized phrases are appended to the textarea
+ *   - Interim (live) transcript shown below mic for immediate visual feedback
  *   - Auto-restart on unexpected end (browser caps continuous segments)
- *   - Auto-stop safety timeout after 3 minutes of silence
+ *   - Auto-stop safety timeout after 3 minutes
  *   - Accessible: role="switch", aria-checked, keyboard-operable
  *   - Graceful degradation: component returns null if API unavailable
  *
@@ -37,16 +38,19 @@ const AUTO_STOP_TIMEOUT = 3 * 60 * 1000; // 3 minutes
  */
 export default function AudioInput({ onTranscript, disabled, lang }) {
   const [isListening, setIsListening] = useState(false);
+  const [interimText, setInterimText] = useState('');
   const [permError, setPermError] = useState(null);
 
-  const recognitionRef = useRef(null);
-  const isListeningRef = useRef(false);
-  const autoStopTimer  = useRef(null);
+  const recognitionRef  = useRef(null);
+  const isListeningRef  = useRef(false);
+  const autoStopTimer   = useRef(null);
+  const onTranscriptRef = useRef(onTranscript);
+
+  /* Always keep ref current — avoids stale closure in recognition callbacks */
+  useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
 
   /* Keep ref in sync for use inside recognition callbacks */
-  useEffect(() => {
-    isListeningRef.current = isListening;
-  }, [isListening]);
+  useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
 
   /* Cleanup on unmount */
   useEffect(() => {
@@ -67,12 +71,14 @@ export default function AudioInput({ onTranscript, disabled, lang }) {
       recognitionRef.current = null;
     }
     setIsListening(false);
+    setInterimText('');
   }, []);
 
   /* ── Start ────────────────────────────────────────────────── */
   const startListening = useCallback(() => {
     if (!SpeechRecognition) return;
     setPermError(null);
+    setInterimText('');
 
     // Abort any lingering session
     if (recognitionRef.current) {
@@ -81,7 +87,7 @@ export default function AudioInput({ onTranscript, disabled, lang }) {
 
     const recognition = new SpeechRecognition();
     recognition.continuous       = true;
-    recognition.interimResults   = true;   // show live preview via CSS
+    recognition.interimResults   = true;
     recognition.lang             = lang || navigator.language || 'en-US';
     recognition.maxAlternatives  = 1;
 
@@ -89,13 +95,21 @@ export default function AudioInput({ onTranscript, disabled, lang }) {
 
     recognition.onresult = (event) => {
       let finalText = '';
+      let interim = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalText += event.results[i][0].transcript;
+          finalText += transcript;
+        } else {
+          interim += transcript;
         }
       }
+      // Show interim text as live preview
+      setInterimText(interim);
+      // Commit finalized speech to the textarea
       if (finalText.trim()) {
-        onTranscript(finalText.trim());
+        onTranscriptRef.current(finalText.trim());
+        setInterimText('');
       }
     };
 
@@ -103,6 +117,9 @@ export default function AudioInput({ onTranscript, disabled, lang }) {
       console.warn('[AudioInput] SpeechRecognition error:', event.error);
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         setPermError('Microphone access denied — please allow in browser settings');
+        stopListening();
+      } else if (event.error === 'network') {
+        setPermError('Speech service unreachable — check network/proxy settings');
         stopListening();
       } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
         stopListening();
@@ -118,10 +135,12 @@ export default function AudioInput({ onTranscript, disabled, lang }) {
           recognition.start();
         } catch {
           setIsListening(false);
+          setInterimText('');
           recognitionRef.current = null;
         }
       } else {
         setIsListening(false);
+        setInterimText('');
         recognitionRef.current = null;
       }
     };
@@ -139,7 +158,7 @@ export default function AudioInput({ onTranscript, disabled, lang }) {
       console.error('[AudioInput] Failed to start recognition:', err);
       setIsListening(false);
     }
-  }, [lang, onTranscript, stopListening]);
+  }, [lang, stopListening]);
 
   /* ── Toggle ───────────────────────────────────────────────── */
   const toggle = useCallback(() => {
@@ -170,7 +189,7 @@ export default function AudioInput({ onTranscript, disabled, lang }) {
       </button>
       {isListening && (
         <span className="audio-listening-badge" aria-live="polite">
-          Listening…
+          {interimText || 'Listening…'}
         </span>
       )}
       {permError && (

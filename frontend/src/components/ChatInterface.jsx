@@ -681,70 +681,17 @@ export default function ChatInterface({
           </div>
         )}
 
-        <div className="input-row">
-          {/* File Input (hidden) */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.pptx,.xlsx,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.gif,.webp,.svg,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain,image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
-            multiple
-            onChange={handleFileSelect}
-            style={{ display: 'none' }}
-          />
-          
-          {/* Attachment Button */}
-          <button
-            type="button"
-            className="attachment-button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isLoading || isBlocked}
-            title="Attach files (PDF, PPTX, XLSX, DOCX, MD, images)"
-          >
-            📎
-          </button>
+        {/* File Input (hidden) */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.pptx,.xlsx,.docx,.md,.markdown,.txt,.png,.jpg,.jpeg,.gif,.webp,.svg,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain,image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+          multiple
+          onChange={handleFileSelect}
+          style={{ display: 'none' }}
+        />
 
-          {/* Web Search Toggle — right next to input */}
-          <button
-            type="button"
-            className={`web-search-btn ${preferences?.web_search_enabled ? 'active' : ''}`}
-            onClick={() => {
-              if (onUpdatePreferences && preferences) {
-                onUpdatePreferences({
-                  ...preferences,
-                  web_search_enabled: !preferences.web_search_enabled,
-                });
-              }
-            }}
-            disabled={isLoading || isBlocked}
-            title={preferences?.web_search_enabled ? 'Web Search: ON — click to disable' : 'Web Search: OFF — click to enable'}
-          >
-            🌐
-          </button>
-
-          {/* Speed Mode Toggle — visible quick toggle */}
-          <button
-            type="button"
-            className={`speed-mode-btn ${preferences?.speed_mode ? 'active' : ''}`}
-            onClick={() => {
-              if (onUpdatePreferences && preferences) {
-                onUpdatePreferences({
-                  ...preferences,
-                  speed_mode: !preferences.speed_mode,
-                });
-              }
-            }}
-            disabled={isLoading || isBlocked}
-            title={preferences?.speed_mode ? 'Speed Mode: ON — faster pipeline, streamlined evaluations. Click to disable' : 'Speed Mode: OFF — full pipeline with claim analysis. Click to enable'}
-          >
-            ⚡
-          </button>
-
-          {/* Audio Input — speech-to-text voice entry */}
-          <AudioInput
-            onTranscript={handleAudioTranscript}
-            disabled={isLoading || !!enhanceState || isBlocked}
-          />
-
+        <div className="composer-box">
           <textarea
             className="message-input"
             placeholder={isBlocked
@@ -759,13 +706,71 @@ export default function ChatInterface({
             disabled={isLoading || !!enhanceState || isBlocked}
             rows={3}
           />
-          <button
-            type="submit"
-            className="send-button"
-            disabled={(!input.trim() && attachments.length === 0) || attachments.some(a => a.uploading) || isLoading || !!enhanceState || isBlocked}
-          >
-            {conv.messages.length > 0 ? 'Follow Up' : 'Send'}
-          </button>
+
+          <div className="composer-toolbar">
+            <div className="composer-tools">
+              {/* Attachment Button */}
+              <button
+                type="button"
+                className="toolbar-btn attachment-button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading || isBlocked}
+                title="Attach files (PDF, PPTX, XLSX, DOCX, MD, images)"
+              >
+                📎
+              </button>
+
+              {/* Web Search Toggle */}
+              <button
+                type="button"
+                className={`toolbar-btn web-search-btn ${preferences?.web_search_enabled ? 'active' : ''}`}
+                onClick={() => {
+                  if (onUpdatePreferences && preferences) {
+                    onUpdatePreferences({
+                      ...preferences,
+                      web_search_enabled: !preferences.web_search_enabled,
+                    });
+                  }
+                }}
+                disabled={isLoading || isBlocked}
+                title={preferences?.web_search_enabled ? 'Web Search: ON — click to disable' : 'Web Search: OFF — click to enable'}
+              >
+                🌐
+              </button>
+
+              {/* Speed Mode Toggle */}
+              <button
+                type="button"
+                className={`toolbar-btn speed-mode-btn ${preferences?.speed_mode ? 'active' : ''}`}
+                onClick={() => {
+                  if (onUpdatePreferences && preferences) {
+                    onUpdatePreferences({
+                      ...preferences,
+                      speed_mode: !preferences.speed_mode,
+                    });
+                  }
+                }}
+                disabled={isLoading || isBlocked}
+                title={preferences?.speed_mode ? 'Speed Mode: ON — faster pipeline, streamlined evaluations. Click to disable' : 'Speed Mode: OFF — full pipeline with claim analysis. Click to enable'}
+              >
+                ⚡
+              </button>
+
+              {/* Audio Input — speech-to-text voice entry */}
+              <AudioInput
+                onTranscript={handleAudioTranscript}
+                disabled={isLoading || !!enhanceState || isBlocked}
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="send-button"
+              disabled={(!input.trim() && attachments.length === 0) || attachments.some(a => a.uploading) || isLoading || !!enhanceState || isBlocked}
+            >
+              {conv.messages.length > 0 ? '↑ Follow Up' : '↑ Send'}
+            </button>
+          </div>
         </div>
         
         <div className="input-hint">
