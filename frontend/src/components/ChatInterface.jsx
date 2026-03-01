@@ -48,6 +48,17 @@ const LOADING_QUOTES = [
   "Weighing the council's vote...",
 ];
 
+// ── Domain Classification Config ─────────────────────────────────
+// Maps backend domain keys → display label, icon, and colour.
+const DOMAIN_CONFIG = {
+  pharma:        { label: 'Pharma',        icon: '💊', color: '#6366f1' },
+  chemistry:     { label: 'Chemistry',     icon: '🧪', color: '#0ea5e9' },
+  regulatory:    { label: 'Regulatory',    icon: '📋', color: '#f59e0b' },
+  market_access: { label: 'Market Access', icon: '📈', color: '#10b981' },
+  data_science:  { label: 'Data Science',  icon: '🤖', color: '#8b5cf6' },
+  general:       { label: 'General',       icon: '💬', color: '#64748b' },
+};
+
 /**
  * Cycles through an array of items at a fixed interval.
  * Returns the current item — updates every `intervalMs`.
@@ -439,7 +450,24 @@ export default function ChatInterface({
                 </div>
               ) : (
                 <div className="assistant-message">
-                  <div className="message-label">LLM Council</div>
+                  <div className="message-label">
+                    LLM Council
+                    {(() => {
+                      const tags = msg.contextTags || msg.metadata?.context_tags;
+                      const domain = tags?.domain;
+                      if (!domain || domain === 'general') return null;
+                      const cfg = DOMAIN_CONFIG[domain] || DOMAIN_CONFIG.general;
+                      return (
+                        <span
+                          className="msg-domain-badge"
+                          style={{ '--badge-color': cfg.color }}
+                          title={`${cfg.label} · ${tags.question_type || ''} · ${tags.complexity || ''}`}
+                        >
+                          {cfg.icon} {cfg.label}
+                        </span>
+                      );
+                    })()}
+                  </div>
 
                   {/* Stage 1 */}
                   {msg.loading?.stage1 && (

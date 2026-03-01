@@ -123,6 +123,36 @@
   margin-bottom: 8px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Domain classification badge on assistant messages */
+.msg-domain-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--badge-color, #6366f1);
+  color: #fff;
+  line-height: 1.4;
+  white-space: nowrap;
+  animation: badge-appear 0.3s ease-out;
+}
+
+@keyframes badge-appear {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-domain-badge { animation: none; }
 }
 
 .user-message .message-content {

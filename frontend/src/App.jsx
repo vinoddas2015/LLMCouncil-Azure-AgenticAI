@@ -714,6 +714,11 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
               msg.loading.stage1 = false;
             }));
             break;
+          case 'context_classified':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.contextTags = event.data;
+            }));
+            break;
           case 'stage2_start':
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.loading.stage2 = true;

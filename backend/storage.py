@@ -264,12 +264,15 @@ def _blob_list(user_id: str) -> List[Dict[str, Any]]:
             blob_client = container.get_blob_client(blob.name)
             raw = blob_client.download_blob().readall().decode("utf-8")
             data = json.loads(raw)
-            conversations.append({
+            entry = {
                 "id": data["id"],
                 "created_at": data["created_at"],
                 "title": data.get("title", "New Conversation"),
                 "message_count": len(data["messages"]),
-            })
+            }
+            if data.get("context_tags"):
+                entry["context_tags"] = data["context_tags"]
+            conversations.append(entry)
         except Exception as e:
             logger.warning(f"Skipping corrupt blob {blob.name}: {e}")
 
@@ -328,12 +331,15 @@ def _file_list(user_id: str) -> List[Dict[str, Any]]:
         with open(path, "r") as f:
             raw = f.read()
             data = json.loads(decrypt_data(raw))
-            conversations.append({
+            entry = {
                 "id": data["id"],
                 "created_at": data["created_at"],
                 "title": data.get("title", "New Conversation"),
                 "message_count": len(data["messages"]),
-            })
+            }
+            if data.get("context_tags"):
+                entry["context_tags"] = data["context_tags"]
+            conversations.append(entry)
     conversations.sort(key=lambda x: x["created_at"], reverse=True)
     return conversations
 

@@ -1326,6 +1326,16 @@ async def _run_targeted_followup(
     # ── Tell frontend we are on the targeted path ──
     yield f"data: {json.dumps({'type': 'targeted_followup_start', 'data': {'target_type': target_type, 'target': target_label}})}\n\n"
 
+    # ── Classify the follow-up query for context tagging ──
+    tf_context_tags = None
+    try:
+        from .memory import UserProfileMemory
+        tf_context_tags = UserProfileMemory.classify_query(user_query)
+        storage.update_conversation_context(user_id, conversation_id, tf_context_tags)
+        yield f"data: {json.dumps({'type': 'context_classified', 'data': tf_context_tags})}\n\n"
+    except Exception as e:
+        logger.warning(f"[TargetedFU-ContextTags] Non-fatal: {e}")
+
     # ── Route based on target ────────────────────────────────────
     if target_type == "stage" and target_label == "Stage 1":
         # ━━ STAGE 1 FOLLOW-UP: Re-query all council models ━━━━━━
@@ -1410,6 +1420,7 @@ async def _run_targeted_followup(
                 "grounding_scores": prev_grounding,
                 "evidence": prev_evidence,
                 "targeted_followup": {"type": target_type, "target": target_label},
+                "context_tags": tf_context_tags,
             },
         )
 
@@ -1507,6 +1518,7 @@ Maintain pharmaceutical domain expertise and cite evidence where applicable."""
                 "grounding_scores": prev_grounding,
                 "evidence": prev_evidence,
                 "targeted_followup": {"type": target_type, "target": target_label},
+                "context_tags": tf_context_tags,
                 **({"agent_team": agent_team_result} if agent_team_result else {}),
             },
         )
@@ -1608,6 +1620,7 @@ Maintain pharmaceutical domain expertise and cite evidence where applicable."""
                 "type": target_type,
                 "target": target_label,
             },
+            "context_tags": tf_context_tags,
             **({"agent_team": agent_team_result} if agent_team_result else {}),
         },
     )
@@ -2483,6 +2496,7 @@ Now provide your complete evaluation:"""
                     stage3_result=stage3_result,
                     grounding_score=overall_grounding,
                     cost_summary=cost_summary,
+                    tags=[context_tags["domain"], context_tags.get("question_type", "general")] if context_tags else None,
                     user_id=user_id,
                 )
             )
@@ -2696,6 +2710,16 @@ async def resume_message_stream(
             user_chairman_model = checkpoint.get("user_chairman_model", request.chairman_model)
             conversation_history = checkpoint.get("conversation_history", [])
             raw_memory_context = checkpoint.get("raw_memory_context")
+
+            # Classify the resumed query for context tagging
+            resume_context_tags = None
+            try:
+                from .memory import UserProfileMemory
+                resume_context_tags = UserProfileMemory.classify_query(augmented_content)
+                storage.update_conversation_context(user_id, conversation_id, resume_context_tags)
+                yield f"data: {json.dumps({'type': 'context_classified', 'data': resume_context_tags})}\n\n"
+            except Exception as e:
+                logger.warning(f"[Resume-ContextTags] Non-fatal: {e}")
 
             # Re-emit Stage 1 data so the frontend hydrates its state
             yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_results})}\n\n"
@@ -2990,6 +3014,7 @@ Now provide your complete evaluation:"""
                     "evidence": evidence_bundle,
                     "infographic": infographic_data,
                     "relevancy_gate": relevancy_gate,
+                    "context_tags": resume_context_tags,
                     "doubting_thomas": {
                         "defect_count": dt_result.get("defect_count", 0) if dt_result else 0,
                         "needs_fix": dt_result.get("needs_fix", False) if dt_result else False,
