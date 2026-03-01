@@ -310,6 +310,24 @@ _DOCUMENT_REF_PATTERNS = re.compile(
 )
 
 
+# ── Targeted follow-up patterns ─────────────────────────────────
+# Messages that reference a specific Stage or model response are
+# post-processing requests on already-validated council output
+# (translate, summarise, simplify, etc.).  Safety checks still run
+# but the on-topic / off-topic gate is bypassed.
+_FOLLOWUP_PREFIX_KW = (
+    r'(?:Regarding|About|Re:?|On|For|Expand\s+on|Elaborate\s+on|'
+    r'Tell\s+me\s+more\s+about|More\s+on|Concerning)'
+)
+_FOLLOWUP_REF_PATTERNS = re.compile(
+    rf"^{_FOLLOWUP_PREFIX_KW}\s+"
+    r"(?:Stage\s*\d"
+    "|.+?(?:'s|\u2018s|\u2019s)\\s+response"
+    ")",
+    re.IGNORECASE,
+)
+
+
 async def evaluate_prompt(prompt: str, *, has_attachments: bool = False) -> GuardVerdict:
     """
     Evaluate whether a user prompt is suitable for the LLM Council.
@@ -406,6 +424,19 @@ async def evaluate_prompt(prompt: str, *, has_attachments: bool = False) -> Guar
     # evaluated by the council models.  Allow through.
     if has_attachments and _DOCUMENT_REF_PATTERNS.search(cleaned):
         logger.info("[PromptGuard] ALLOWED — document-reference query with attachments")
+        return GuardVerdict(allowed=True)
+
+    # ── 5c. Targeted follow-up bypass ──────────────────────────────
+    # When the user sends a follow-up referencing a specific Stage or
+    # model response (e.g. "Regarding Stage 3: translate to German"),
+    # this is a post-processing request on already-validated council
+    # output.  The original content passed the guard in the first
+    # turn, so we allow translation / summarisation / reformatting
+    # requests through without re-checking on-topic relevance.
+    # Safety checks (harmful, illegal, injection, PII) above still
+    # apply to follow-ups.
+    if _FOLLOWUP_REF_PATTERNS.search(cleaned):
+        logger.info("[PromptGuard] ALLOWED — targeted follow-up reference (Stage/model)")
         return GuardVerdict(allowed=True)
 
     # ── 6. On-topic / off-topic check ─────────────────────────────
