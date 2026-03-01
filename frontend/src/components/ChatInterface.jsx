@@ -7,6 +7,7 @@ import InfographicPanel from './InfographicPanel';
 import TokenBurndown from './TokenBurndown';
 import LearnUnlearn from './LearnUnlearn';
 import EnhancePrompt from './EnhancePrompt';
+import AudioInput from './AudioInput';
 import { api } from '../api';
 import './ChatInterface.css';
 
@@ -344,6 +345,11 @@ export default function ChatInterface({
       handleSubmit(e);
     }
   };
+
+  /** Append transcribed speech to the textarea input. */
+  const handleAudioTranscript = useCallback((text) => {
+    setInput(prev => (prev ? prev + ' ' + text : text));
+  }, []);
 
   const formatFileSize = (bytes) => {
     if (bytes < 1024) return bytes + ' B';
@@ -732,6 +738,12 @@ export default function ChatInterface({
           >
             ⚡
           </button>
+
+          {/* Audio Input — speech-to-text voice entry */}
+          <AudioInput
+            onTranscript={handleAudioTranscript}
+            disabled={isLoading || !!enhanceState || isBlocked}
+          />
 
           <textarea
             className="message-input"
