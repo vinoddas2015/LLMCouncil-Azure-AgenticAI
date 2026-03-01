@@ -116,11 +116,42 @@ async def query_google_model(
         # Extract text from candidates
         candidates = data.get("candidates", [])
         if not candidates:
-            raise ValueError(f"Google API returned no candidates for {model}")
+            # Log blockReason if present (e.g. SAFETY, PROHIBITED_CONTENT)
+            block_reason = data.get("promptFeedback", {}).get("blockReason", "unknown")
+            safety_ratings = data.get("promptFeedback", {}).get("safetyRatings", [])
+            logger.error(
+                f"[Google] No candidates for {model} — "
+                f"blockReason={block_reason}, safetyRatings={safety_ratings}"
+            )
+            raise ValueError(
+                f"Google API returned no candidates for {model} "
+                f"(blockReason={block_reason})"
+            )
+
+        # Check finishReason — may be SAFETY, RECITATION, MAX_TOKENS, etc.
+        finish_reason = candidates[0].get("finishReason", "STOP")
+        if finish_reason in ("SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST"):
+            safety_ratings = candidates[0].get("safetyRatings", [])
+            logger.warning(
+                f"[Google] {model} response blocked — "
+                f"finishReason={finish_reason}, safetyRatings={safety_ratings}"
+            )
+            raise ValueError(
+                f"Google API blocked response for {model} "
+                f"(finishReason={finish_reason})"
+            )
 
         parts = candidates[0].get("content", {}).get("parts", [])
         text_parts = [p.get("text", "") for p in parts if "text" in p]
         content = "".join(text_parts)
+
+        # Guard against empty content (model returned candidates but no text)
+        if not content.strip():
+            logger.warning(
+                f"[Google] {model} returned empty content — "
+                f"finishReason={finish_reason}, parts={len(parts)}"
+            )
+            raise ValueError(f"Google API returned empty content for {model}")
 
         # Extract usage metadata
         usage_meta = data.get("usageMetadata", {})

@@ -311,11 +311,24 @@ async def retry_with_backoff(
 
 # Ordered fallback chains per model — if the primary fails, try these in order
 FALLBACK_CHAINS: Dict[str, List[str]] = {
+    # ── Anthropic ──
+    "claude-opus-4.6":   ["gpt-5.2", "google/gemini-3-pro-preview", "grok-3"],
     "claude-opus-4.5":   ["gemini-2.5-pro", "gpt-5-mini", "grok-3"],
-    "gemini-2.5-pro":    ["claude-opus-4.5", "gpt-5-mini", "grok-3"],
-    "gpt-5-mini":        ["gemini-2.5-flash", "gemini-2.5-pro", "claude-opus-4.5"],
-    "grok-3":            ["gemini-2.5-pro", "claude-opus-4.5", "gpt-5-mini"],
-    "gemini-2.5-flash":  ["gpt-5-mini", "gemini-2.5-pro"],
+    "claude-sonnet-4.6": ["gpt-5.2", "google/gemini-3-pro-preview", "grok-3"],
+    # ── Google (direct) ──
+    "google/gemini-3-pro-preview":  ["gemini-2.5-pro", "gpt-5.2", "claude-sonnet-4.6"],
+    "google/gemini-3-flash-preview":["gemini-2.5-flash", "gpt-5-mini", "claude-sonnet-4.6"],
+    "google/gemini-2.5-pro":       ["google/gemini-3-pro-preview", "gpt-5.2", "grok-3"],
+    "google/gemini-2.5-flash":     ["google/gemini-3-flash-preview", "gpt-5-mini", "grok-3"],
+    # ── Google (via Bayer) ──
+    "gemini-2.5-pro":    ["google/gemini-3-pro-preview", "claude-opus-4.6", "gpt-5.2"],
+    "gemini-2.5-flash":  ["google/gemini-2.5-flash", "gpt-5-mini", "gemini-2.5-pro"],
+    # ── OpenAI ──
+    "gpt-5.2":          ["claude-sonnet-4.6", "google/gemini-3-pro-preview", "grok-3"],
+    "gpt-5-mini":       ["gemini-2.5-flash", "claude-sonnet-4.6", "grok-3"],
+    "o4-mini":          ["gpt-5-mini", "gemini-2.5-flash", "claude-sonnet-4.6"],
+    # ── xAI ──
+    "grok-3":           ["gpt-5.2", "google/gemini-3-pro-preview", "claude-sonnet-4.6"],
 }
 
 
