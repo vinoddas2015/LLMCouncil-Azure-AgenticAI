@@ -704,6 +704,7 @@ def detect_query_mode(user_query: str) -> str:
 
     Returns:
         "value_proposition" — when user seeks VP / competitive / messaging content
+        "pharma_intel"      — when 2+ pharma intelligence domains are detected
         "standard"          — default pharma council mode
     """
     q = user_query.lower()
@@ -716,7 +717,57 @@ def detect_query_mode(user_query: str) -> str:
     ]):
         vp_score += 1
 
-    return "value_proposition" if vp_score >= 2 else "standard"
+    if vp_score >= 2:
+        return "value_proposition"
+
+    # ── Check pharma intelligence domains ──
+    pi_domains = detect_pharma_intel_query(q)
+    active_domains = [d for d, v in pi_domains.items() if v]
+    if len(active_domains) >= 1:
+        return "pharma_intel"
+
+    return "standard"
+
+
+# ── Pharma Intelligence domain detection (used by agents) ─────────
+_PI_AGENT_PATTERNS = {
+    "ci": re.compile(
+        r'competitor|competitive\s*intelligence|pipeline\s*track|'
+        r'pfizer|alnylam|ionis|bridgebio|competitor\s*launch',
+        re.IGNORECASE,
+    ),
+    "compliance": re.compile(
+        r'compliance|promotional|off.?label|warning\s*letter|DDMAC|OPDP|'
+        r'fair\s*balance|misleading|lanham|regulatory\s*action',
+        re.IGNORECASE,
+    ),
+    "pubwatch": re.compile(
+        r'pubwatch|new\s*data|recent\s*publicat|latest\s*(study|publicat)|'
+        r'emerging\s*data|what.?s\s*new|publication\s*monitor',
+        re.IGNORECASE,
+    ),
+    "claim_impact": re.compile(
+        r'claim\s*impact|rx\s*uplift|prescription\s*impact|commercial\s*impact|'
+        r'NNT\b|number\s*needed|endpoint\s*impact|formulary\s*impact',
+        re.IGNORECASE,
+    ),
+    "market_access": re.compile(
+        r'market\s*access|pricing|reimbursement|HTA\b|NICE\b|ICER\b|'
+        r'AMNOG|G.BA|cost.?effective|QALY|generic\s*entry|payer',
+        re.IGNORECASE,
+    ),
+    "product_expert": re.compile(
+        r'acoramidis|tafamidis|vyndaqel|vutrisiran|amvuttra|'
+        r'eplontersen|wainua|attr.?cm|attr.?pn|transthyretin|'
+        r'cardiac\s*amyloid',
+        re.IGNORECASE,
+    ),
+}
+
+
+def detect_pharma_intel_query(query: str) -> Dict[str, bool]:
+    """Detect which pharma intelligence domains are relevant."""
+    return {domain: bool(pat.search(query)) for domain, pat in _PI_AGENT_PATTERNS.items()}
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -2039,6 +2090,431 @@ async def memory_orchestrator_agent(
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
+# ║  🎯  Competitive Intelligence Agent (Pharma Intel)                  ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def competitive_intelligence_agent(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage3_result: Dict[str, Any],
+    evidence_bundle: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Analyses competitor pipeline activity, launches, and messaging gaps."""
+    signals = []
+    s3 = (stage3_result or {}).get("response", "")
+    s3_lower = s3.lower()
+
+    # ── Competitor Coverage Check ──
+    competitors = {
+        "pfizer": ["tafamidis", "vyndaqel", "vyndamax"],
+        "alnylam": ["vutrisiran", "amvuttra", "patisiran", "onpattro"],
+        "ionis": ["eplontersen", "wainua", "inotersen", "tegsedi"],
+        "bridgebio": ["acoramidis"],
+    }
+    covered = {}
+    for company, drugs in competitors.items():
+        mentioned = [d for d in drugs if d in s3_lower]
+        if mentioned:
+            covered[company] = mentioned
+
+    if len(covered) >= 3:
+        signals.append(_signal(
+            "insight", "success",
+            f"Comprehensive Competitor Coverage ({len(covered)} Companies)",
+            f"Analysis covers: {', '.join(covered.keys())}",
+        ))
+    elif len(covered) == 0:
+        signals.append(_signal(
+            "gap", "warning",
+            "No Competitor Coverage Detected",
+            "The synthesis lacks competitor analysis. Consider requesting competitive landscape data.",
+        ))
+    else:
+        missing = [c for c in competitors if c not in covered]
+        signals.append(_signal(
+            "gap", "info",
+            f"Partial Competitor Coverage ({len(covered)}/{len(competitors)})",
+            f"Missing: {', '.join(missing)}. May need deeper CI analysis.",
+        ))
+
+    # ── Pipeline Activity Signals ──
+    pipeline_terms = ["phase 2", "phase 3", "phase ii", "phase iii", "pivotal", "registrational", "nda", "bla", "maa"]
+    pipeline_mentions = sum(1 for t in pipeline_terms if t in s3_lower)
+    if pipeline_mentions >= 3:
+        signals.append(_signal(
+            "insight", "success",
+            f"Rich Pipeline Data ({pipeline_mentions} Stage References)",
+            "Response includes specific clinical development stage information.",
+        ))
+
+    # ── Evidence Support ──
+    ci_cites = 0
+    if evidence_bundle:
+        for c in evidence_bundle.get("citations", []):
+            src = c.get("source", "")
+            if "CI/" in src or "Competitive" in src:
+                ci_cites += 1
+    if ci_cites > 0:
+        signals.append(_signal("evidence", "success", f"CI Evidence: {ci_cites} Citations", "Competitive intelligence backed by evidence citations."))
+
+    return _agent_result(
+        "competitive_intelligence", "🎯 Competitive Intelligence", signals,
+        metadata={"competitors_covered": list(covered.keys()), "pipeline_mentions": pipeline_mentions, "ci_citations": ci_cites},
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  ⚖️  Legal & Promotional Compliance Agent (Pharma Intel)            ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def compliance_agent(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage3_result: Dict[str, Any],
+    evidence_bundle: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Evaluates promotional compliance, flags potential regulatory risks."""
+    signals = []
+    s3 = (stage3_result or {}).get("response", "")
+    s3_lower = s3.lower()
+
+    # ── Unsupported Superiority Claims ──
+    superiority_terms = ["superior", "best-in-class", "outperform", "better than", "most effective", "gold standard"]
+    sup_count = sum(1 for t in superiority_terms if t in s3_lower)
+    if sup_count >= 2:
+        signals.append(_signal(
+            "risk", "warning",
+            f"Potential Superiority Claims ({sup_count} Found)",
+            "Unsupported superiority language may trigger OPDP review. Ensure claims are backed by head-to-head data.",
+        ))
+
+    # ── Fair Balance Check ──
+    safety_terms = ["adverse", "side effect", "contraindic", "warning", "black box", "risk", "precaution"]
+    benefit_terms = ["efficacy", "benefit", "improvement", "reduction", "response rate", "remission"]
+    safety_count = sum(1 for t in safety_terms if t in s3_lower)
+    benefit_count = sum(1 for t in benefit_terms if t in s3_lower)
+    if benefit_count > 0 and safety_count == 0:
+        signals.append(_signal(
+            "risk", "critical",
+            "Fair Balance Violation — No Safety Information",
+            "Benefits mentioned without corresponding safety/risk information. OPDP requires fair balance.",
+        ))
+    elif benefit_count > safety_count * 3:
+        signals.append(_signal(
+            "risk", "warning",
+            "Potential Fair Balance Imbalance",
+            f"Benefits ({benefit_count}) significantly outweigh safety mentions ({safety_count}).",
+        ))
+    else:
+        signals.append(_signal(
+            "insight", "success",
+            "Fair Balance: Adequate",
+            f"Benefits ({benefit_count}) and safety ({safety_count}) appear balanced.",
+        ))
+
+    # ── Off-Label Detection ──
+    if any(term in s3_lower for term in ["off-label", "off label", "unapproved indication", "investigational use"]):
+        signals.append(_signal(
+            "risk", "warning",
+            "Off-Label Content Detected",
+            "Response references off-label use. Ensure appropriate disclaimers are present.",
+        ))
+
+    return _agent_result(
+        "compliance", "⚖️ Legal Compliance", signals,
+        metadata={"superiority_claims": sup_count, "safety_mentions": safety_count, "benefit_mentions": benefit_count},
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  📡  PubWatch Agent — Scientific Intelligence Monitor               ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def pubwatch_agent(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage3_result: Dict[str, Any],
+    evidence_bundle: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Monitors publication recency, flags preprints, highlights data currency."""
+    signals = []
+    s3 = (stage3_result or {}).get("response", "")
+
+    # ── Publication Recency Analysis ──
+    current_year = str(datetime.now().year)
+    prev_year = str(datetime.now().year - 1)
+    recent_refs = s3.count(current_year) + s3.count(prev_year)
+    older_years = sum(s3.count(str(y)) for y in range(2015, datetime.now().year - 1))
+
+    if recent_refs >= 3:
+        signals.append(_signal(
+            "insight", "success",
+            f"Current Evidence ({recent_refs} Recent References)",
+            f"Response cites {recent_refs} references from {prev_year}-{current_year}.",
+        ))
+    elif recent_refs == 0 and older_years > 0:
+        signals.append(_signal(
+            "gap", "warning",
+            "Potentially Outdated Evidence",
+            f"No references from {prev_year}-{current_year}. {older_years} older references found. Data may be stale.",
+        ))
+
+    # ── Preprint Detection ──
+    preprint_markers = ["preprint", "biorxiv", "medrxiv", "arxiv", "not peer-reviewed", "non-peer-reviewed"]
+    preprint_count = sum(1 for m in preprint_markers if m in s3.lower())
+    if preprint_count > 0:
+        signals.append(_signal(
+            "risk", "info",
+            f"Preprint References Detected ({preprint_count})",
+            "Some evidence is from preprint sources. Results may change after peer review.",
+        ))
+
+    # ── PubWatch Evidence Citations ──
+    pw_cites = 0
+    if evidence_bundle:
+        for c in evidence_bundle.get("citations", []):
+            src = c.get("source", "")
+            if "PubWatch" in src or "[NEW]" in c.get("title", "") or "[PREPRINT]" in c.get("title", ""):
+                pw_cites += 1
+    if pw_cites > 0:
+        signals.append(_signal("evidence", "success", f"PubWatch: {pw_cites} Fresh Citations", "Recent publication monitoring found new evidence."))
+
+    return _agent_result(
+        "pubwatch", "📡 PubWatch", signals,
+        metadata={"recent_refs": recent_refs, "preprint_count": preprint_count, "pubwatch_citations": pw_cites},
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  📈  Claim Impact & Rx Uplift Agent (Pharma Intel)                  ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def claim_impact_agent(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage3_result: Dict[str, Any],
+    evidence_bundle: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Analyses clinical claims and their potential commercial / prescribing impact."""
+    signals = []
+    s3 = (stage3_result or {}).get("response", "")
+    s3_lower = s3.lower()
+
+    # ── Endpoint Translation Check ──
+    endpoint_terms = ["nnt", "number needed to treat", "absolute risk reduction", "arr",
+                      "hazard ratio", "hr ", "odds ratio", "or ", "relative risk",
+                      "progression-free survival", "pfs", "overall survival", "os ",
+                      "response rate", "orr", "complete response", "cr "]
+    endpoint_count = sum(1 for t in endpoint_terms if t in s3_lower)
+    if endpoint_count >= 3:
+        signals.append(_signal(
+            "insight", "success",
+            f"Strong Endpoint Data ({endpoint_count} Metrics)",
+            "Response includes quantitative clinical endpoints suitable for claim substantiation.",
+        ))
+    elif endpoint_count == 0:
+        signals.append(_signal(
+            "gap", "info",
+            "No Quantitative Endpoints Found",
+            "Response lacks NNT, HR, or other quantitative endpoint data for claim impact assessment.",
+        ))
+
+    # ── Commercial Impact Language ──
+    commercial_terms = ["formulary", "switching", "prescrib", "market share", "uptake",
+                        "adoption", "physician", "payer", "reimburs"]
+    comm_count = sum(1 for t in commercial_terms if t in s3_lower)
+    if comm_count >= 2:
+        signals.append(_signal(
+            "insight", "success",
+            f"Commercial Impact Context ({comm_count} Indicators)",
+            "Response translates clinical data into commercial implications.",
+        ))
+
+    # ── Claim-to-Impact Mapping ──
+    if endpoint_count >= 2 and comm_count >= 1:
+        signals.append(_signal(
+            "insight", "success",
+            "Claim-Impact Bridge Established",
+            "Response connects clinical endpoints to commercial impact — suitable for Rx uplift analysis.",
+        ))
+
+    return _agent_result(
+        "claim_impact", "📈 Claim Impact", signals,
+        metadata={"endpoint_metrics": endpoint_count, "commercial_indicators": comm_count},
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  💰  Market Access & Pricing Agent (Pharma Intel)                    ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def market_access_agent(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage3_result: Dict[str, Any],
+    evidence_bundle: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Analyses HTA positioning, pricing evidence, and market access barriers."""
+    signals = []
+    s3 = (stage3_result or {}).get("response", "")
+    s3_lower = s3.lower()
+
+    # ── HTA Body Coverage ──
+    hta_bodies = {
+        "NICE": ["nice", "national institute for health"],
+        "ICER": ["icer", "institute for clinical and economic review"],
+        "G-BA/AMNOG": ["g-ba", "amnog", "gemeinsamer bundesausschuss"],
+        "PBAC": ["pbac", "pharmaceutical benefits advisory"],
+        "HAS": ["has ", "haute autorité de santé"],
+        "CADTH": ["cadth", "canadian drug"],
+    }
+    covered_hta = []
+    for body, terms in hta_bodies.items():
+        if any(t in s3_lower for t in terms):
+            covered_hta.append(body)
+
+    if len(covered_hta) >= 3:
+        signals.append(_signal(
+            "insight", "success",
+            f"Comprehensive HTA Coverage ({len(covered_hta)} Bodies)",
+            f"Analysis covers: {', '.join(covered_hta)}",
+        ))
+    elif len(covered_hta) == 0:
+        signals.append(_signal(
+            "gap", "info",
+            "No HTA Body References",
+            "Response lacks reference to HTA bodies (NICE, ICER, G-BA, etc.).",
+        ))
+    else:
+        signals.append(_signal(
+            "insight", "info",
+            f"Partial HTA Coverage ({len(covered_hta)})",
+            f"Covers: {', '.join(covered_hta)}. Consider adding other major markets.",
+        ))
+
+    # ── Pricing / Cost-Effectiveness Metrics ──
+    pricing_terms = ["qaly", "cost per qaly", "cost-effective", "willingness to pay",
+                     "budget impact", "icer value", "price per", "wholesale acquisition"]
+    pricing_count = sum(1 for t in pricing_terms if t in s3_lower)
+    if pricing_count >= 2:
+        signals.append(_signal(
+            "insight", "success",
+            f"Pricing Evidence Present ({pricing_count} Metrics)",
+            "Response includes health economics data suitable for market access strategy.",
+        ))
+
+    # ── Generic/Biosimilar Threat ──
+    gx_terms = ["generic", "biosimilar", "patent expir", "loss of exclusivity", "loe",
+                 "paragraph iv", "anda", "patent cliff", "price erosion"]
+    gx_count = sum(1 for t in gx_terms if t in s3_lower)
+    if gx_count >= 2:
+        signals.append(_signal(
+            "risk", "warning",
+            f"Generic/Biosimilar Threat Identified ({gx_count} Signals)",
+            "Response mentions generic or biosimilar competition threats.",
+        ))
+
+    return _agent_result(
+        "market_access", "💰 Market Access", signals,
+        metadata={"hta_bodies_covered": covered_hta, "pricing_metrics": pricing_count, "gx_signals": gx_count},
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  🧬  Product Expert Agent — ATTR Portfolio (Pharma Intel)            ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def product_expert_agent(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage3_result: Dict[str, Any],
+    evidence_bundle: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Deep molecule expertise for ATTR-CM/ATTR-PN portfolio."""
+    signals = []
+    s3 = (stage3_result or {}).get("response", "")
+    s3_lower = s3.lower()
+
+    # ── Molecule Coverage ──
+    molecules = {
+        "Acoramidis": ["acoramidis"],
+        "Tafamidis": ["tafamidis", "vyndaqel", "vyndamax"],
+        "Vutrisiran": ["vutrisiran", "amvuttra"],
+        "Eplontersen": ["eplontersen", "wainua"],
+    }
+    covered_mol = {}
+    for mol, terms in molecules.items():
+        if any(t in s3_lower for t in terms):
+            covered_mol[mol] = True
+
+    if len(covered_mol) >= 3:
+        signals.append(_signal(
+            "insight", "success",
+            f"Comprehensive ATTR Coverage ({len(covered_mol)}/4 Molecules)",
+            f"Covers: {', '.join(covered_mol.keys())}",
+        ))
+    elif len(covered_mol) == 0:
+        signals.append(_signal(
+            "gap", "warning",
+            "No ATTR Molecule Coverage",
+            "Response lacks mention of key ATTR-CM/PN molecules.",
+        ))
+
+    # ── Mechanism Differentiation (Stabiliser vs Silencer) ──
+    has_stabiliser = any(t in s3_lower for t in ["stabiliz", "stabilis", "ttr stabiliz", "kinetic stabili"])
+    has_silencer = any(t in s3_lower for t in ["sirna", "silenc", "antisense", "rnai", "gene silenc"])
+    if has_stabiliser and has_silencer:
+        signals.append(_signal(
+            "insight", "success",
+            "Mechanism Differentiation: Stabiliser vs Silencer",
+            "Response distinguishes between TTR stabilisation and TTR silencing approaches.",
+        ))
+    elif (has_stabiliser or has_silencer) and not (has_stabiliser and has_silencer):
+        signals.append(_signal(
+            "gap", "info",
+            "Partial Mechanism Coverage",
+            f"Only {'stabiliser' if has_stabiliser else 'silencer'} mechanism covered. Consider comparing both approaches.",
+        ))
+
+    # ── Key Clinical Trials ──
+    key_trials = {
+        "ATTR-ACT": "tafamidis pivotal",
+        "ATTRibute-CM": "acoramidis pivotal",
+        "HELIOS-A": "vutrisiran ATTR-PN",
+        "HELIOS-B": "vutrisiran ATTR-CM",
+        "CARDIO-TTRansform": "eplontersen ATTR-CM",
+        "NEURO-TTRansform": "eplontersen ATTR-PN",
+    }
+    mentioned_trials = [t for t in key_trials if t.lower() in s3_lower]
+    if mentioned_trials:
+        signals.append(_signal(
+            "evidence", "success",
+            f"Key Trial References ({len(mentioned_trials)})",
+            f"Mentions: {', '.join(mentioned_trials)}",
+        ))
+
+    # ── Product Expert Evidence ──
+    pe_cites = 0
+    if evidence_bundle:
+        for c in evidence_bundle.get("citations", []):
+            if "ProductExpert" in c.get("source", ""):
+                pe_cites += 1
+    if pe_cites > 0:
+        signals.append(_signal("evidence", "success", f"Product Expert: {pe_cites} Citations", "Deep molecule evidence from multiple sources."))
+
+    return _agent_result(
+        "product_expert", "🧬 Product Expert", signals,
+        metadata={
+            "molecules_covered": list(covered_mol.keys()),
+            "mechanism_stabiliser": has_stabiliser,
+            "mechanism_silencer": has_silencer,
+            "key_trials_mentioned": mentioned_trials,
+            "pe_citations": pe_cites,
+        },
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
 # ║  Team Coordinator — Run All Agents                                  ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -2091,8 +2567,28 @@ async def run_agent_team(
             messaging_strategist_agent(user_query, stage1_results, stage3_result),
         ]
 
+    # ── Pharma Intelligence agents (auto-detected by domain keywords) ──
+    pi_tasks = []
+    if query_mode in ("pharma_intel", "value_proposition"):
+        pi_domains = detect_pharma_intel_query(user_query)
+        active_pi = [d for d, v in pi_domains.items() if v]
+        if active_pi:
+            logger.info(f"[AgentTeam] Activating Pharma Intel agents: {active_pi}")
+        if pi_domains["ci"]:
+            pi_tasks.append(competitive_intelligence_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if pi_domains["compliance"]:
+            pi_tasks.append(compliance_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if pi_domains["pubwatch"]:
+            pi_tasks.append(pubwatch_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if pi_domains["claim_impact"]:
+            pi_tasks.append(claim_impact_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if pi_domains["market_access"]:
+            pi_tasks.append(market_access_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if pi_domains["product_expert"]:
+            pi_tasks.append(product_expert_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+
     agents = await asyncio.gather(
-        *core_tasks, *vp_tasks,
+        *core_tasks, *vp_tasks, *pi_tasks,
         return_exceptions=True,
     )
 

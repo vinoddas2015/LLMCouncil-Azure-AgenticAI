@@ -190,6 +190,34 @@
   font-size: 14px;
 }
 
+/* Inline button reference that mirrors the real .mem-btn.unlearn appearance */
+.mem-btn-ref.unlearn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--error);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* Hint bar — compact info strip above memory cards */
+.memory-hint-bar {
+  padding: 10px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
 .memory-loading {
   display: flex;
   align-items: center;

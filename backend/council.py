@@ -441,6 +441,43 @@ _COMPARISON_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# ── Pharma Intelligence domain keyword patterns ──────────────────
+_PI_CI_KEYWORDS = re.compile(
+    r'competitor|competitive\s*intelligence|pipeline\s*track|competitor\s*analys|'
+    r'competitive\s*landscape|competitor\s*launch|pfizer|alnylam|ionis|bridgebio',
+    re.IGNORECASE,
+)
+_PI_COMPLIANCE_KEYWORDS = re.compile(
+    r'compliance|promotional\s*review|off.?label|warning\s*letter|DDMAC|OPDP|'
+    r'fair\s*balance|misleading\s*claim|lanham\s*act|regulatory\s*action|'
+    r'competitive\s*challenge|legal\s*compliance',
+    re.IGNORECASE,
+)
+_PI_PUBWATCH_KEYWORDS = re.compile(
+    r'pubwatch|new\s*data|recent\s*publicat|latest\s*(study|publicat)|'
+    r'new\s*evidence|emerging\s*data|what.?s\s*new|publication\s*monitor',
+    re.IGNORECASE,
+)
+_PI_CLAIM_IMPACT_KEYWORDS = re.compile(
+    r'claim\s*impact|rx\s*uplift|prescription\s*impact|commercial\s*impact|'
+    r'NNT\b|number\s*needed\s*to\s*treat|endpoint\s*impact|market\s*impact|'
+    r'formulary\s*impact|switching',
+    re.IGNORECASE,
+)
+_PI_MARKET_ACCESS_KEYWORDS = re.compile(
+    r'market\s*access|pricing|reimbursement|HTA\b|NICE\b|ICER\b|'
+    r'AMNOG|G.BA|cost.?effective|QALY|generic\s*entry|payer|'
+    r'price\s*erosion|launch\s*price|biosimilar',
+    re.IGNORECASE,
+)
+_PI_PRODUCT_EXPERT_KEYWORDS = re.compile(
+    r'acoramidis|tafamidis|vyndaqel|vyndamax|vutrisiran|amvuttra|'
+    r'eplontersen|wainua|attr.?cm|attr.?pn|transthyretin|'
+    r'cardiac\s*amyloid|amyloid\s*cardiomyopathy|ttr\s*stabiliz|'
+    r'familial\s*amyloid\s*polyneuropathy',
+    re.IGNORECASE,
+)
+
 
 def _detect_query_features(query: str, stage1_responses: str) -> Dict[str, bool]:
     """Quick heuristic to detect what output features the query needs."""
@@ -449,6 +486,13 @@ def _detect_query_features(query: str, stage1_responses: str) -> Dict[str, bool]
         "needs_vp": bool(_VP_KEYWORDS.search(combined)),
         "needs_chemistry": bool(_CHEM_KEYWORDS.search(combined)),
         "needs_comparison": bool(_COMPARISON_KEYWORDS.search(combined)),
+        # Pharma intelligence domains
+        "needs_ci": bool(_PI_CI_KEYWORDS.search(combined)),
+        "needs_compliance": bool(_PI_COMPLIANCE_KEYWORDS.search(combined)),
+        "needs_pubwatch": bool(_PI_PUBWATCH_KEYWORDS.search(combined)),
+        "needs_claim_impact": bool(_PI_CLAIM_IMPACT_KEYWORDS.search(combined)),
+        "needs_market_access": bool(_PI_MARKET_ACCESS_KEYWORDS.search(combined)),
+        "needs_product_expert": bool(_PI_PRODUCT_EXPERT_KEYWORDS.search(combined)),
     }
 
 
@@ -509,6 +553,59 @@ MEMORY-AWARE SYNTHESIS: You have access to the council's memory system.
 - Leverage procedural memories (learned workflows) when applicable to structure your response.
 - NEVER fabricate memory references — only reference memories explicitly provided in the prompt."""
 
+# ── Pharma Intelligence prompt addons ─────────────────────────────
+
+_CI_ADDON = """
+COMPETITIVE INTELLIGENCE MODE: The user's query involves competitor analysis.
+- Structure sections: **Competitive Landscape** → **Pipeline Tracker** → **Threat/Opportunity Assessment** → **Strategic Implications**
+- Compare competitor molecules by: mechanism of action, trial phase, key endpoint data, differentiation, expected launch timelines
+- Flag any recent FDA/EMA approvals or label expansions for competitor drugs
+- Highlight gaps in competitor data and areas of uncertainty
+- Use comparison TABLES for head-to-head positioning"""
+
+_COMPLIANCE_ADDON = """
+LEGAL & PROMOTIONAL COMPLIANCE MODE: The user's query involves regulatory compliance.
+- Apply OPDP/DDMAC promotional compliance lens to all claims
+- Flag potential fair balance issues and unsupported superiority claims
+- Reference FDA Warning Letter precedents when applicable
+- Identify competitive challenge opportunities under the Lanham Act
+- Structure: **Compliance Assessment** → **Risk Areas** → **Recommended Actions**
+- Mark compliance risks with severity: 🟢 Low / 🟡 Moderate / 🔴 High"""
+
+_PUBWATCH_ADDON = """
+SCIENTIFIC INTELLIGENCE (PubWatch) MODE: The user wants recent publication monitoring.
+- Prioritise data currency: sort findings by publication date (newest first)
+- Flag preprints vs peer-reviewed publications clearly: ⚠️ PREPRINT vs ✅ PEER-REVIEWED
+- Highlight any data that contradicts or updates established knowledge
+- Structure: **New Evidence Summary** → **Impact Assessment** → **Emerging Trends** → **Watch List**
+- Include publication dates, journal names, and citation counts where available"""
+
+_CLAIM_IMPACT_ADDON = """
+CLAIM IMPACT & Rx UPLIFT MODE: The user wants to understand commercial impact of clinical claims.
+- Translate clinical endpoints (NNT, ARR, OS, PFS) into commercial impact language
+- Identify key claims that drive prescribing behaviour changes
+- Assess formulary and switching implications
+- Structure: **Key Clinical Claims** → **Endpoint Translation** → **Prescribing Impact** → **Formulary Implications**
+- Use tables for endpoint-to-impact mapping"""
+
+_MARKET_ACCESS_ADDON = """
+MARKET ACCESS & PRICING MODE: The user's query involves pricing, reimbursement, or HTA.
+- Reference HTA body frameworks: NICE (UK), ICER (US), G-BA/AMNOG (DE), PBAC (AU)
+- Apply cost-effectiveness lens: QALY thresholds, willingness-to-pay, budget impact
+- Assess generic/biosimilar threat and price erosion scenarios
+- Structure: **HTA Landscape** → **Pricing Analysis** → **Reimbursement Barriers** → **Market Protection Strategy**
+- Flag any QALY or ICER value thresholds that may affect coverage"""
+
+_PRODUCT_EXPERT_ADDON = """
+ATTR PRODUCT EXPERT MODE: The user's query involves ATTR-CM/ATTR-PN molecules.
+Key molecules in scope:
+- **Acoramidis** (BridgeBio) — TTR stabiliser, oral, ATTR-CM
+- **Tafamidis** (Pfizer, Vyndaqel/Vyndamax) — TTR stabiliser, oral, ATTR-CM
+- **Vutrisiran** (Alnylam, AMVUTTRA) — siRNA TTR silencer, SC, ATTR-CM/PN
+- **Eplontersen** (Ionis/AstraZeneca, WAINUA) — antisense TTR silencer, SC, ATTR-PN/CM
+Structure: **Mechanism Comparison** → **Clinical Evidence** → **Head-to-Head Data** → **Safety Profile** → **Positioning**
+Include mechanism of action comparison table (stabilisers vs silencers) when discussing multiple molecules."""
+
 
 def _build_system_message(features: Dict[str, bool]) -> str:
     """Assemble the system message with only the relevant instruction addons."""
@@ -519,6 +616,19 @@ def _build_system_message(features: Dict[str, bool]) -> str:
         parts.append(_VP_ADDON)
     if features.get("has_memory_context"):
         parts.append(_MEMORY_ADDON)
+    # Pharma intelligence addons
+    if features.get("needs_ci"):
+        parts.append(_CI_ADDON)
+    if features.get("needs_compliance"):
+        parts.append(_COMPLIANCE_ADDON)
+    if features.get("needs_pubwatch"):
+        parts.append(_PUBWATCH_ADDON)
+    if features.get("needs_claim_impact"):
+        parts.append(_CLAIM_IMPACT_ADDON)
+    if features.get("needs_market_access"):
+        parts.append(_MARKET_ACCESS_ADDON)
+    if features.get("needs_product_expert"):
+        parts.append(_PRODUCT_EXPERT_ADDON)
     return "\n".join(parts)
 
 
@@ -1189,6 +1299,68 @@ CLAIMS {label}:
 # Minimum word count to trigger the loop (skip for short/simple answers)
 _DT_MIN_WORDS = 150
 
+# The criterion names used in the DT prompt — ordered for consistent display
+_DT_CRITERIA_NAMES = ["DRIFT", "HALLUCINATION", "OMISSION", "GATE VIOLATION", "BALANCE"]
+_DT_SEVERITY_ORDER = {"PASS": 0, "MINOR": 1, "MAJOR": 2, "CRITICAL": 3}
+
+
+def _parse_dt_criteria(critique_text: str) -> List[Dict[str, str]]:
+    """
+    Extract per-criterion severity + verdict from the Doubting Thomas critique.
+
+    Returns a list of dicts: [{name, severity, verdict}, ...]
+    Severity is one of: PASS, MINOR, MAJOR, CRITICAL, UNKNOWN
+    """
+    criteria = []
+    for i, name in enumerate(_DT_CRITERIA_NAMES, start=1):
+        # Pattern: "1. DRIFT — ..." or "1. DRIFT:" followed by verdict text + severity tag
+        pattern = rf'{i}\.\s*{re.escape(name)}[\s—:\-]+'
+        match = re.search(pattern, critique_text, re.IGNORECASE)
+        if match:
+            # Extract the text after the criterion header until next criterion or end marker
+            start = match.end()
+            # Look ahead to next criterion or DEFECT_COUNT
+            next_patterns = [rf'{i+1}\.', r'DEFECT_COUNT', r'NEEDS_FIX', r'FIX_INSTRUCTIONS']
+            end = len(critique_text)
+            for np in next_patterns:
+                nm = re.search(np, critique_text[start:], re.IGNORECASE)
+                if nm and start + nm.start() < end:
+                    end = start + nm.start()
+            verdict_text = critique_text[start:end].strip()
+
+            # Extract severity from the verdict text
+            sev_match = re.search(r'\b(PASS|MINOR|MAJOR|CRITICAL)\b', verdict_text, re.IGNORECASE)
+            severity = sev_match.group(1).upper() if sev_match else "UNKNOWN"
+
+            # Clean verdict to first sentence (for UI display)
+            verdict_clean = verdict_text.split('\n')[0].strip()
+            # Remove the severity tag from the verdict display
+            verdict_clean = re.sub(r'\s*[\(\[]?\s*(PASS|MINOR|MAJOR|CRITICAL)\s*[\)\]]?\s*\.?\s*$', '', verdict_clean, flags=re.IGNORECASE).strip()
+            if not verdict_clean:
+                verdict_clean = verdict_text[:150].strip()
+
+            criteria.append({"name": name, "severity": severity, "verdict": verdict_clean[:200]})
+        else:
+            criteria.append({"name": name, "severity": "UNKNOWN", "verdict": ""})
+    return criteria
+
+
+def _parse_dt_fix_instructions(critique_text: str) -> List[str]:
+    """Extract FIX_INSTRUCTIONS bullet points from the critique."""
+    fix_match = re.search(r'FIX_INSTRUCTIONS:\s*\n(.*?)(?:\n\n|\Z)', critique_text, re.DOTALL | re.IGNORECASE)
+    if not fix_match:
+        return []
+    raw = fix_match.group(1).strip()
+    # Extract bullet items (lines starting with - or * or numbered)
+    bullets = []
+    for line in raw.split('\n'):
+        line = line.strip()
+        if line and (line.startswith('-') or line.startswith('*') or re.match(r'\d+[\.\)]', line)):
+            cleaned = re.sub(r'^[-*]\s*|\d+[\.\)]\s*', '', line).strip()
+            if cleaned:
+                bullets.append(cleaned)
+    return bullets[:5]  # max 5 as per prompt
+
 # The Doubting Thomas is intentionally adversarial — it assumes the
 # chairman's draft is wrong until proven otherwise.  The critique is
 # structured so the chairman can parse defects and produce a targeted
@@ -1398,6 +1570,12 @@ async def doubting_thomas_review(
         needs_fix_match.group(1).upper() == "YES" if needs_fix_match else defect_count > 0
     )
 
+    # ── Parse per-criterion severities ────────────────────────────────
+    criteria = _parse_dt_criteria(critique_text)
+
+    # ── Parse fix instructions ────────────────────────────────────────
+    fix_instructions = _parse_dt_fix_instructions(critique_text)
+
     logger.info(
         f"[Doubting Thomas] Critique complete — "
         f"defects={defect_count}, needs_fix={needs_fix}, "
@@ -1412,6 +1590,8 @@ async def doubting_thomas_review(
             "revised_response": draft_response,
             "fix_applied": False,
             "usage": critique_usage,
+            "criteria": criteria,
+            "fix_instructions": [],
         }
 
     # ── Step 2: Chairman Fix Pass ─────────────────────────────────────
@@ -1474,6 +1654,8 @@ async def doubting_thomas_review(
         "revised_response": revised,
         "fix_applied": True,
         "usage": total_usage,
+        "criteria": criteria,
+        "fix_instructions": fix_instructions,
     }
 
 

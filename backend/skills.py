@@ -298,9 +298,34 @@ _DRUG_PATTERN = re.compile(
     r'encorafenib|vemurafenib|dabrafenib|trametinib|cobimetinib|'
     r'imatinib|dasatinib|nilotinib|ponatinib|bosutinib|'
     r'sorafenib|lenvatinib|cabozantinib|sunitinib|pazopanib|'
-    r'erlotinib|gefitinib|afatinib|lapatinib|neratinib)\b',
+    r'erlotinib|gefitinib|afatinib|lapatinib|neratinib|'
+    # ── ATTR-CM / ATTR-PN therapeutic area (Bayer focus) ──
+    r'acoramidis|tafamidis|vyndaqel|vyndamax|vutrisiran|amvuttra|'
+    r'eplontersen|wainua|patisiran|onpattro|inotersen|tegsedi|'
+    r'diflunisal|doxycycline|tauroursodeoxycholic|ag10)\b',
     re.IGNORECASE,
 )
+
+# ── ATTR / Cardiology / Amyloidosis domain keywords ─────────────
+_ATTR_MOLECULES = {
+    "acoramidis", "tafamidis", "vyndaqel", "vyndamax",
+    "vutrisiran", "amvuttra", "eplontersen", "wainua",
+    "patisiran", "onpattro", "inotersen", "tegsedi",
+    "diflunisal", "ag10",
+}
+_ATTR_DISEASE_TERMS = {
+    "attr", "attr-cm", "attr-pn", "transthyretin", "ttr",
+    "cardiac amyloidosis", "amyloid cardiomyopathy",
+    "hereditary amyloidosis", "wild-type attr", "wtattr",
+    "familial amyloid polyneuropathy", "fap",
+    "amyloid polyneuropathy",
+}
+_CI_COMPETITORS = {
+    "pfizer": ["tafamidis", "vyndaqel", "vyndamax"],
+    "alnylam": ["vutrisiran", "amvuttra", "patisiran", "onpattro"],
+    "ionis": ["eplontersen", "wainua", "inotersen", "tegsedi"],
+    "bridgebio": ["acoramidis", "ag10"],
+}
 
 _STOP_WORDS = {
     'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -2151,6 +2176,675 @@ async def _query_doctor_penguin(query: str) -> List[Citation]:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# PHARMA INTELLIGENCE SKILL 29: Competitive Intelligence (CI)
+# Tracks competitor pipeline activities, launches, messaging
+# Sources: ClinicalTrials.gov (competitor trials), PubMed (competitor pubs),
+#          FDA approvals, Endpoints News, Google Patents
+# ═══════════════════════════════════════════════════════════════════
+
+_CI_KEYWORDS = re.compile(
+    r'competitor|competitive\s*intelligence|pipeline|launch|'
+    r'market\s*share|competitor\s*analysis|competitive\s*landscape|'
+    r'pfizer|alnylam|ionis|bridgebio|'
+    r'vyndaqel|vyndamax|amvuttra|wainua|onpattro|tegsedi',
+    re.IGNORECASE,
+)
+
+
+async def _query_competitive_intel(query: str) -> List[Citation]:
+    """Competitive intelligence: track competitor pipelines, launches, messaging."""
+    citations: List[Citation] = []
+
+    # Determine which competitor molecules are relevant
+    q_low = query.lower()
+    target_terms = []
+    for company, drugs in _CI_COMPETITORS.items():
+        if company in q_low or any(d in q_low for d in drugs):
+            target_terms.extend(drugs)
+    # Fallback: if query mentions ATTR/amyloidosis, search all competitors
+    if not target_terms and any(t in q_low for t in _ATTR_DISEASE_TERMS):
+        for drugs in _CI_COMPETITORS.values():
+            target_terms.extend(drugs)
+    if not target_terms:
+        keywords = _extract_drug_keywords(query)
+        target_terms = keywords[:3] if keywords else []
+    if not target_terms:
+        return citations
+
+    async with httpx.AsyncClient(timeout=SKILL_TIMEOUT, verify=False) as client:
+        # 1. FDA approvals / label changes for competitor drugs
+        for drug in target_terms[:4]:
+            try:
+                resp = await client.get(
+                    f"https://api.fda.gov/drug/label.json?search={drug}&limit=2"
+                )
+                if resp.status_code == 200:
+                    results = resp.json().get("results", [])
+                    for i, item in enumerate(results[:2]):
+                        brand = (item.get("openfda", {}).get("brand_name", [drug]))[0] if isinstance(item.get("openfda", {}).get("brand_name"), list) else drug
+                        snippet_src = item.get("indications_and_usage", [""])[0] if isinstance(item.get("indications_and_usage"), list) else str(item.get("indications_and_usage", ""))
+                        citations.append(Citation(
+                            id=f"CI-FDA-{len(citations)+1}",
+                            source="CI/FDA",
+                            title=f"{brand} — Competitor Label ({drug})",
+                            url=f"https://dailymed.nlm.nih.gov/dailymed/search.cfm?labeltype=all&query={drug}",
+                            snippet=snippet_src[:200].strip() or f"FDA label for {brand}",
+                            relevance=0.82,
+                        ))
+            except Exception as e:
+                logger.debug(f"[CI/FDA] {drug}: {e}")
+
+        # 2. ClinicalTrials.gov for competitor pipeline
+        try:
+            search_expr = " OR ".join(target_terms[:4])
+            resp = await client.get(
+                "https://clinicaltrials.gov/api/v2/studies",
+                params={
+                    "query.term": search_expr,
+                    "pageSize": 5,
+                    "format": "json",
+                    "filter.overallStatus": "RECRUITING,ACTIVE_NOT_RECRUITING,ENROLLING_BY_INVITATION",
+                },
+            )
+            if resp.status_code == 200:
+                studies = resp.json().get("studies", [])
+                for study in studies[:5]:
+                    proto = study.get("protocolSection", {})
+                    ident = proto.get("identificationModule", {})
+                    status_mod = proto.get("statusModule", {})
+                    nct_id = ident.get("nctId", "")
+                    title = ident.get("briefTitle", "Competitor Trial")
+                    status = status_mod.get("overallStatus", "")
+                    sponsor = proto.get("sponsorCollaboratorsModule", {}).get("leadSponsor", {}).get("name", "")
+                    citations.append(Citation(
+                        id=f"CI-CT-{len(citations)+1}",
+                        source="CI/ClinicalTrials",
+                        title=f"{title[:100]} ({nct_id})",
+                        url=f"https://clinicaltrials.gov/study/{nct_id}",
+                        snippet=f"Sponsor: {sponsor}. Status: {status}"[:200],
+                        relevance=0.85,
+                    ))
+        except Exception as e:
+            logger.debug(f"[CI/ClinicalTrials]: {e}")
+
+    return citations[:MAX_CITATIONS_PER_SKILL]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PHARMA INTELLIGENCE SKILL 30: Legal & Promotional Compliance
+# Evaluates claims for compliance, reviews FDA warning letters,
+# competitive challenge opportunities
+# ═══════════════════════════════════════════════════════════════════
+
+_COMPLIANCE_KEYWORDS = re.compile(
+    r'compliance|promotional|off.?label|warning\s*letter|DDMAC|OPDP|'
+    r'fair\s*balance|promotional\s*review|regulatory\s*action|'
+    r'misleading\s*claim|substantiat|lanham\s*act|'
+    r'competitive\s*challenge|legal\s*compliance',
+    re.IGNORECASE,
+)
+
+
+async def _query_legal_compliance(query: str) -> List[Citation]:
+    """Legal & promotional compliance: FDA warning letters, OPDP actions, guidance."""
+    citations: List[Citation] = []
+    keywords = _extract_drug_keywords(query)
+    if not keywords:
+        keywords = _extract_medical_keywords(query)[:3]
+    if not keywords:
+        return citations
+
+    search_term = "+".join(keywords[:3])
+
+    async with httpx.AsyncClient(timeout=SKILL_TIMEOUT, verify=False) as client:
+        # 1. FDA Warning Letters (drug advertising / promotion)
+        try:
+            resp = await client.get(
+                f"https://api.fda.gov/drug/enforcement.json?search={search_term}&limit=3"
+            )
+            if resp.status_code == 200:
+                results = resp.json().get("results", [])
+                for i, item in enumerate(results[:3]):
+                    reason = item.get("reason_for_recall", "")
+                    product = item.get("product_description", "")
+                    status = item.get("status", "")
+                    recall_date = item.get("recall_initiation_date", "")
+                    citations.append(Citation(
+                        id=f"COMPL-E{i+1}",
+                        source="FDA Enforcement",
+                        title=f"FDA Enforcement: {product[:80]}",
+                        url=f"https://api.fda.gov/drug/enforcement.json?search={search_term}",
+                        snippet=f"Status: {status}. Reason: {reason[:150]}"[:200],
+                        relevance=0.80 - i * 0.05,
+                        date=recall_date[:8] if recall_date else "",
+                    ))
+        except Exception as e:
+            logger.debug(f"[Compliance/FDA Enforcement]: {e}")
+
+        # 2. FDA OPDP / DDMAC regulatory letters (scrape index)
+        try:
+            resp = await client.get(
+                "https://www.fda.gov/drugs/office-prescription-drug-promotion-opdp/opdp-warning-and-untitled-letters",
+                headers={"Accept": "text/html"},
+            )
+            if resp.status_code == 200:
+                text = resp.text.lower()
+                for kw in keywords[:2]:
+                    if kw.lower() in text:
+                        citations.append(Citation(
+                            id=f"COMPL-OPDP",
+                            source="FDA OPDP",
+                            title=f"OPDP Regulatory Letters — {kw}",
+                            url="https://www.fda.gov/drugs/office-prescription-drug-promotion-opdp/opdp-warning-and-untitled-letters",
+                            snippet=f"FDA Office of Prescription Drug Promotion letters mentioning '{kw}'",
+                            relevance=0.78,
+                        ))
+                        break
+        except Exception as e:
+            logger.debug(f"[Compliance/OPDP]: {e}")
+
+        # 3. PubMed for compliance/regulatory guidance literature
+        try:
+            pm_term = f"{search_term}+pharmaceutical+compliance+OR+promotional+regulation"
+            resp = await client.get(PUBMED_SEARCH, params={
+                "db": "pubmed", "term": pm_term,
+                "retmax": 3, "retmode": "json", "sort": "relevance",
+            })
+            if resp.status_code == 200:
+                pmids = resp.json().get("esearchresult", {}).get("idlist", [])
+                if pmids:
+                    summary_resp = await client.get(PUBMED_SUMMARY, params={
+                        "db": "pubmed", "id": ",".join(pmids[:3]), "retmode": "json",
+                    })
+                    if summary_resp.status_code == 200:
+                        results = summary_resp.json().get("result", {})
+                        for j, pmid in enumerate(pmids[:3]):
+                            article = results.get(pmid, {})
+                            if not isinstance(article, dict):
+                                continue
+                            title = article.get("title", "Compliance Literature")
+                            citations.append(Citation(
+                                id=f"COMPL-PM{j+1}",
+                                source="PubMed/Compliance",
+                                title=title[:120],
+                                url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                                snippet=f"Regulatory/compliance literature on {keywords[0]}",
+                                relevance=0.72 - j * 0.06,
+                            ))
+        except Exception as e:
+            logger.debug(f"[Compliance/PubMed]: {e}")
+
+    return citations[:MAX_CITATIONS_PER_SKILL]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PHARMA INTELLIGENCE SKILL 31: Scientific Intelligence (PubWatch)
+# Monitors new data & publications — temporal focus on last 90 days
+# Sources: PubMed (recent), bioRxiv, medRxiv, Europe PMC
+# ═══════════════════════════════════════════════════════════════════
+
+_PUBWATCH_KEYWORDS = re.compile(
+    r'pubwatch|new\s*data|recent\s*publicat|latest\s*(study|publicat)|'
+    r'new\s*evidence|emerging\s*data|what.?s\s*new|'
+    r'scientific\s*intelligence|publication\s*monitor|literature\s*watch',
+    re.IGNORECASE,
+)
+
+
+async def _query_pubwatch(query: str) -> List[Citation]:
+    """Scientific intelligence: monitor recent publications (last 90 days)."""
+    citations: List[Citation] = []
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = "+".join(keywords[:4])
+
+    # Use PubMed date filter for recent publications
+    from datetime import timedelta
+    end_date = datetime.now().strftime("%Y/%m/%d")
+    start_date = (datetime.now() - timedelta(days=90)).strftime("%Y/%m/%d")
+    date_filter = f"({start_date}[PDAT]:{end_date}[PDAT])"
+
+    async with httpx.AsyncClient(timeout=SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(PUBMED_SEARCH, params={
+                "db": "pubmed",
+                "term": f"{search_term}+AND+{date_filter}",
+                "retmax": MAX_CITATIONS_PER_SKILL,
+                "retmode": "json",
+                "sort": "date",
+            })
+            if resp.status_code == 200:
+                pmids = resp.json().get("esearchresult", {}).get("idlist", [])
+                if pmids:
+                    summary_resp = await client.get(PUBMED_SUMMARY, params={
+                        "db": "pubmed", "id": ",".join(pmids), "retmode": "json",
+                    })
+                    if summary_resp.status_code == 200:
+                        results = summary_resp.json().get("result", {})
+                        for i, pmid in enumerate(pmids[:MAX_CITATIONS_PER_SKILL]):
+                            article = results.get(pmid, {})
+                            if not isinstance(article, dict):
+                                continue
+                            title = article.get("title", "Recent Publication")
+                            pub_date = article.get("pubdate", "")
+                            source_j = article.get("source", "")
+                            authors = article.get("authors", [])
+                            first_auth = authors[0].get("name", "") if authors else ""
+                            snippet = f"🆕 {first_auth} et al. {source_j} ({pub_date})"[:200]
+                            citations.append(Citation(
+                                id=f"PW-{i+1}",
+                                source="PubWatch",
+                                title=f"[NEW] {title[:110]}",
+                                url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                                snippet=snippet,
+                                relevance=0.88 - i * 0.06,
+                                date=pub_date,
+                            ))
+        except Exception as e:
+            logger.warning(f"[PubWatch] PubMed recent: {e}")
+
+        # Also check bioRxiv/medRxiv for preprints (last 30 days)
+        for server, prefix in [("biorxiv", "BRX"), ("medrxiv", "MRX")]:
+            try:
+                end_d = datetime.now().strftime("%Y-%m-%d")
+                start_d = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+                resp = await client.get(
+                    f"https://api.biorxiv.org/details/{server}/{start_d}/{end_d}/0/json",
+                    timeout=12,
+                )
+                if resp.status_code == 200:
+                    collection = resp.json().get("collection", [])
+                    kw_lower = [k.lower() for k in keywords]
+                    matched = []
+                    for paper in collection:
+                        text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
+                        score = sum(1 for k in kw_lower if k in text)
+                        if score > 0:
+                            matched.append((score, paper))
+                    matched.sort(key=lambda x: x[0], reverse=True)
+                    for score, paper in matched[:2]:
+                        doi = paper.get("doi", "")
+                        citations.append(Citation(
+                            id=f"PW-{prefix}{len(citations)+1}",
+                            source=f"PubWatch/{server}",
+                            title=f"[PREPRINT] {paper.get('title', 'Untitled')[:100]}",
+                            url=f"https://doi.org/{doi}" if doi else f"https://www.{server}.org",
+                            snippet=f"⚠️ Preprint — {paper.get('authors', '').split(';')[0]} ({paper.get('date', '')[:10]})"[:200],
+                            relevance=0.80,
+                            date=paper.get("date", "")[:4],
+                        ))
+            except Exception as e:
+                logger.debug(f"[PubWatch/{server}]: {e}")
+
+    return citations[:MAX_CITATIONS_PER_SKILL * 2]  # allow more for monitoring
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PHARMA INTELLIGENCE SKILL 32: Claim Impact & Rx Uplift Simulator
+# Predicts how new clinical claims translate into commercial impact
+# Sources: ClinicalTrials endpoints, PubMed NNT/endpoint data,
+#          OpenAlex health economics
+# ═══════════════════════════════════════════════════════════════════
+
+_CLAIM_IMPACT_KEYWORDS = re.compile(
+    r'claim\s*impact|rx\s*uplift|prescription\s*impact|'
+    r'commercial\s*impact|market\s*impact|NNT\b|'
+    r'number\s*needed\s*to\s*treat|endpoint|primary\s*endpoint|'
+    r'market\s*share|prescription\s*share|switching|formulary',
+    re.IGNORECASE,
+)
+
+
+async def _query_claim_impact(query: str) -> List[Citation]:
+    """Claim impact & Rx uplift: clinical endpoints + health economics evidence."""
+    citations: List[Citation] = []
+    keywords = _extract_medical_keywords(query)
+    drug_kw = _extract_drug_keywords(query)
+    all_kw = list(dict.fromkeys(drug_kw + keywords))  # deduplicated
+    if not all_kw:
+        return citations
+
+    async with httpx.AsyncClient(timeout=SKILL_TIMEOUT, verify=False) as client:
+        # 1. ClinicalTrials.gov — focus on outcomes/endpoints
+        try:
+            search_expr = " AND ".join(all_kw[:3])
+            resp = await client.get(
+                "https://clinicaltrials.gov/api/v2/studies",
+                params={
+                    "query.term": f"{search_expr} AND (endpoint OR outcome OR efficacy)",
+                    "pageSize": 5,
+                    "format": "json",
+                    "fields": "NCTId,BriefTitle,OverallStatus,PrimaryOutcomeMeasure,SecondaryOutcomeMeasure",
+                },
+            )
+            if resp.status_code == 200:
+                studies = resp.json().get("studies", [])
+                for study in studies[:3]:
+                    proto = study.get("protocolSection", {})
+                    ident = proto.get("identificationModule", {})
+                    nct_id = ident.get("nctId", "")
+                    title = ident.get("briefTitle", "Clinical Study")
+                    outcomes_mod = proto.get("outcomesModule", {})
+                    primary = outcomes_mod.get("primaryOutcomes", [])
+                    primary_str = "; ".join(o.get("measure", "") for o in primary[:2])[:150]
+                    citations.append(Citation(
+                        id=f"CLIM-CT{len(citations)+1}",
+                        source="ClaimImpact/Trials",
+                        title=f"{title[:100]} ({nct_id})",
+                        url=f"https://clinicaltrials.gov/study/{nct_id}",
+                        snippet=f"Primary endpoints: {primary_str}" if primary_str else f"Clinical study: {title[:150]}",
+                        relevance=0.84,
+                    ))
+        except Exception as e:
+            logger.debug(f"[ClaimImpact/CT]: {e}")
+
+        # 2. PubMed — NNT, ARR, comparative effectiveness
+        try:
+            pm_term = "+".join(all_kw[:3]) + "+AND+(NNT+OR+number+needed+treat+OR+absolute+risk+reduction+OR+comparative+effectiveness)"
+            resp = await client.get(PUBMED_SEARCH, params={
+                "db": "pubmed", "term": pm_term,
+                "retmax": 3, "retmode": "json", "sort": "relevance",
+            })
+            if resp.status_code == 200:
+                pmids = resp.json().get("esearchresult", {}).get("idlist", [])
+                if pmids:
+                    summary_resp = await client.get(PUBMED_SUMMARY, params={
+                        "db": "pubmed", "id": ",".join(pmids[:3]), "retmode": "json",
+                    })
+                    if summary_resp.status_code == 200:
+                        results = summary_resp.json().get("result", {})
+                        for j, pmid in enumerate(pmids[:3]):
+                            article = results.get(pmid, {})
+                            if not isinstance(article, dict):
+                                continue
+                            title = article.get("title", "Outcomes Data")
+                            citations.append(Citation(
+                                id=f"CLIM-PM{j+1}",
+                                source="ClaimImpact/PubMed",
+                                title=title[:120],
+                                url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                                snippet=f"Outcomes/endpoints evidence for {all_kw[0] if all_kw else 'query'}",
+                                relevance=0.78 - j * 0.06,
+                            ))
+        except Exception as e:
+            logger.debug(f"[ClaimImpact/PubMed]: {e}")
+
+        # 3. OpenAlex — Health Economics & Outcomes Research (HEOR)
+        try:
+            search_term = " ".join(all_kw[:3]) + " health economics outcomes"
+            resp = await client.get(
+                "https://api.openalex.org/works",
+                params={
+                    "search": search_term,
+                    "per_page": 3,
+                    "mailto": "research@llmcouncil.dev",
+                    "select": "id,doi,title,publication_year,cited_by_count",
+                },
+            )
+            if resp.status_code == 200:
+                for i, work in enumerate(resp.json().get("results", [])[:3]):
+                    title = work.get("title", "HEOR Study") or "HEOR Study"
+                    doi = work.get("doi", "")
+                    year = work.get("publication_year", "")
+                    cited = work.get("cited_by_count", 0) or 0
+                    citations.append(Citation(
+                        id=f"CLIM-HE{i+1}",
+                        source="ClaimImpact/HEOR",
+                        title=title[:120],
+                        url=doi or f"https://openalex.org/works?search={search_term}",
+                        snippet=f"Health economics ({year}), cited {cited}x",
+                        relevance=0.76 - i * 0.06,
+                        date=str(year),
+                    ))
+        except Exception as e:
+            logger.debug(f"[ClaimImpact/HEOR]: {e}")
+
+    return citations[:MAX_CITATIONS_PER_SKILL]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PHARMA INTELLIGENCE SKILL 33: Market Access & Pricing
+# Simulates pricing scenarios, HTA body decisions, Gx off-label prevention
+# Sources: NICE, ICER, AMNOG (G-BA), WHO Essential Medicines, EMA
+# ═══════════════════════════════════════════════════════════════════
+
+_MARKET_ACCESS_KEYWORDS = re.compile(
+    r'market\s*access|pricing|reimbursement|HTA\b|NICE\b|ICER\b|'
+    r'AMNOG|G.BA|cost.?effective|QALY|ICER\s*value|'
+    r'generic|gx\b|off.?label|formulary|payer|biosimilar|'
+    r'price\s*erosion|launch\s*price|list\s*price',
+    re.IGNORECASE,
+)
+
+
+async def _query_market_access(query: str) -> List[Citation]:
+    """Market access & pricing: HTA decisions, pricing evidence, Gx strategy."""
+    citations: List[Citation] = []
+    keywords = _extract_drug_keywords(query)
+    medical_kw = _extract_medical_keywords(query)
+    all_kw = list(dict.fromkeys(keywords + medical_kw))
+    if not all_kw:
+        return citations
+
+    search_term = " ".join(all_kw[:3])
+
+    async with httpx.AsyncClient(timeout=SKILL_TIMEOUT, verify=False) as client:
+        # 1. NICE (UK HTA) — Technology Appraisals
+        try:
+            resp = await client.get(
+                "https://www.nice.org.uk/search",
+                params={"q": search_term, "ps": "5"},
+                headers={"Accept": "text/html"},
+            )
+            if resp.status_code == 200:
+                import re as _re
+                links = _re.findall(
+                    r'href="(/guidance/[a-z]+\d+)"[^>]*>\s*([^<]+)', resp.text
+                )
+                for i, (path, title) in enumerate(links[:3]):
+                    citations.append(Citation(
+                        id=f"MACC-NICE{i+1}",
+                        source="NICE/HTA",
+                        title=f"{title.strip()[:120]}",
+                        url=f"https://www.nice.org.uk{path}",
+                        snippet=f"NICE Technology Appraisal for {all_kw[0] if all_kw else 'query'}",
+                        relevance=0.84 - i * 0.06,
+                    ))
+        except Exception as e:
+            logger.debug(f"[MarketAccess/NICE]: {e}")
+
+        # 2. PubMed — Health Economics, Cost-Effectiveness, Pricing
+        try:
+            pm_term = "+".join(all_kw[:3]) + "+AND+(cost+effectiveness+OR+QALY+OR+reimbursement+OR+market+access+OR+pricing)"
+            resp = await client.get(PUBMED_SEARCH, params={
+                "db": "pubmed", "term": pm_term,
+                "retmax": 3, "retmode": "json", "sort": "relevance",
+            })
+            if resp.status_code == 200:
+                pmids = resp.json().get("esearchresult", {}).get("idlist", [])
+                if pmids:
+                    summary_resp = await client.get(PUBMED_SUMMARY, params={
+                        "db": "pubmed", "id": ",".join(pmids[:3]), "retmode": "json",
+                    })
+                    if summary_resp.status_code == 200:
+                        results = summary_resp.json().get("result", {})
+                        for j, pmid in enumerate(pmids[:3]):
+                            article = results.get(pmid, {})
+                            if not isinstance(article, dict):
+                                continue
+                            title = article.get("title", "Market Access Study")
+                            citations.append(Citation(
+                                id=f"MACC-PM{j+1}",
+                                source="MarketAccess/PubMed",
+                                title=title[:120],
+                                url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                                snippet=f"Health economics / market access literature",
+                                relevance=0.78 - j * 0.06,
+                            ))
+        except Exception as e:
+            logger.debug(f"[MarketAccess/PubMed]: {e}")
+
+        # 3. WHO Essential Medicines list check
+        try:
+            who_drug = all_kw[0] if all_kw else ""
+            resp = await client.get(
+                f"https://www.whocc.no/atc_ddd_index/?code=&showdescription=no&name={who_drug}"
+            )
+            if resp.status_code == 200 and who_drug.lower() in resp.text.lower():
+                citations.append(Citation(
+                    id=f"MACC-WHO",
+                    source="MarketAccess/WHO",
+                    title=f"{who_drug} — WHO ATC Classification",
+                    url=f"https://www.whocc.no/atc_ddd_index/?name={who_drug}",
+                    snippet=f"WHO ATC/DDD Index entry for {who_drug}",
+                    relevance=0.70,
+                ))
+        except Exception as e:
+            logger.debug(f"[MarketAccess/WHO]: {e}")
+
+    return citations[:MAX_CITATIONS_PER_SKILL]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PHARMA INTELLIGENCE SKILL 34: Product Expert (ATTR Portfolio)
+# Deep molecule expertise: Acoramidis, Tafamidis, Vutrisiran, Eplontersen
+# Multi-source deep dive for the 4 key ATTR-CM/ATTR-PN molecules
+# ═══════════════════════════════════════════════════════════════════
+
+_PRODUCT_EXPERT_KEYWORDS = re.compile(
+    r'acoramidis|tafamidis|vyndaqel|vyndamax|vutrisiran|amvuttra|'
+    r'eplontersen|wainua|attr.?cm|attr.?pn|transthyretin|'
+    r'cardiac\s*amyloid|amyloid\s*cardiomyopathy|'
+    r'familial\s*amyloid\s*polyneuropathy|ttr\s*stabiliz|'
+    r'ttr\s*silenc|sirna.*ttr|antisense.*ttr',
+    re.IGNORECASE,
+)
+
+
+async def _query_product_expert(query: str) -> List[Citation]:
+    """Product expert: deep multi-source evidence for ATTR-CM/PN molecules."""
+    citations: List[Citation] = []
+
+    # Determine which specific molecules are queried
+    q_low = query.lower()
+    target_mols = [m for m in _ATTR_MOLECULES if m in q_low]
+    # If generic ATTR query, include all focus molecules
+    if not target_mols and any(t in q_low for t in ["attr", "transthyretin", "ttr", "amyloid"]):
+        target_mols = ["acoramidis", "tafamidis", "vutrisiran", "eplontersen"]
+    if not target_mols:
+        target_mols = _extract_drug_keywords(query)[:2]
+    if not target_mols:
+        return citations
+
+    async with httpx.AsyncClient(timeout=SKILL_TIMEOUT, verify=False) as client:
+        for mol in target_mols[:4]:
+            # 1. PubMed — key clinical papers
+            try:
+                resp = await client.get(PUBMED_SEARCH, params={
+                    "db": "pubmed",
+                    "term": f"{mol}+AND+(clinical+trial+OR+efficacy+OR+safety+OR+mechanism)",
+                    "retmax": 3, "retmode": "json", "sort": "relevance",
+                })
+                if resp.status_code == 200:
+                    pmids = resp.json().get("esearchresult", {}).get("idlist", [])
+                    if pmids:
+                        summary_resp = await client.get(PUBMED_SUMMARY, params={
+                            "db": "pubmed", "id": ",".join(pmids[:3]), "retmode": "json",
+                        })
+                        if summary_resp.status_code == 200:
+                            results = summary_resp.json().get("result", {})
+                            for j, pmid in enumerate(pmids[:2]):
+                                article = results.get(pmid, {})
+                                if not isinstance(article, dict):
+                                    continue
+                                title = article.get("title", f"{mol} study")
+                                pub_date = article.get("pubdate", "")
+                                citations.append(Citation(
+                                    id=f"PE-{mol[:4].upper()}{j+1}",
+                                    source=f"ProductExpert/{mol.capitalize()}",
+                                    title=title[:120],
+                                    url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                                    snippet=f"Key evidence for {mol} ({pub_date})",
+                                    relevance=0.88 - j * 0.04,
+                                    date=pub_date,
+                                ))
+            except Exception as e:
+                logger.debug(f"[ProductExpert/PubMed/{mol}]: {e}")
+
+            # 2. ClinicalTrials.gov — active trials for this molecule
+            try:
+                resp = await client.get(
+                    "https://clinicaltrials.gov/api/v2/studies",
+                    params={
+                        "query.term": mol,
+                        "pageSize": 2,
+                        "format": "json",
+                    },
+                )
+                if resp.status_code == 200:
+                    studies = resp.json().get("studies", [])
+                    for study in studies[:2]:
+                        proto = study.get("protocolSection", {})
+                        ident = proto.get("identificationModule", {})
+                        nct_id = ident.get("nctId", "")
+                        title = ident.get("briefTitle", f"{mol} Trial")
+                        citations.append(Citation(
+                            id=f"PE-{mol[:4].upper()}-CT",
+                            source=f"ProductExpert/{mol.capitalize()}",
+                            title=f"{title[:100]} ({nct_id})",
+                            url=f"https://clinicaltrials.gov/study/{nct_id}",
+                            snippet=f"Clinical trial for {mol}",
+                            relevance=0.85,
+                        ))
+            except Exception as e:
+                logger.debug(f"[ProductExpert/CT/{mol}]: {e}")
+
+            # 3. ChEMBL — bioactivity data
+            try:
+                resp = await client.get(
+                    f"https://www.ebi.ac.uk/chembl/api/data/molecule/search.json?q={mol}&limit=1"
+                )
+                if resp.status_code == 200:
+                    mols = resp.json().get("molecules", [])
+                    if mols:
+                        m_data = mols[0]
+                        chembl_id = m_data.get("molecule_chembl_id", "")
+                        max_phase = m_data.get("max_phase", "")
+                        mol_type = m_data.get("molecule_type", "")
+                        citations.append(Citation(
+                            id=f"PE-{mol[:4].upper()}-CB",
+                            source=f"ProductExpert/{mol.capitalize()}",
+                            title=f"{mol.capitalize()} ({chembl_id}) — {mol_type}",
+                            url=f"https://www.ebi.ac.uk/chembl/compound_report_card/{chembl_id}/",
+                            snippet=f"Max phase: {max_phase}. Type: {mol_type}",
+                            relevance=0.80,
+                        ))
+            except Exception as e:
+                logger.debug(f"[ProductExpert/ChEMBL/{mol}]: {e}")
+
+    return citations[:MAX_CITATIONS_PER_SKILL * 2]  # allow more for multi-molecule
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Domain detection helpers for the 6 pharma intelligence skills
+# ═══════════════════════════════════════════════════════════════════
+
+def detect_pharma_intel_domains(query: str) -> Dict[str, bool]:
+    """Detect which pharma intelligence domains are relevant for a query."""
+    q_low = query.lower()
+    return {
+        "ci": bool(_CI_KEYWORDS.search(query)) or any(c in q_low for c in _CI_COMPETITORS),
+        "compliance": bool(_COMPLIANCE_KEYWORDS.search(query)),
+        "pubwatch": bool(_PUBWATCH_KEYWORDS.search(query)),
+        "claim_impact": bool(_CLAIM_IMPACT_KEYWORDS.search(query)),
+        "market_access": bool(_MARKET_ACCESS_KEYWORDS.search(query)),
+        "product_expert": bool(_PRODUCT_EXPERT_KEYWORDS.search(query)),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Orchestrator — run all skills in parallel
 # ═══════════════════════════════════════════════════════════════════
 
@@ -2201,6 +2895,24 @@ async def run_evidence_skills(
         "STRING-DB":            asyncio.create_task(_query_string_db(user_query)),
         "Hubble":               asyncio.create_task(_query_hubble(user_query)),
     }
+
+    # ── Pharma intelligence skills (fire when domain detected) ────
+    domains = detect_pharma_intel_domains(user_query)
+    _active_domains = [d for d, v in domains.items() if v]
+    if _active_domains:
+        logger.info(f"[Skills] Pharma intel domains active: {_active_domains}")
+    if domains["ci"]:
+        tasks["Competitive Intel"]   = asyncio.create_task(_query_competitive_intel(user_query))
+    if domains["compliance"]:
+        tasks["Legal Compliance"]    = asyncio.create_task(_query_legal_compliance(user_query))
+    if domains["pubwatch"]:
+        tasks["PubWatch"]            = asyncio.create_task(_query_pubwatch(user_query))
+    if domains["claim_impact"]:
+        tasks["Claim Impact"]        = asyncio.create_task(_query_claim_impact(user_query))
+    if domains["market_access"]:
+        tasks["Market Access"]       = asyncio.create_task(_query_market_access(user_query))
+    if domains["product_expert"]:
+        tasks["Product Expert"]      = asyncio.create_task(_query_product_expert(user_query))
 
     # ── Web search skills (only when toggled ON) ───────────────────
     if web_search_enabled:
@@ -2374,7 +3086,10 @@ def format_citations_for_prompt(evidence: Dict[str, Any]) -> str:
         "include the citation tag (e.g. [FDA-L1], [CT-2], [PM-3], [EMA-1], [WHO-1], [UP-1], [CB-1], "
         "[KG-1], [RC-1], [RX-1], [STR-1], [HUB-1], "
         "[SS-1], [CR-1], [EPMC-1], [WEB-1], [AX-1], [PAT-1], [WIKI-1], [ORC-1], "
-        "[OA-1], [UPW-1], [ELS-1], [BRX-1], [MRX-1], [OECD-1], [EPTS-1], [DPNG-1]) "
+        "[OA-1], [UPW-1], [ELS-1], [BRX-1], [MRX-1], [OECD-1], [EPTS-1], [DPNG-1], "
+        "[CI-FDA-1], [CI-CT-1], [COMPL-E1], [COMPL-OPDP], [COMPL-PM1], "
+        "[PW-1], [PW-BRX1], [PW-MRX1], [CLIM-CT1], [CLIM-PM1], [CLIM-HE1], "
+        "[MACC-NICE1], [MACC-PM1], [MACC-WHO], [PE-ACOR1], [PE-TAFA1], [PE-VUTR1], [PE-EPLO1]) "
         "inline in your text. "
         "At the end of your response, include a numbered REFERENCES section listing "
         "each citation you used with its full URL."

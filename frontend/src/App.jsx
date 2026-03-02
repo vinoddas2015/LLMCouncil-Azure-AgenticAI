@@ -467,6 +467,18 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             }));
             break;
 
+          case 'doubting_thomas_start':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.doubtingThomas = { status: 'running' };
+            }));
+            break;
+
+          case 'doubting_thomas_complete':
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.doubtingThomas = { status: 'complete', ...event.data };
+            }));
+            break;
+
           case 'cost_summary':
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.costSummary = event.data;
@@ -788,7 +800,9 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             }));
             break;
           case 'doubting_thomas_complete':
-            // DT is informational during resume
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.doubtingThomas = { status: 'complete', ...event.data };
+            }));
             break;
           case 'complete':
             loadConversations();

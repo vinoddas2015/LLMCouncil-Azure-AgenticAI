@@ -129,16 +129,16 @@ export default function MemoryPanel({ isOpen, onClose }) {
           ) : memories.length === 0 ? (
             <div className="memory-empty">
               {showUnlearned
-                ? `No unlearned ${TIER_META[activeTier]?.label.toLowerCase()} memories. Use the 🚫 Unlearn button on any memory to exclude it from future council deliberations.`
+                ? <span>No unlearned {TIER_META[activeTier]?.label.toLowerCase()} memories found. Expand any memory card and click <span className="mem-btn-ref unlearn">🚫 Unlearn</span> to exclude it from future council deliberations.</span>
                 : `No ${TIER_META[activeTier]?.label.toLowerCase()} memories yet. Council decisions will appear here after deliberations.`
               }
             </div>
           ) : (
             <>
               {showUnlearned && stats && (stats[activeTier]?.unlearned ?? 0) === 0 && (
-                <div className="memory-empty" style={{ padding: '12px 20px', fontSize: '12px' }}>
-                  No unlearned entries in {TIER_META[activeTier]?.label.toLowerCase()} memory.
-                  Showing all active memories. Use the 🚫 Unlearn button below to mark entries.
+                <div className="memory-hint-bar">
+                  No unlearned entries in {TIER_META[activeTier]?.label.toLowerCase()} memory — all items below are active.
+                  Expand any card and click <span className="mem-btn-ref unlearn">🚫 Unlearn</span> to exclude it.
                 </div>
               )}
               {memories.map((m) => (

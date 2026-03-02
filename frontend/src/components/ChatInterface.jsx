@@ -8,6 +8,7 @@ import TokenBurndown from './TokenBurndown';
 import LearnUnlearn from './LearnUnlearn';
 import EnhancePrompt from './EnhancePrompt';
 import AudioInput from './AudioInput';
+import DoubtingThomas from './DoubtingThomas';
 import { api } from '../api';
 import './ChatInterface.css';
 
@@ -524,6 +525,9 @@ export default function ChatInterface({
                   <Suspense fallback={<StageFallback />}>
                     {msg.stage3 && <Stage3 finalResponse={msg.stage3} evidence={msg.evidence || msg.metadata?.evidence} />}
                   </Suspense>
+
+                  {/* Doubting Thomas — Adversarial Self-Reflection */}
+                  {msg.doubtingThomas && <DoubtingThomas data={msg.doubtingThomas} />}
 
                   {/* Empty assistant message fallback — pipeline errored or data missing */}
                   {!msg.stage1 && !msg.stage2 && !msg.stage3

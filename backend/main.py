@@ -2437,10 +2437,10 @@ Now provide your complete evaluation:"""
                             f"[Doubting Thomas] Revised synthesis applied — "
                             f"{dt_result['defect_count']} defect(s) fixed"
                         )
-                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False)}})}\n\n"
+                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False), 'criteria': dt_result.get('criteria', []), 'fix_instructions': dt_result.get('fix_instructions', []), 'critique': dt_result.get('critique') or None}})}\n\n"
                 except Exception as e:
                     logger.warning(f"[Doubting Thomas] Non-fatal error: {e}")
-                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'error': str(e)}})}\n\n"
+                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'criteria': [], 'fix_instructions': [], 'error': str(e)}})}\n\n"
             else:
                 # Speed mode: emit skipped events so frontend doesn't wait
                 yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'skipped': True}})}\n\n"
@@ -3022,10 +3022,10 @@ Now provide your complete evaluation:"""
                     if dt_result.get("fix_applied"):
                         stage3_result["response"] = dt_result["revised_response"]
                         cost_tracker.record("doubting_thomas", user_chairman_model or "chairman", dt_result.get("usage"))
-                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False)}})}\n\n"
+                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False), 'criteria': dt_result.get('criteria', []), 'fix_instructions': dt_result.get('fix_instructions', []), 'critique': dt_result.get('critique') or None}})}\n\n"
                 except Exception as e:
                     logger.warning(f"[Resume-DT] Non-fatal error: {e}")
-                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False}})}\n\n"
+                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'criteria': [], 'fix_instructions': [], 'error': str(e)}})}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'skipped': True}})}\n\n"
 
