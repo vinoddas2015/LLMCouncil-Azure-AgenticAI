@@ -201,6 +201,29 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
     try {
       const conv = await api.getConversation(id);
       setCurrentConversation(conv);
+
+      // ── Auto-retry: detect stale failed assistant messages ──────────
+      // If the last message is an assistant message with NO stage data,
+      // it was persisted during a backend failure (e.g. crash).  Find
+      // the preceding user query and auto-retry it.
+      if (conv?.messages?.length >= 2) {
+        const lastMsg = conv.messages[conv.messages.length - 1];
+        if (
+          lastMsg.role === 'assistant' &&
+          !lastMsg.stage1 && !lastMsg.stage2 && !lastMsg.stage3 &&
+          !lastMsg.rejected // don't retry intentional rejections
+        ) {
+          // Find the user message immediately before the failed assistant
+          const userMsg = conv.messages[conv.messages.length - 2];
+          if (userMsg?.role === 'user' && userMsg.content) {
+            console.info('[Auto-retry] Detected stale failed response, retrying:', userMsg.content.substring(0, 80));
+            // Small delay so the conversation renders first, then retry
+            setTimeout(() => {
+              retryFailedMessageInConversation(id, conv.messages.length - 1, userMsg.content);
+            }, 500);
+          }
+        }
+      }
     } catch (error) {
       console.error('Failed to load conversation:', error);
       setErrorBanner(`Failed to load conversation: ${error.message}`);
@@ -678,6 +701,43 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
     }
   };
 
+  // ── Retry a stale/failed assistant message ─────────────────────
+  // Removes the empty assistant message, re-sends the preceding user query.
+  // Called both by the manual Retry button (via index) and the auto-retry
+  // on conversation load (via direct args).
+  const retryFailedMessageInConversation = (convId, assistantIndex, userContent) => {
+    if (isLoading) return; // don't double-queue
+
+    // Remove the failed assistant message from local state
+    setCurrentConversation((prev) => {
+      if (!prev) return prev;
+      const messages = prev.messages.filter((_, i) => i !== assistantIndex);
+      return { ...prev, messages };
+    });
+
+    // Re-send the user query through the normal pipeline
+    // Tiny delay so the state update flushes before handleSendMessage reads it
+    setTimeout(() => {
+      handleSendMessage(userContent);
+    }, 100);
+  };
+
+  // Manual retry from the ChatInterface Retry button
+  const handleRetryFailedMessage = (assistantIndex) => {
+    if (!currentConversation?.messages) return;
+    // The user message is immediately before the failed assistant
+    const userMsg = currentConversation.messages[assistantIndex - 1];
+    if (userMsg?.role !== 'user' || !userMsg.content) {
+      console.warn('[Retry] Could not find user message to retry at index', assistantIndex - 1);
+      return;
+    }
+    retryFailedMessageInConversation(
+      currentConversationId,
+      assistantIndex,
+      userMsg.content
+    );
+  };
+
   // ── Self-healing resume: pick up from last checkpoint ──────────
   const handleResume = async () => {
     const convId = resumeConvIdRef.current || currentConversationId;
@@ -905,6 +965,7 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             conversation={currentConversation}
             onSendMessage={handleSendMessage}
             onResume={handleResume}
+            onRetryFailed={handleRetryFailedMessage}
             isLoading={isLoading}
             preferences={preferences}
             onUpdatePreferences={handleSavePreferences}

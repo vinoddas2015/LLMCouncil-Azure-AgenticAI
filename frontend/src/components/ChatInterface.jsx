@@ -100,6 +100,7 @@ export default function ChatInterface({
   conversation,
   onSendMessage,
   onResume,
+  onRetryFailed,
   isLoading,
   preferences,
   onUpdatePreferences,
@@ -536,7 +537,18 @@ export default function ChatInterface({
                     && !isLoading && (
                     <div className="pipeline-error-state" role="alert">
                       <span className="pipeline-error-icon">⚠️</span>
-                      <span>Council response unavailable — the pipeline may have encountered an error. Try sending your question again.</span>
+                      <div className="pipeline-error-body">
+                        <span>Council response unavailable — the pipeline may have encountered an error.</span>
+                        {onRetryFailed && (
+                          <button
+                            className="pipeline-retry-button"
+                            onClick={() => onRetryFailed(index)}
+                            aria-label="Retry this query"
+                          >
+                            🔄 Retry
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
 

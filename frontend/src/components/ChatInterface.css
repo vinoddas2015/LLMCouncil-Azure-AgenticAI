@@ -570,7 +570,7 @@
 /* ── Pipeline Error State (empty assistant message) ─────── */
 .pipeline-error-state {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   padding: 14px 18px;
   margin: 12px 0;
@@ -584,6 +584,37 @@
 .pipeline-error-icon {
   font-size: 1.3rem;
   flex-shrink: 0;
+}
+.pipeline-error-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pipeline-retry-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 1px solid var(--accent-primary);
+  border-radius: 8px;
+  background: var(--accent-primary);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+  width: fit-content;
+}
+.pipeline-retry-button:hover {
+  background: var(--accent-hover, #6d5dd3);
+  transform: translateY(-1px);
+}
+.pipeline-retry-button:focus-visible {
+  outline: 3px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.pipeline-retry-button:active {
+  transform: translateY(0);
 }
 
 /* ── Self-healing Resume Banner ─────────────────────────── */
