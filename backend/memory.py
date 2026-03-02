@@ -712,17 +712,17 @@ class MemoryManager:
         return {
             "semantic": {
                 "total": len(sem_all),
-                "active": sum(1 for e in sem_all if e.get("status") == "active"),
+                "active": sum(1 for e in sem_all if e.get("status", "active") != "unlearned"),
                 "unlearned": sum(1 for e in sem_all if e.get("status") == "unlearned"),
             },
             "episodic": {
                 "total": len(epi_all),
-                "active": sum(1 for e in epi_all if e.get("status") == "active"),
+                "active": sum(1 for e in epi_all if e.get("status", "active") != "unlearned"),
                 "unlearned": sum(1 for e in epi_all if e.get("status") == "unlearned"),
             },
             "procedural": {
                 "total": len(proc_all),
-                "active": sum(1 for e in proc_all if e.get("status") == "active"),
+                "active": sum(1 for e in proc_all if e.get("status", "active") != "unlearned"),
                 "unlearned": sum(1 for e in proc_all if e.get("status") == "unlearned"),
             },
         }

@@ -108,6 +108,11 @@ export default function MemoryPanel({ isOpen, onClose }) {
               onChange={(e) => setShowUnlearned(e.target.checked)}
             />
             Show unlearned
+            {stats && (stats[activeTier]?.unlearned ?? 0) > 0 && (
+              <span className="memory-unlearned-count">
+                ({stats[activeTier].unlearned})
+              </span>
+            )}
           </label>
           <span className="memory-tier-desc">
             {TIER_META[activeTier]?.desc}
@@ -123,22 +128,32 @@ export default function MemoryPanel({ isOpen, onClose }) {
             </div>
           ) : memories.length === 0 ? (
             <div className="memory-empty">
-              No {TIER_META[activeTier]?.label.toLowerCase()} memories yet.
-              Council decisions will appear here after deliberations.
+              {showUnlearned
+                ? `No unlearned ${TIER_META[activeTier]?.label.toLowerCase()} memories. Use the 🚫 Unlearn button on any memory to exclude it from future council deliberations.`
+                : `No ${TIER_META[activeTier]?.label.toLowerCase()} memories yet. Council decisions will appear here after deliberations.`
+              }
             </div>
           ) : (
-            memories.map((m) => (
-              <MemoryCard
-                key={m.id}
-                memory={m}
-                tier={activeTier}
-                expanded={expandedId === m.id}
-                onToggle={() => setExpandedId(expandedId === m.id ? null : m.id)}
-                onLearn={() => handleDecision('learn', activeTier, m.id)}
-                onUnlearn={() => handleDecision('unlearn', activeTier, m.id)}
-                onDelete={() => handleDelete(activeTier, m.id)}
-              />
-            ))
+            <>
+              {showUnlearned && stats && (stats[activeTier]?.unlearned ?? 0) === 0 && (
+                <div className="memory-empty" style={{ padding: '12px 20px', fontSize: '12px' }}>
+                  No unlearned entries in {TIER_META[activeTier]?.label.toLowerCase()} memory.
+                  Showing all active memories. Use the 🚫 Unlearn button below to mark entries.
+                </div>
+              )}
+              {memories.map((m) => (
+                <MemoryCard
+                  key={m.id}
+                  memory={m}
+                  tier={activeTier}
+                  expanded={expandedId === m.id}
+                  onToggle={() => setExpandedId(expandedId === m.id ? null : m.id)}
+                  onLearn={() => handleDecision('learn', activeTier, m.id)}
+                  onUnlearn={() => handleDecision('unlearn', activeTier, m.id)}
+                  onDelete={() => handleDelete(activeTier, m.id)}
+                />
+              ))}
+            </>
           )}
         </div>
       </div>

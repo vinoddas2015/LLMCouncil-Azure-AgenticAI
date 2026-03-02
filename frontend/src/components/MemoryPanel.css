@@ -129,6 +129,15 @@
   align-items: center;
   gap: 6px;
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.memory-unlearned-count {
+  font-size: 11px;
+  color: var(--error);
+  font-weight: 600;
+  margin-left: 2px;
 }
 
 .memory-toggle-label input[type="checkbox"] {
@@ -145,11 +154,32 @@
 /* ── List ── */
 .memory-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 8px 24px 24px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  scroll-behavior: smooth;
+}
+
+/* Scrollbar styling */
+.memory-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.memory-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.memory-list::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 3px;
+}
+
+.memory-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .memory-loading,
@@ -173,7 +203,8 @@
   border: 1px solid var(--border-default);
   border-radius: 10px;
   overflow: hidden;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, opacity 0.2s;
+  flex-shrink: 0;
 }
 
 .memory-card:hover {
@@ -181,8 +212,30 @@
 }
 
 .memory-card.unlearned {
-  opacity: 0.55;
+  opacity: 0.5;
   border-color: var(--error);
+  background: rgba(248, 113, 113, 0.04);
+  position: relative;
+}
+
+.memory-card.unlearned::after {
+  content: 'UNLEARNED';
+  position: absolute;
+  top: 8px;
+  right: 50px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: var(--error);
+  background: rgba(248, 113, 113, 0.12);
+  padding: 2px 6px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.memory-card.unlearned .memory-card-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--error);
 }
 
 .memory-card-header {
@@ -192,6 +245,8 @@
   padding: 12px 14px;
   cursor: pointer;
   user-select: none;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .memory-card-status {
@@ -201,10 +256,13 @@
 
 .memory-card-title {
   flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
   word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: normal;
   line-height: 1.4;
 }
 
@@ -229,6 +287,8 @@
 .memory-card-body {
   padding: 0 14px 14px;
   border-top: 1px solid var(--border-default);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .memory-field {
@@ -236,6 +296,8 @@
   font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .memory-field strong {
