@@ -76,6 +76,17 @@ deploy/smoketest_result.txt
 deploy/test_data_creation_results.txt
 deploy/validate_result.txt
 
+# ── Deploy ZIPs & temp scripts ───────────────────────────────
+*_deploy*.zip
+create_frontend_zip*.py
+fix_zip.py
+frontend/build_output.txt
+
+# ── Health / speech / debug logs ─────────────────────────────
+health*.txt
+speech_*.json
+speech_settings_check.txt
+
 # ── Deployment staging directories ──────────────────────
 deploy_backend_staging/
 deploy_frontend_staging/
