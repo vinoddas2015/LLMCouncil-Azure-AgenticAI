@@ -595,6 +595,8 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             console.warn('Prompt rejected:', event.data?.category);
             setIsLoading(false);
             setActiveSessionId(null);
+            // Reload sidebar to pick up title + context tags
+            loadConversations();
             // Show the rejection as a system message in the assistant slot
             streamUpdate((prev) => {
               const messages = [...prev.messages];

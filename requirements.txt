@@ -30,6 +30,9 @@ azure-storage-blob>=12.19.0
 azure-identity>=1.15.0
 azure-cosmos>=4.7.0
 
+# Azure Cache for Redis (memory recall acceleration, Enterprise tier)
+redis[hiredis]>=5.0.0,<6.0.0
+
 # Document text extraction (attachments)
 PyPDF2>=3.0.0,<4.0.0
 python-docx>=1.1.0,<2.0.0

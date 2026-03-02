@@ -92,6 +92,15 @@ COSMOS_CONVERSATIONS_CONTAINER = os.getenv("COSMOS_CONVERSATIONS_CONTAINER", "co
 COSMOS_MEMORY_CONTAINER = os.getenv("COSMOS_MEMORY_CONTAINER", "memory")
 COSMOS_SKILLS_CONTAINER = os.getenv("COSMOS_SKILLS_CONTAINER", "skills")
 
+# ── Azure Cache for Redis (memory recall acceleration) ────────────────────
+# Enterprise/Enterprise Flash with HA + data persistence
+REDIS_HOST = os.getenv("REDIS_HOST", "")          # e.g. llmcouncil-redis.eastus.redisenterprise.cache.azure.net
+REDIS_PORT = int(os.getenv("REDIS_PORT", "10000"))  # Enterprise uses 10000
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
+REDIS_SSL = os.getenv("REDIS_SSL", "true").lower() in ("1", "true", "yes")
+REDIS_SEARCH_TTL = int(os.getenv("REDIS_SEARCH_TTL", "300"))   # 5 min for search results
+REDIS_DOC_TTL = int(os.getenv("REDIS_DOC_TTL", "600"))         # 10 min for individual docs
+
 # ── Entra ID (Azure AD) SSO — JWT validation ─────────────────────────────
 # These are used by the backend to validate Bearer tokens issued by MSAL.
 ENTRA_TENANT_ID = os.getenv("ENTRA_TENANT_ID", "fcb2b37b-5da0-466b-9b83-0014b67a7c78")

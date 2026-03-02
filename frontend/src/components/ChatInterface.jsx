@@ -5,6 +5,7 @@ const Stage2 = lazy(() => import('./Stage2'));
 const Stage3 = lazy(() => import('./Stage3'));
 import InfographicPanel from './InfographicPanel';
 import TokenBurndown from './TokenBurndown';
+import PipelineTiming from './PipelineTiming';
 import LearnUnlearn from './LearnUnlearn';
 import EnhancePrompt from './EnhancePrompt';
 import AudioInput from './AudioInput';
@@ -560,6 +561,14 @@ export default function ChatInterface({
 
                   {/* Cost / Token Burndown */}
                   {(msg.costSummary || msg.metadata?.cost_summary) && <TokenBurndown costSummary={msg.costSummary || msg.metadata?.cost_summary} />}
+
+                  {/* Pipeline Timing Diagnostics */}
+                  {(msg.costSummary?.timing || msg.metadata?.cost_summary?.timing) && (
+                    <PipelineTiming
+                      timing={msg.costSummary?.timing || msg.metadata?.cost_summary?.timing}
+                      redisCache={msg.costSummary?.redis_cache || msg.metadata?.cost_summary?.redis_cache}
+                    />
+                  )}
 
                   {/* Memory Learn/Unlearn Controls */}
                   {(msg.memoryLearning || msg.metadata?.memory_learning) && (

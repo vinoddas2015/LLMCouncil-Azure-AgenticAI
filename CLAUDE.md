@@ -66,6 +66,16 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - Assistant messages contain: `{role, stage1, stage2, stage3}`
 - Note: metadata (label_to_model, aggregate_rankings) is NOT persisted to storage, only returned via API
 
+**`pipeline_timer.py`** — End-to-End Pipeline Timing Instrumentation
+- `PipelineTimer` class with `start(name)`, `stop(name)`, `record_model(stage, model, ms)`, `summary()`
+- Tracks 16 named spans: prompt_guard, memory_recall, stage1, title_generation, context_classify, stage2, evidence_retrieval, grounding_compute, stage3_streaming, stage3_fallback, ca_validation, doubting_thomas, citation_enrich, citation_validate, agent_team, learning
+- Per-model latency recording within stage1/stage2 (individual model API call durations)
+- Provider-level aggregation: `bayer_mygenassist` (models without `google/` prefix) vs `google_direct` (`google/*` models)
+- Distribution percentages, bottleneck detection (stage with highest % of total time)
+- Slowest model per stage identification
+- Summary emitted within `cost_summary` SSE event as `timing` field
+- Integrated into `main.py` event_generator with `time.perf_counter()` wall-clock measurements
+
 **`grounding.py`** — Bias-Free Grounding Score Engine + RAGAS Alignment
 - Hybrid Verbalized Sampling + Synthetic Math scoring
 - Pharma-specific safety metrics: Correctness, Precision, Recall, F1 from TP/FP/FN confusion matrix
@@ -149,19 +159,33 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - Env vars: `ENTRA_SSO_ENABLED`, `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`
 
 **`agents.py`** — Agent Team (Post-Pipeline Intelligence)
-- 12 specialised async agents (9 core + 3 VP-mode) that analyse council output in parallel:
-  - 🔬 Research Analyst — topic coverage, data density, evidence breadth
-  - 🛡️ Fact Checker — grounding validation, hallucination detection (TP/FP/FN)
-  - ⚠️ Risk Assessor — safety signals, regulatory compliance flags
-  - 🔍 Pattern Scout — consensus detection, recurring themes, rubric trends
-  - 💡 Insight Synthesizer — cross-model analysis, novel connections, evidence gaps
-  - 📊 Quality Auditor — rubric scores, completeness, cost efficiency
-  - 🔗 Citation Supervisor — validates REFERENCES section, enriches plain-text refs with PubMed links, detects orphan tags & DOIs
-  - 🧰 Skills Manager — monitors 28-skill evidence pipeline health, diversity analysis, performance benchmarking
-  - 🧠 Memory Orchestrator — orchestrates 3-tier memory (Semantic/Episodic/Procedural), drift detection, CA trend analysis
-  - 📈 Market Positioning — VP-mode: competitive landscape & differentiation
-  - 🏥 Clinical Value — VP-mode: clinical evidence strength & safety profile
-  - 📣 Messaging Strategist — VP-mode: communication strategy & audience targeting
+- 21 specialised async agents (9 core + 3 VP-mode + 6 PI-mode + 3 pipeline) that analyse council output in parallel:
+  - **Core agents** (always active):
+    - 🔬 Research Analyst — topic coverage, data density, evidence breadth
+    - 🛡️ Fact Checker — grounding validation, hallucination detection (TP/FP/FN)
+    - ⚠️ Risk Assessor — safety signals, regulatory compliance flags
+    - 🔍 Pattern Scout — consensus detection, recurring themes, rubric trends
+    - 💡 Insight Synthesizer — cross-model analysis, novel connections, evidence gaps
+    - 📊 Quality Auditor — rubric scores, completeness, cost efficiency
+    - 🔗 Citation Supervisor — validates REFERENCES section, enriches plain-text refs with PubMed links, detects orphan tags & DOIs
+    - 🧰 Skills Manager — monitors 28-skill evidence pipeline health, diversity analysis, performance benchmarking
+    - 🧠 Memory Orchestrator — orchestrates 3-tier memory (Semantic/Episodic/Procedural), drift detection, CA trend analysis
+  - **VP-mode agents** (value_proposition queries):
+    - 📈 Market Positioning — competitive landscape & differentiation
+    - 🏥 Clinical Value — clinical evidence strength & safety profile
+    - 📣 Messaging Strategist — communication strategy & audience targeting
+  - **Pharma Intelligence agents** (domain keyword auto-detection):
+    - 🕵️ Competitive Intelligence — pipeline landscape, competitor analysis
+    - ⚖️ Compliance — legal & promotional compliance assessment
+    - 📰 PubWatch — publication monitoring, literature surveillance
+    - 💰 Claim Impact — Rx uplift potential, claim substantiation
+    - 🏛️ Market Access — payer/HTA landscape, reimbursement strategy
+    - 💊 Product Expert — product-specific knowledge (ATTR-CM/PN)
+  - **Pipeline agents** (campaign/education/performance — auto-activated in pharma_pipeline mode):
+    - 🎨 Creative Campaign & PR — headline readiness, multi-channel adaptation, PR language, quotable snippets
+    - 🎓 Medical Education & Training — learning objectives, scientific depth, HCP training readiness, MSL dialogue support
+    - 📊 Performance & Analytics — LLM visibility, favorability/sentiment, entity density, citation authority
+- **Query modes**: `detect_query_mode()` returns `"value_proposition"` | `"pharma_pipeline"` (3+ domains) | `"pharma_intel"` (1+ domains) | `"standard"`
 - `enrich_stage3_citations()` — utility called in SSE pipeline BEFORE `stage3_complete` emission; auto-wraps italic article titles in PubMed search links, linkifies DOIs/PMIDs, and handles bare URLs
 - `run_agent_team()` orchestrates all agents via `asyncio.gather` (non-fatal)
 - Each agent returns `{agent_id, role, icon, summary, confidence, signals[], metadata, timestamp}`
@@ -221,6 +245,15 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 **`components/GroundingScore.jsx`**
 - Circular grounding score bubble with per-criteria breakdown
 - `React.memo` wrapped
+
+**`components/PipelineTiming.jsx`** — Pipeline Timing Diagnostics Dashboard
+- Collapsible card showing total pipeline duration, bottleneck identification, stage waterfall with horizontal bars
+- Per-stage expandable model breakdowns (click + to drill into individual model latencies)
+- Provider comparison: side-by-side Bayer myGenAssist (Azure-hosted) vs Google AI Studio (Direct) cards
+- Slowest model per stage table
+- Color-coded waterfall bars per stage, bottleneck row highlighted in amber
+- 🏢 / 🌐 icons differentiate Azure-routed vs Google-direct models
+- Data sourced from `costSummary.timing` (emitted in `cost_summary` SSE event)
 
 **ThemeContext.jsx**
 - React context providing `theme` ('dark'|'light'), `toggleTheme()`, `setTheme()`
@@ -288,6 +321,22 @@ This strict format allows reliable parsing while still getting thoughtful evalua
 - **Memory management**: also uses Cosmos DB (container: `memory`, partition: `/collection`) when configured
   - `CosmosDBBackend` in `memory_store.py` implements the `MemoryStoreBackend` ABC
   - Falls back to `LocalJSONBackend` (file-based) when Cosmos is not configured
+  - **`RedisCacheBackend`** — write-through Redis cache wrapping CosmosDBBackend
+    - Azure Cache for Redis Enterprise E10, 3-zone HA, AOF persistence (1s), Redis 7.4
+    - Host: `llmcouncil-redis.eastus.redisenterprise.cache.azure.net:10000`
+    - Uses `RedisCluster` client (OSS Cluster mode for automatic MOVED/ASK redirection)
+    - Cache key schema: `mem:{user_hash}:{collection}:{key}` (docs), `search:{user_hash}:{collection}:{query_md5}:{limit}` (searches)
+    - READ path: Redis → miss → Cosmos DB → backfill Redis
+    - WRITE path: Cosmos first (source of truth) → update Redis → invalidate search caches
+    - DELETE: Cosmos → invalidate Redis doc + search caches
+    - TTL: search results 5min (`REDIS_SEARCH_TTL`), documents 10min (`REDIS_DOC_TTL`)
+    - Performance: ~5ms cache hits vs 200-800ms Cosmos queries (40-160× improvement)
+    - Graceful degradation: all Redis failures are non-fatal — falls back to direct Cosmos
+    - `scan_iter()` used for pattern-based invalidation (cluster-aware)
+    - Pipeline operations for batch writes (cluster-aware)
+    - Stats reported in cost_summary SSE event (`redis_cache` field)
+    - Health probe integration: `check_redis_cache()` in health_probe.py (7th subsystem)
+    - Env vars: `REDIS_HOST`, `REDIS_PORT` (10000), `REDIS_PASSWORD`, `REDIS_SSL` (true), `REDIS_SEARCH_TTL` (300), `REDIS_DOC_TTL` (600)
 
 ### Error Handling Philosophy
 - Continue with successful responses if some models fail (graceful degradation)
@@ -438,6 +487,7 @@ The entire flow is async/parallel where possible to minimize latency.
 - **App Service Plan**: `asp-llmcouncil` (Linux, S2 Standard tier, shared by both apps)
 - **Backend**: `llmcouncil-backend.azurewebsites.net` — Python/FastAPI, Gunicorn
 - **Frontend**: `llmcouncil-frontend.azurewebsites.net` — Node.js 24 LTS, Express 5 SPA server
+- **Redis Enterprise**: `llmcouncil-redis.eastus.redisenterprise.cache.azure.net` — Enterprise E10, capacity 2, 3-zone HA, AOF persistence 1s, port 10000, Redis 7.4, NoEviction policy
 - **Bayer Policy**: All webapps MUST use `--https-only true` (RequestDisallowedByPolicy otherwise)
 
 ### Frontend Deployment (`frontend/`)

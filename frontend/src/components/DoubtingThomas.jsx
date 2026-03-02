@@ -25,7 +25,7 @@ function useDTSummary(data) {
       return { headline: 'Running adversarial self-reflection…', badge: 'Running', badgeClass: 'running' };
     }
     if (data.skipped) {
-      return { headline: 'Skipped — response too short or Speed Mode enabled', badge: 'Skipped', badgeClass: 'skipped' };
+      return { headline: 'Skipped — response too short for meaningful self-reflection', badge: 'Skipped', badgeClass: 'skipped' };
     }
     if (data.error) {
       return { headline: `Error: ${data.error}`, badge: 'Error', badgeClass: 'skipped' };

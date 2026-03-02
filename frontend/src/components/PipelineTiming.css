@@ -1,0 +1,425 @@
+/* ── Pipeline Timing Diagnostics Card ── */
+.timing-card {
+  background: rgba(96, 165, 250, 0.06);
+  border: 2px solid rgba(96, 165, 250, 0.20);
+  border-radius: 12px;
+  margin-top: 12px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.timing-card:hover {
+  border-color: rgba(96, 165, 250, 0.40);
+}
+
+/* ── Header ── */
+.timing-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  cursor: pointer;
+  user-select: none;
+  flex-wrap: wrap;
+}
+.timing-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+}
+.timing-headline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.timing-total {
+  font-size: 20px;
+  font-weight: 800;
+  font-family: monospace;
+  color: var(--text-primary);
+}
+.timing-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+/* Bottleneck badge in header */
+.timing-bottleneck {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 12px;
+}
+.timing-bottleneck-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+.timing-bottleneck-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f59e0b;
+}
+
+/* Provider mini badges in header */
+.timing-providers-mini {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.provider-badge {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: monospace;
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.provider-badge.bayer {
+  background: rgba(96, 165, 250, 0.12);
+  color: #60a5fa;
+}
+.provider-badge.google {
+  background: rgba(52, 211, 153, 0.12);
+  color: #34d399;
+}
+
+.timing-toggle {
+  background: none;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-muted);
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: color 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+}
+.timing-toggle:hover {
+  color: #60a5fa;
+  border-color: #60a5fa;
+}
+
+/* ── Details ── */
+.timing-details {
+  padding: 0 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.timing-section {
+  border-top: 1px solid var(--border-default);
+  padding-top: 16px;
+}
+.timing-section-title {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+.timing-section-desc {
+  margin: -6px 0 12px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── Waterfall Chart ── */
+.timing-waterfall {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.waterfall-row {
+  display: grid;
+  grid-template-columns: 200px 1fr 70px 40px 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.waterfall-row:hover {
+  background: rgba(96, 165, 250, 0.06);
+}
+.waterfall-row.bottleneck {
+  background: rgba(245, 158, 11, 0.08);
+}
+.waterfall-row.bottleneck:hover {
+  background: rgba(245, 158, 11, 0.14);
+}
+.waterfall-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bn-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #f59e0b;
+}
+.waterfall-bar-track {
+  height: 14px;
+  border-radius: 4px;
+  background: var(--bg-secondary, rgba(255,255,255,0.05));
+  overflow: hidden;
+}
+.waterfall-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+  min-width: 3px;
+}
+.waterfall-time {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: monospace;
+  color: var(--text-primary);
+  text-align: right;
+}
+.waterfall-pct {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: monospace;
+  text-align: right;
+}
+.waterfall-expand-btn {
+  background: none;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  color: var(--text-muted);
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  transition: color 0.15s, border-color 0.15s;
+}
+.waterfall-expand-btn:hover {
+  color: #60a5fa;
+  border-color: #60a5fa;
+}
+
+/* ── Model breakdown within waterfall ── */
+.waterfall-models {
+  grid-column: 1 / -1;
+  padding: 6px 0 6px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.model-timing-row {
+  display: grid;
+  grid-template-columns: 180px 1fr 70px;
+  align-items: center;
+  gap: 8px;
+}
+.model-timing-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.model-timing-name.google { color: #34d399; }
+.model-timing-name.bayer { color: #60a5fa; }
+
+.model-timing-bar-track {
+  height: 8px;
+  border-radius: 3px;
+  background: var(--bg-secondary, rgba(255,255,255,0.04));
+  overflow: hidden;
+}
+.model-timing-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: rgba(96, 165, 250, 0.5);
+  min-width: 3px;
+}
+.model-timing-value {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: monospace;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+/* ── Provider Comparison ── */
+.provider-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.provider-card {
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.provider-card.bayer {
+  background: rgba(96, 165, 250, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.20);
+}
+.provider-card.google {
+  background: rgba(52, 211, 153, 0.08);
+  border: 1px solid rgba(52, 211, 153, 0.20);
+}
+.provider-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.provider-icon {
+  font-size: 18px;
+}
+.provider-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.provider-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.08);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  margin-left: auto;
+}
+.provider-avg {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.provider-avg-value {
+  font-size: 22px;
+  font-weight: 800;
+  font-family: monospace;
+  color: var(--text-primary);
+}
+.provider-avg-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.provider-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.provider-model-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+/* ── Slowest Models ── */
+.slowest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.slowest-row {
+  display: grid;
+  grid-template-columns: 200px 1fr 80px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.slowest-stage {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.slowest-model {
+  font-size: 12px;
+  font-weight: 700;
+  color: #f59e0b;
+  font-family: monospace;
+}
+.slowest-time {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: monospace;
+  color: var(--text-primary);
+  text-align: right;
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .waterfall-row {
+    grid-template-columns: 140px 1fr 60px 36px 24px;
+    gap: 4px;
+  }
+  .provider-comparison {
+    grid-template-columns: 1fr;
+  }
+  .timing-header {
+    gap: 10px;
+  }
+  .timing-providers-mini {
+    margin-left: 0;
+  }
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .waterfall-bar-fill {
+    transition: none;
+  }
+}
+
+/* ── Redis Cache Statistics ── */
+.redis-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+.redis-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: rgba(96, 165, 250, 0.06);
+  border-radius: 6px;
+}
+.redis-stat-label {
+  font-size: 13px;
+  color: var(--text-secondary, #94a3b8);
+}
+.redis-stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary, #f2f3f5);
+}
+.redis-stat-value.good {
+  color: #34d399;
+}
+.redis-stat-value.low {
+  color: #f59e0b;
+}
+.redis-stat-value.error {
+  color: #f87171;
+}

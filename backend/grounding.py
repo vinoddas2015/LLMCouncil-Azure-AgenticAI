@@ -384,14 +384,24 @@ def compute_response_grounding_scores(
             display_fp = round(avg_fp)
             display_fn = round(avg_fn)
         else:
-            # BIAS FIX #2: no rank-based fabrication — report zero / unavailable
-            correctness = 0.0
-            precision = 0.0
-            recall = 0.0
-            f1 = 0.0
+            # BIAS FIX #2: no rank-based fabrication — report unavailable (None)
+            # When claim analysis was skipped (e.g. speed mode), emit None
+            # so the frontend hides the section rather than showing misleading 0%.
+            pharma_block = None
             display_tp = 0
             display_fp = 0
             display_fn = 0
+
+        if claim_list:
+            pharma_block = {
+                "correctness": round(correctness * 100, 1),
+                "precision": round(precision * 100, 1),
+                "recall": round(recall * 100, 1),
+                "f1": round(f1 * 100, 1),
+                "tp": display_tp,
+                "fp": display_fp,
+                "fn": display_fn,
+            }
 
         # --- Context Awareness (Catastrophic Forgetting detection) ---
         # Uses SELF-review only: did the model recognise its own claims?
@@ -409,15 +419,7 @@ def compute_response_grounding_scores(
             "model": model,
             "grounding_score": grounding_pct,
             "criteria": {k: round(v * 100, 1) for k, v in blended.items()},
-            "pharma_metrics": {
-                "correctness": round(correctness * 100, 1),
-                "precision": round(precision * 100, 1),
-                "recall": round(recall * 100, 1),
-                "f1": round(f1 * 100, 1),
-                "tp": display_tp,
-                "fp": display_fp,
-                "fn": display_fn,
-            },
+            "pharma_metrics": pharma_block,
             "context_awareness": {
                 "score": round(ctx_awareness * 100, 1) if ctx_awareness is not None else None,
                 "self_tp": s_tp,
@@ -435,9 +437,15 @@ def compute_response_grounding_scores(
     else:
         overall = 0
 
+    # ── Detect if claim analysis was available ─────────────────────
+    claim_analysis_available = any(
+        r["pharma_metrics"] is not None for r in per_response
+    )
+
     return {
         "overall_score": round(overall, 1),
         "per_response": per_response,
+        "claim_analysis_available": claim_analysis_available,
         "criteria_definitions": RUBRIC_CRITERIA,
         "pharma_formulas": {
             "correctness": "TP / (TP + 2×FN + FP)",

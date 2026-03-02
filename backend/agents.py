@@ -704,7 +704,8 @@ def detect_query_mode(user_query: str) -> str:
 
     Returns:
         "value_proposition" — when user seeks VP / competitive / messaging content
-        "pharma_intel"      — when 2+ pharma intelligence domains are detected
+        "pharma_pipeline"   — when 3+ pharma pipeline domains are detected (full pipeline)
+        "pharma_intel"      — when 1+ pharma intelligence domains are detected
         "standard"          — default pharma council mode
     """
     q = user_query.lower()
@@ -723,6 +724,10 @@ def detect_query_mode(user_query: str) -> str:
     # ── Check pharma intelligence domains ──
     pi_domains = detect_pharma_intel_query(q)
     active_domains = [d for d, v in pi_domains.items() if v]
+
+    # 3+ domains → full pharma pipeline (all 7 agents)
+    if len(active_domains) >= 3:
+        return "pharma_pipeline"
     if len(active_domains) >= 1:
         return "pharma_intel"
 
@@ -760,6 +765,26 @@ _PI_AGENT_PATTERNS = {
         r'acoramidis|tafamidis|vyndaqel|vutrisiran|amvuttra|'
         r'eplontersen|wainua|attr.?cm|attr.?pn|transthyretin|'
         r'cardiac\s*amyloid',
+        re.IGNORECASE,
+    ),
+    "campaign": re.compile(
+        r'campaign|press\s*release|PR\s*strategy|communication\s*plan|'
+        r'key\s*message|media\s*brief|sales\s*aid|leave.?behind|'
+        r'social\s*media|congress\s*presentation|brand\s*messaging|'
+        r'headline|creative|channel\s*strategy',
+        re.IGNORECASE,
+    ),
+    "education": re.compile(
+        r'medical\s*education|MSL|training\s*material|slide\s*deck|'
+        r'learning\s*objective|scientific\s*dialogue|HCP\s*training|'
+        r'field\s*medical|advisory\s*board|KOL|key\s*opinion|'
+        r'medical\s*affairs|scientific\s*exchange|same.day',
+        re.IGNORECASE,
+    ),
+    "performance": re.compile(
+        r'performance|analytics|LLM\s*visibility|search\s*optimiz|'
+        r'favorability|sentiment|impact\s*monitor|KPI|'
+        r'real.?time\s*impact|discoverability|search\s*rank',
         re.IGNORECASE,
     ),
 }
@@ -2157,8 +2182,15 @@ async def competitive_intelligence_agent(
     if ci_cites > 0:
         signals.append(_signal("evidence", "success", f"CI Evidence: {ci_cites} Citations", "Competitive intelligence backed by evidence citations."))
 
+    confidence = min(1.0, 0.3 + len(covered) * 0.15 + pipeline_mentions * 0.05)
+
     return _agent_result(
-        "competitive_intelligence", "🎯 Competitive Intelligence", signals,
+        agent_id="competitive_intelligence",
+        role="Competitive Intelligence",
+        icon="🎯",
+        signals=signals,
+        summary=f"{len(covered)} competitors · {pipeline_mentions} pipeline refs · {ci_cites} citations",
+        confidence=confidence,
         metadata={"competitors_covered": list(covered.keys()), "pipeline_mentions": pipeline_mentions, "ci_citations": ci_cites},
     )
 
@@ -2220,8 +2252,15 @@ async def compliance_agent(
             "Response references off-label use. Ensure appropriate disclaimers are present.",
         ))
 
+    confidence = max(0.3, 1.0 - sup_count * 0.15 - (0.3 if benefit_count > safety_count * 3 else 0))
+
     return _agent_result(
-        "compliance", "⚖️ Legal Compliance", signals,
+        agent_id="compliance",
+        role="Legal & Promotional Compliance",
+        icon="⚖️",
+        signals=signals,
+        summary=f"Superiority: {sup_count} · Safety: {safety_count} · Benefits: {benefit_count}",
+        confidence=confidence,
         metadata={"superiority_claims": sup_count, "safety_mentions": safety_count, "benefit_mentions": benefit_count},
     )
 
@@ -2279,8 +2318,15 @@ async def pubwatch_agent(
     if pw_cites > 0:
         signals.append(_signal("evidence", "success", f"PubWatch: {pw_cites} Fresh Citations", "Recent publication monitoring found new evidence."))
 
+    confidence = min(1.0, 0.3 + recent_refs * 0.1 + (0.2 if pw_cites > 0 else 0))
+
     return _agent_result(
-        "pubwatch", "📡 PubWatch", signals,
+        agent_id="pubwatch",
+        role="Scientific Intelligence Monitor",
+        icon="📡",
+        signals=signals,
+        summary=f"{recent_refs} recent refs · {preprint_count} preprints · {pw_cites} PubWatch citations",
+        confidence=confidence,
         metadata={"recent_refs": recent_refs, "preprint_count": preprint_count, "pubwatch_citations": pw_cites},
     )
 
@@ -2338,8 +2384,15 @@ async def claim_impact_agent(
             "Response connects clinical endpoints to commercial impact — suitable for Rx uplift analysis.",
         ))
 
+    confidence = min(1.0, 0.2 + endpoint_count * 0.08 + comm_count * 0.1)
+
     return _agent_result(
-        "claim_impact", "📈 Claim Impact", signals,
+        agent_id="claim_impact",
+        role="Claim Impact & Rx Uplift",
+        icon="📈",
+        signals=signals,
+        summary=f"Endpoints: {endpoint_count} · Commercial: {comm_count}",
+        confidence=confidence,
         metadata={"endpoint_metrics": endpoint_count, "commercial_indicators": comm_count},
     )
 
@@ -2414,8 +2467,15 @@ async def market_access_agent(
             "Response mentions generic or biosimilar competition threats.",
         ))
 
+    confidence = min(1.0, 0.3 + len(covered_hta) * 0.1 + pricing_count * 0.08)
+
     return _agent_result(
-        "market_access", "💰 Market Access", signals,
+        agent_id="market_access",
+        role="Market Access & Pricing",
+        icon="💰",
+        signals=signals,
+        summary=f"HTA: {len(covered_hta)} bodies · Pricing: {pricing_count} · GX: {gx_count}",
+        confidence=confidence,
         metadata={"hta_bodies_covered": covered_hta, "pricing_metrics": pricing_count, "gx_signals": gx_count},
     )
 
@@ -2502,14 +2562,587 @@ async def product_expert_agent(
     if pe_cites > 0:
         signals.append(_signal("evidence", "success", f"Product Expert: {pe_cites} Citations", "Deep molecule evidence from multiple sources."))
 
+    confidence = min(1.0, 0.2 + len(covered_mol) * 0.12 + len(mentioned_trials) * 0.08 + (0.1 if has_stabiliser and has_silencer else 0))
+
     return _agent_result(
-        "product_expert", "🧬 Product Expert", signals,
+        agent_id="product_expert",
+        role="Product Expert",
+        icon="🧬",
+        signals=signals,
+        summary=f"{len(covered_mol)}/4 molecules · {len(mentioned_trials)} trials · Stab: {'✓' if has_stabiliser else '✗'} Sil: {'✓' if has_silencer else '✗'}",
+        confidence=confidence,
         metadata={
             "molecules_covered": list(covered_mol.keys()),
             "mechanism_stabiliser": has_stabiliser,
             "mechanism_silencer": has_silencer,
             "key_trials_mentioned": mentioned_trials,
             "pe_citations": pe_cites,
+        },
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  🎨  Creative Campaign & PR Agent (Pharma Pipeline)                 ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def creative_campaign_agent(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage3_result: Dict[str, Any],
+    evidence_bundle: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    🎨 Creative Campaign & PR Agent — Prepares updated communication
+    resources and messages.
+
+    Evaluates the council output for campaign-readiness: press-release
+    language, headline quality, multi-channel adaptation potential,
+    PR-worthiness of claims, and social media snippet suitability.
+
+    Skills leveraged: PubMed (publication hooks), Endpoints News
+    (industry angle), Semantic Scholar (citation authority).
+    """
+    signals: List[Dict[str, Any]] = []
+    s3 = (stage3_result or {}).get("response", "")
+    s3_lower = s3.lower()
+
+    # ── Headline / Key Message Readiness ────────────────────────────
+    headline_patterns = [
+        r"^#{1,3}\s+.{20,}",                      # Markdown headings
+        r"\*\*[^*]{15,80}\*\*",                    # Bold phrases ≥15 chars
+        r"Key\s+(Message|Finding|Takeaway|Point)",  # Key message markers
+    ]
+    headline_count = sum(
+        len(re.findall(p, s3, re.MULTILINE | re.IGNORECASE))
+        for p in headline_patterns
+    )
+    if headline_count >= 3:
+        signals.append(_signal(
+            "insight", "success",
+            f"Campaign-Ready Headlines ({headline_count} Found)",
+            "Response contains structured headlines suitable for press releases and sales aids.",
+        ))
+    elif headline_count == 0:
+        signals.append(_signal(
+            "insight", "warning",
+            "No Campaign Headlines Detected",
+            "Response lacks bold key messages. Communication materials need clear, quotable headlines.",
+        ))
+    else:
+        signals.append(_signal(
+            "insight", "info",
+            f"Partial Headlines ({headline_count})",
+            "Some key messages present — consider adding 2–3 more for multi-channel use.",
+        ))
+
+    # ── Press Release Language Indicators ───────────────────────────
+    pr_terms = [
+        "announce", "launch", "milestone", "breakthrough", "first-ever",
+        "transformative", "significant", "landmark", "pivotal", "data show",
+        "demonstrated", "data presented at", "congress", "now available",
+        "approved", "expanded indication",
+    ]
+    pr_count = sum(1 for t in pr_terms if t in s3_lower)
+    if pr_count >= 4:
+        signals.append(_signal(
+            "insight", "success",
+            f"Strong PR Language ({pr_count} Indicators)",
+            "Response uses press-release-appropriate language and action verbs.",
+        ))
+    elif pr_count == 0:
+        signals.append(_signal(
+            "insight", "info",
+            "No PR Language Detected",
+            "Response is scientific in tone. Consider adding action-oriented PR framing.",
+        ))
+
+    # ── Multi-Channel Adaptation Potential ──────────────────────────
+    channels = {
+        "Social Media": any(w in s3_lower for w in [
+            "tweet", "post", "hashtag", "social", "linkedin", "x.com",
+        ]) or len(s3) > 200,  # Long enough to extract snippets
+        "Sales Aid": any(w in s3_lower for w in [
+            "one-pager", "sell sheet", "sales aid", "leave-behind",
+            "key visual", "detail aid",
+        ]),
+        "Congress / Event": any(w in s3_lower for w in [
+            "congress", "conference", "symposium", "poster", "presentation",
+            "asco", "esmo", "aha", "aasld", "esc ",
+        ]),
+        "Medical Letter": any(w in s3_lower for w in [
+            "dear doctor", "medical letter", "hcp communication",
+            "field medical", "msl ",
+        ]),
+    }
+    active_channels = [c for c, hit in channels.items() if hit]
+    if active_channels:
+        signals.append(_signal(
+            "insight", "success" if len(active_channels) >= 2 else "info",
+            f"Channel Fit: {', '.join(active_channels)}",
+            f"{len(active_channels)} communication channel(s) applicable based on content analysis.",
+        ))
+    else:
+        signals.append(_signal(
+            "insight", "info",
+            "No Specific Channel Fit Detected",
+            "Content could be adapted for social media, sales aids, congress decks, or medical letters.",
+        ))
+
+    # ── Quotable Snippet Extraction ─────────────────────────────────
+    # Look for short, powerful sentences that could be social media snippets
+    sentences = re.findall(r'[^.!?]*[.!?]', s3)
+    quotable = [s.strip() for s in sentences if 30 <= len(s.strip()) <= 200 and any(
+        w in s.lower() for w in ["significant", "demonstrated", "showed", "reduced",
+                                   "improved", "first", "novel", "breakthrough"]
+    )]
+    if quotable:
+        signals.append(_signal(
+            "insight", "success",
+            f"{len(quotable)} Quotable Snippet(s) Found",
+            f"Best snippet: \"{quotable[0][:120]}{'…' if len(quotable[0]) > 120 else ''}\"",
+        ))
+
+    # ── Evidence for Campaign Claims ────────────────────────────────
+    campaign_cites = 0
+    if evidence_bundle:
+        for c in evidence_bundle.get("citations", []):
+            src = c.get("source", "").lower()
+            if any(s in src for s in ["pubmed", "semanticscholar", "endpoints"]):
+                campaign_cites += 1
+    if campaign_cites >= 3:
+        signals.append(_signal(
+            "evidence", "success",
+            f"Evidence-Backed Campaign: {campaign_cites} Citations",
+            "Campaign claims are supported by literature evidence — suitable for MLR review.",
+        ))
+
+    confidence = min(1.0, 0.25 + headline_count * 0.08 + pr_count * 0.05 +
+                     len(active_channels) * 0.1 + len(quotable) * 0.05)
+
+    return _agent_result(
+        agent_id="creative_campaign",
+        role="Creative Campaign & PR",
+        icon="🎨",
+        signals=signals,
+        summary=f"Headlines: {headline_count} · PR: {pr_count} · Channels: {len(active_channels)} · Snippets: {len(quotable)}",
+        confidence=confidence,
+        metadata={
+            "headline_count": headline_count,
+            "pr_language_count": pr_count,
+            "active_channels": active_channels,
+            "quotable_snippets": len(quotable),
+            "campaign_citations": campaign_cites,
+        },
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  🎓  Medical Education & Training Agent (Pharma Pipeline)           ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def medical_education_agent(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage3_result: Dict[str, Any],
+    grounding_scores: Dict[str, Any],
+    evidence_bundle: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    🎓 Medical Education & Training Agent — Enables confident same-day
+    scientific dialogue.
+
+    Evaluates the council output for medical education suitability:
+    learning-objective alignment, scientific accuracy depth, HCP
+    training readiness, MSL dialogue support, and Q&A preparedness.
+
+    Skills leveraged: PubMed (evidence depth), ClinicalTrials.gov
+    (latest data), OpenFDA (safety labelling), EMA (SmPC alignment).
+    """
+    signals: List[Dict[str, Any]] = []
+    s3 = (stage3_result or {}).get("response", "")
+    s3_lower = s3.lower()
+
+    # ── Learning Objectives Detection ───────────────────────────────
+    learning_markers = [
+        "learning objective", "after reading", "key learning",
+        "educational goal", "upon completion", "understand",
+        "describe", "explain", "differentiate", "compare",
+    ]
+    learning_count = sum(1 for m in learning_markers if m in s3_lower)
+    if learning_count >= 3:
+        signals.append(_signal(
+            "insight", "success",
+            f"Strong Educational Structure ({learning_count} Markers)",
+            "Response includes explicit learning objectives or educational framing.",
+        ))
+    elif learning_count >= 1:
+        signals.append(_signal(
+            "insight", "info",
+            f"Partial Educational Structure ({learning_count} Markers)",
+            "Some educational language present. Consider adding explicit learning objectives.",
+        ))
+    else:
+        signals.append(_signal(
+            "insight", "info",
+            "No Explicit Learning Objectives",
+            "For training materials, add 2–3 clear learning objectives at the start.",
+        ))
+
+    # ── Scientific Depth Assessment ─────────────────────────────────
+    depth_indicators = [
+        "mechanism of action", "pharmacokinetic", "pharmacodynamic",
+        "half-life", "bioavailability", "metabolism", "clearance",
+        "phase ", "clinical trial", "endpoint", "p-value", "hazard ratio",
+        "confidence interval", "nnt", "binding affinity", "ic50", "ec50",
+        "selectivity", "molecular weight", "structure-activity",
+    ]
+    depth_count = sum(1 for d in depth_indicators if d in s3_lower)
+    if depth_count >= 8:
+        signals.append(_signal(
+            "insight", "success",
+            f"High Scientific Depth ({depth_count} Technical Terms)",
+            "Content suitable for specialist HCP education and MSL dialogue.",
+        ))
+    elif depth_count >= 4:
+        signals.append(_signal(
+            "insight", "info",
+            f"Moderate Scientific Depth ({depth_count} Terms)",
+            "Suitable for general HCP education. Specialist training may need more depth.",
+        ))
+    else:
+        signals.append(_signal(
+            "insight", "warning",
+            f"Low Scientific Depth ({depth_count} Terms)",
+            "Content may not support confident scientific dialogue with specialists.",
+        ))
+
+    # ── HCP Training Material Readiness ─────────────────────────────
+    training_elements = {
+        "Q&A Ready": any(w in s3_lower for w in [
+            "question", "answer", "faq", "commonly asked", "objection",
+            "how to respond", "talking point",
+        ]),
+        "Case Studies": any(w in s3_lower for w in [
+            "case study", "patient case", "clinical scenario", "real-world",
+            "case report", "illustrative",
+        ]),
+        "Visual Aids": any(w in s3_lower for w in [
+            "figure", "table", "chart", "diagram", "graph", "illustration",
+            "infographic",
+        ]) or ("| " in s3 and " | " in s3),  # Markdown tables
+        "Safety Briefing": any(w in s3_lower for w in [
+            "black box", "contraindication", "adverse event", "warning",
+            "drug interaction", "precaution", "safety profile",
+        ]),
+        "Dosing Guide": any(w in s3_lower for w in [
+            "dosing", "dose", "titration", "administration", "route",
+            "frequency", "once daily", "twice daily", "mg",
+        ]),
+    }
+    ready_elements = [e for e, hit in training_elements.items() if hit]
+    if len(ready_elements) >= 3:
+        signals.append(_signal(
+            "insight", "success",
+            f"Training-Ready: {', '.join(ready_elements)}",
+            f"{len(ready_elements)}/5 training elements present — suitable for HCP slide deck.",
+        ))
+    elif len(ready_elements) >= 1:
+        missing = [e for e, hit in training_elements.items() if not hit]
+        signals.append(_signal(
+            "insight", "info",
+            f"Partial Training Readiness ({len(ready_elements)}/5)",
+            f"Missing: {', '.join(missing[:3])}.",
+        ))
+    else:
+        signals.append(_signal(
+            "insight", "warning",
+            "Not Training-Ready",
+            "Response lacks Q&A, case studies, visual aids, safety briefing, or dosing info.",
+        ))
+
+    # ── MSL Dialogue Support ────────────────────────────────────────
+    msl_terms = [
+        "msl", "medical science liaison", "field medical",
+        "scientific exchange", "reactive response", "proactive",
+        "congress", "advisory board", "kol", "key opinion leader",
+    ]
+    msl_hits = sum(1 for t in msl_terms if t in s3_lower)
+    if msl_hits >= 2:
+        signals.append(_signal(
+            "insight", "success",
+            f"MSL Dialogue Support ({msl_hits} Indicators)",
+            "Content supports MSL scientific exchanges with KOLs.",
+        ))
+
+    # ── Grounding Adequacy for Education ────────────────────────────
+    overall = grounding_scores.get("overall_score", 0)
+    if overall >= 70:
+        signals.append(_signal(
+            "quality", "success",
+            f"Education-Grade Grounding: {overall:.0f}%",
+            "Grounding score meets pharmaceutical education accuracy requirements.",
+        ))
+    elif overall >= 50:
+        signals.append(_signal(
+            "quality", "warning",
+            f"Borderline Grounding for Education: {overall:.0f}%",
+            "Grounding may be insufficient for formal training materials. Manual review needed.",
+        ))
+    else:
+        signals.append(_signal(
+            "quality", "critical",
+            f"Insufficient Grounding for Education: {overall:.0f}%",
+            "Grounding too low for educational use. Do NOT use in training materials without verification.",
+        ))
+
+    # ── Evidence for Education ──────────────────────────────────────
+    edu_cites = 0
+    if evidence_bundle:
+        for c in evidence_bundle.get("citations", []):
+            src = c.get("source", "").lower()
+            if any(s in src for s in ["pubmed", "clinicaltrials", "fda", "ema"]):
+                edu_cites += 1
+    if edu_cites >= 3:
+        signals.append(_signal(
+            "evidence", "success",
+            f"Education Evidence: {edu_cites} Authoritative Citations",
+            "Training content is supported by regulatory and peer-reviewed sources.",
+        ))
+
+    confidence = min(1.0, 0.2 + depth_count * 0.04 + len(ready_elements) * 0.1 +
+                     (overall / 100) * 0.2 + learning_count * 0.05)
+
+    return _agent_result(
+        agent_id="medical_education",
+        role="Medical Education & Training",
+        icon="🎓",
+        signals=signals,
+        summary=f"Depth: {depth_count} terms · Training: {len(ready_elements)}/5 · Grounding: {overall:.0f}%",
+        confidence=confidence,
+        metadata={
+            "learning_markers": learning_count,
+            "scientific_depth": depth_count,
+            "training_elements": ready_elements,
+            "training_readiness": len(ready_elements) / 5.0,
+            "msl_support": msl_hits,
+            "grounding_for_education": overall,
+            "education_citations": edu_cites,
+        },
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  📊  Performance & Analytics Agent (Pharma Pipeline)                ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def performance_analytics_agent(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage2_results: List[Dict[str, Any]],
+    stage3_result: Dict[str, Any],
+    aggregate_rankings: List[Dict[str, Any]],
+    grounding_scores: Dict[str, Any],
+    evidence_bundle: Optional[Dict[str, Any]] = None,
+    cost_summary: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    📊 Performance & Analytics Agent — Monitors real-time impact on LLM
+    visibility, favorability, and searchability.
+
+    Evaluates council output for LLM search optimisation, content
+    discoverability, sentiment positioning, and cross-model consistency
+    to ensure maximum visibility in AI-powered search and recommendation
+    systems.
+
+    Skills leveraged: OpenAlex (citation impact), Semantic Scholar
+    (influence metrics), DuckDuckGo (web discoverability).
+    """
+    signals: List[Dict[str, Any]] = []
+    s3 = (stage3_result or {}).get("response", "")
+    s3_lower = s3.lower()
+
+    # ── LLM Search Visibility (Structured Content) ──────────────────
+    # LLM search engines favour structured, factual, well-cited content
+    visibility_factors = {
+        "Structured Headings": bool(re.search(r'^#{1,4}\s', s3, re.MULTILINE)),
+        "Numbered Lists": bool(re.search(r'^\d+\.\s', s3, re.MULTILINE)),
+        "Bullet Points": bool(re.search(r'^[-*]\s', s3, re.MULTILINE)),
+        "Tables": "| " in s3 and " | " in s3,
+        "Citations": bool(re.search(
+            r'\[(?:FDA|CT|PM|EMA|WHO|UP|CB|KG|RC|RX|STR|HUB|SS|CR|EPMC)-\w+\]', s3
+        )),
+        "Statistical Data": bool(re.search(r'(?:p\s*[<>=]|HR\s*[=:]|CI\s*[:\[]|\d+%)', s3)),
+    }
+    active_factors = [f for f, hit in visibility_factors.items() if hit]
+    visibility_score = len(active_factors) / len(visibility_factors)
+
+    if visibility_score >= 0.7:
+        signals.append(_signal(
+            "insight", "success",
+            f"High LLM Visibility: {len(active_factors)}/{len(visibility_factors)} Factors",
+            f"Active: {', '.join(active_factors)}. Content is well-structured for AI search indexing.",
+        ))
+    elif visibility_score >= 0.4:
+        missing = [f for f, hit in visibility_factors.items() if not hit]
+        signals.append(_signal(
+            "insight", "info",
+            f"Moderate Visibility ({len(active_factors)}/{len(visibility_factors)})",
+            f"Missing: {', '.join(missing)}. Adding these improves LLM search discoverability.",
+        ))
+    else:
+        signals.append(_signal(
+            "insight", "warning",
+            f"Low LLM Visibility ({len(active_factors)}/{len(visibility_factors)})",
+            "Unstructured content is less likely to appear in LLM-powered search results.",
+        ))
+
+    # ── Favorability Analysis (Sentiment & Tone) ───────────────────
+    positive_terms = [
+        "effective", "well-tolerated", "significant improvement", "superior",
+        "first-in-class", "best-in-class", "breakthrough", "transformative",
+        "favorable", "promising", "durable", "robust", "compelling",
+    ]
+    negative_terms = [
+        "failed", "discontinued", "withdrawn", "inferior", "no benefit",
+        "safety concern", "black box", "fatal", "rejected", "unacceptable",
+    ]
+    neutral_terms = [
+        "compared to", "versus", "similar to", "non-inferior", "equivalent",
+    ]
+    pos_count = sum(1 for t in positive_terms if t in s3_lower)
+    neg_count = sum(1 for t in negative_terms if t in s3_lower)
+    neu_count = sum(1 for t in neutral_terms if t in s3_lower)
+
+    total_sentiment = pos_count + neg_count + neu_count
+    if total_sentiment > 0:
+        pos_ratio = pos_count / total_sentiment
+        if pos_ratio >= 0.7:
+            sentiment_label = "Strongly Favorable"
+        elif pos_ratio >= 0.5:
+            sentiment_label = "Moderately Favorable"
+        elif neg_count > pos_count:
+            sentiment_label = "Unfavorable"
+        else:
+            sentiment_label = "Balanced"
+    else:
+        sentiment_label = "Neutral"
+        pos_ratio = 0.5
+
+    signals.append(_signal(
+        "insight", "success" if "Favorable" in sentiment_label else "info",
+        f"Sentiment: {sentiment_label}",
+        f"Positive: {pos_count} · Negative: {neg_count} · Neutral: {neu_count}",
+    ))
+
+    # ── Cross-Model Consistency (Agreement Signal) ──────────────────
+    if aggregate_rankings and len(aggregate_rankings) >= 2:
+        top_rank = aggregate_rankings[0].get("average_rank", 0)
+        bot_rank = aggregate_rankings[-1].get("average_rank", 0)
+        spread = bot_rank - top_rank
+
+        if spread < 1.0:
+            signals.append(_signal(
+                "pattern", "success",
+                f"High Model Agreement (spread: {spread:.2f})",
+                "Cross-model consensus strengthens content reliability for analytics.",
+            ))
+        elif spread > 2.5:
+            signals.append(_signal(
+                "pattern", "warning",
+                f"Model Disagreement (spread: {spread:.2f})",
+                "High disagreement may indicate content polarisation — review for accuracy.",
+            ))
+
+    # ── Content Discoverability Keywords ────────────────────────────
+    # Check for entity-rich content (drug names, conditions, genes)
+    entity_patterns = [
+        r'\b[A-Z][a-z]+(?:mab|nib|lib|tide|sen|ran|stat|pril|olol)\b',  # Drug suffixes
+        r'NCT\d{8}',                                                       # Trial IDs
+        r'\b(?:ATTR|HER2|EGFR|BRCA|PD-L?1|ALK|KRAS|TP53)\b',            # Biomarkers
+    ]
+    entity_count = sum(len(re.findall(p, s3)) for p in entity_patterns)
+    if entity_count >= 5:
+        signals.append(_signal(
+            "insight", "success",
+            f"Entity-Rich Content ({entity_count} Searchable Terms)",
+            "High density of drug names, biomarkers, and trial IDs improves search findability.",
+        ))
+    elif entity_count >= 2:
+        signals.append(_signal(
+            "insight", "info",
+            f"Moderate Entity Density ({entity_count} Terms)",
+            "Some searchable entities present. Adding more drug names and biomarkers helps.",
+        ))
+
+    # ── Citation Authority Score ────────────────────────────────────
+    citations = (evidence_bundle or {}).get("citations", [])
+    authoritative_sources = {"PubMed", "ClinicalTrials.gov", "OpenFDA", "EMA",
+                             "Semantic Scholar", "OpenAlex"}
+    auth_cites = sum(1 for c in citations if c.get("source", "") in authoritative_sources)
+    if auth_cites >= 5:
+        signals.append(_signal(
+            "evidence", "success",
+            f"High Citation Authority ({auth_cites} Authoritative Sources)",
+            "Content backed by PubMed, FDA, EMA, and academic databases — high trust signal.",
+        ))
+    elif auth_cites > 0:
+        signals.append(_signal(
+            "evidence", "info",
+            f"Moderate Citation Authority ({auth_cites} Sources)",
+            "Some authoritative citations present. More PubMed/FDA sources improve trust.",
+        ))
+
+    # ── Pipeline Efficiency ─────────────────────────────────────────
+    if cost_summary:
+        total_tokens = cost_summary.get("total_tokens", 0)
+        models_used = cost_summary.get("models_used", 0)
+        total_cost = cost_summary.get("total_cost_usd", 0)
+        if total_tokens > 0:
+            s3_words = len(s3.split())
+            efficiency = s3_words / (total_tokens / 1000)  # Words per k-token
+            signals.append(_signal(
+                "quality", "info",
+                f"Efficiency: {efficiency:.1f} words/k-token · ${total_cost:.4f}",
+                f"{models_used} models · {total_tokens:,} tokens → {s3_words} synthesis words.",
+            ))
+
+    # ── Overall Analytics Score ─────────────────────────────────────
+    overall_grounding = grounding_scores.get("overall_score", 0)
+    analytics_score = (
+        visibility_score * 30 +
+        (pos_ratio if total_sentiment > 0 else 0.5) * 20 +
+        min(entity_count / 10, 1.0) * 20 +
+        min(auth_cites / 5, 1.0) * 15 +
+        (overall_grounding / 100) * 15
+    )
+
+    signals.append(_signal(
+        "quality", "success" if analytics_score >= 70 else "info" if analytics_score >= 50 else "warning",
+        f"Analytics Score: {analytics_score:.0f}/100",
+        f"Visibility: {visibility_score:.0%} · Sentiment: {sentiment_label} · "
+        f"Entities: {entity_count} · Authority: {auth_cites}",
+    ))
+
+    confidence = min(1.0, analytics_score / 100)
+
+    return _agent_result(
+        agent_id="performance_analytics",
+        role="Performance & Analytics",
+        icon="📊",
+        signals=signals,
+        summary=f"Score: {analytics_score:.0f} · Visibility: {visibility_score:.0%} · {sentiment_label} · {entity_count} entities",
+        confidence=confidence,
+        metadata={
+            "analytics_score": round(analytics_score, 1),
+            "visibility_score": round(visibility_score, 3),
+            "visibility_factors": active_factors,
+            "sentiment": sentiment_label,
+            "positive_count": pos_count,
+            "negative_count": neg_count,
+            "neutral_count": neu_count,
+            "entity_count": entity_count,
+            "authoritative_citations": auth_cites,
+            "grounding_score": overall_grounding,
         },
     )
 
@@ -2569,7 +3202,7 @@ async def run_agent_team(
 
     # ── Pharma Intelligence agents (auto-detected by domain keywords) ──
     pi_tasks = []
-    if query_mode in ("pharma_intel", "value_proposition"):
+    if query_mode in ("pharma_intel", "pharma_pipeline", "value_proposition"):
         pi_domains = detect_pharma_intel_query(user_query)
         active_pi = [d for d, v in pi_domains.items() if v]
         if active_pi:
@@ -2586,9 +3219,36 @@ async def run_agent_team(
             pi_tasks.append(market_access_agent(user_query, stage1_results, stage3_result, evidence_bundle))
         if pi_domains["product_expert"]:
             pi_tasks.append(product_expert_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if pi_domains["campaign"]:
+            pi_tasks.append(creative_campaign_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if pi_domains["education"]:
+            pi_tasks.append(medical_education_agent(user_query, stage1_results, stage3_result, grounding_scores, evidence_bundle))
+        if pi_domains["performance"]:
+            pi_tasks.append(performance_analytics_agent(user_query, stage1_results, stage2_results, stage3_result, aggregate_rankings, grounding_scores, evidence_bundle, cost_summary))
+
+    # ── Full Pharma Pipeline mode: activate ALL 7 pipeline agents ──
+    pipeline_tasks = []
+    if query_mode == "pharma_pipeline":
+        logger.info("[AgentTeam] Full Pharma Pipeline mode — activating all 7 pipeline agents")
+        pi_domains = detect_pharma_intel_query(user_query)
+        # Add any pipeline agents not already triggered by domain keywords
+        if not pi_domains.get("ci"):
+            pipeline_tasks.append(competitive_intelligence_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if not pi_domains.get("product_expert"):
+            pipeline_tasks.append(product_expert_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if not pi_domains.get("compliance"):
+            pipeline_tasks.append(compliance_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if not pi_domains.get("claim_impact"):
+            pipeline_tasks.append(claim_impact_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if not pi_domains.get("campaign"):
+            pipeline_tasks.append(creative_campaign_agent(user_query, stage1_results, stage3_result, evidence_bundle))
+        if not pi_domains.get("education"):
+            pipeline_tasks.append(medical_education_agent(user_query, stage1_results, stage3_result, grounding_scores, evidence_bundle))
+        if not pi_domains.get("performance"):
+            pipeline_tasks.append(performance_analytics_agent(user_query, stage1_results, stage2_results, stage3_result, aggregate_rankings, grounding_scores, evidence_bundle, cost_summary))
 
     agents = await asyncio.gather(
-        *core_tasks, *vp_tasks, *pi_tasks,
+        *core_tasks, *vp_tasks, *pi_tasks, *pipeline_tasks,
         return_exceptions=True,
     )
 

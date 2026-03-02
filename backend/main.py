@@ -1,6 +1,7 @@
 """FastAPI backend for LLM Council."""
 
 import logging
+import time
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -38,6 +39,7 @@ from .resilience import (
 from .grounding import compute_response_grounding_scores, get_rubric_criteria, enhance_ca_with_validation
 from .skills import run_evidence_skills, format_citations_for_prompt
 from .token_tracking import SessionCostTracker
+from .pipeline_timer import PipelineTimer
 from .memory import get_memory_manager, get_user_profile_memory, get_eca
 from .memory_store import set_memory_user
 from .prompt_guard import evaluate_prompt
@@ -676,7 +678,40 @@ EXAMPLES:
 @app.get("/api/conversations", response_model=List[ConversationMetadata])
 async def list_conversations(user_id: str = Depends(get_authenticated_user_id)):
     """List all conversations for the authenticated user (metadata only)."""
-    return storage.list_conversations(user_id)
+    convs = storage.list_conversations(user_id)
+
+    # ── Auto-backfill missing context_tags ───────────────────────
+    # Conversations created before context classification was introduced
+    # will have no domain label in the sidebar.  Backfill them lazily
+    # on each list request (lightweight regex classifier, no LLM call).
+    backfilled = False
+    for conv in convs:
+        if conv.get("context_tags") or conv.get("message_count", 0) == 0:
+            continue
+        try:
+            full = storage.get_conversation(user_id, conv["id"])
+            if not full:
+                continue
+            # Find the first user message for classification
+            first_user_msg = ""
+            for msg in full.get("messages", []):
+                if msg.get("role") == "user":
+                    first_user_msg = msg.get("content", "")
+                    break
+            if not first_user_msg:
+                continue
+            from .memory import UserProfileMemory
+            tags = UserProfileMemory.classify_query(first_user_msg)
+            storage.update_conversation_context(user_id, conv["id"], tags)
+            conv["context_tags"] = tags
+            backfilled = True
+        except Exception as e:
+            logger.debug(f"[ContextBackfill] Non-fatal for {conv['id']}: {e}")
+
+    if backfilled:
+        logger.info(f"[ContextBackfill] Backfilled context_tags for user {user_id}")
+
+    return convs
 
 
 @app.post("/api/conversations", response_model=Conversation)
@@ -1900,6 +1935,10 @@ Now provide your complete evaluation:"""
             # Emit session ID so the frontend can target the kill switch
             yield f"data: {json.dumps({'type': 'session_start', 'data': {'session_id': session_id}})}\n\n"
 
+            # ── Pipeline Timer ──────────────────────────────────
+            timer = PipelineTimer()
+            timer.start("total")
+
             # Check global halt before starting
             if kill_switch.is_halted:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'System is in emergency halt mode. Please try again later.', 'code': 'GLOBAL_HALT'})}\n\n"
@@ -1919,10 +1958,12 @@ Now provide your complete evaluation:"""
             # so the guard's keyword bank and LLM check can see the
             # actual pharma/science content from attached documents.
             guard_input = augmented_content or request.content or ""
+            timer.start("prompt_guard")
             guard_task = asyncio.create_task(evaluate_prompt(guard_input, has_attachments=bool(request.attachments)))
             memory_task = asyncio.create_task(pre_stage1_agent(augmented_content, conversation_id, user_id=user_id))
 
             guard_verdict = await guard_task
+            timer.stop("prompt_guard")
             if not guard_verdict.allowed:
                 memory_task.cancel()  # discard memory work
                 # Mark conversation as blocked so no follow-ups are accepted
@@ -1931,11 +1972,33 @@ Now provide your complete evaluation:"""
                 storage.save_conversation(user_id, conversation)
                 storage_content_early = request.content or ""
                 storage.add_user_message(user_id, conversation_id, storage_content_early)
+
+                # ── Still classify & title even for rejected prompts ──
+                # This ensures the sidebar shows a meaningful title and
+                # domain tag instead of "New Conversation" with no label.
+                try:
+                    from .memory import UserProfileMemory
+                    guard_context_tags = UserProfileMemory.classify_query(guard_input)
+                    storage.update_conversation_context(user_id, conversation_id, guard_context_tags)
+                    yield f"data: {json.dumps({'type': 'context_classified', 'data': guard_context_tags})}\n\n"
+                except Exception:
+                    pass  # non-fatal
+                try:
+                    from .council import generate_conversation_title
+                    guard_title = await generate_conversation_title(storage_content_early)
+                    if guard_title:
+                        storage.update_conversation_title(user_id, conversation_id, guard_title)
+                        yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': guard_title}})}\n\n"
+                except Exception:
+                    pass  # non-fatal
+
                 yield f"data: {json.dumps({'type': 'prompt_rejected', 'data': {'category': guard_verdict.category, 'message': guard_verdict.message}})}\n\n"
                 return
 
             # Guard passed — await memory recall result
+            timer.start("memory_recall")
             memory_gate = await memory_task
+            timer.stop("memory_recall")
             raw_memory_context = memory_gate.get("memory_context", "")
             duplicate_episode = None
             if memory_gate.get("memory_context"):
@@ -2006,6 +2069,7 @@ Now provide your complete evaluation:"""
             # Instead of waiting for all models to finish before emitting
             # any data, we fire individual tasks and yield progress events
             # as each model completes — eliminating the multi-minute dead zone.
+            timer.start("stage1")
             yield f"data: {json.dumps({'type': 'stage1_start'})}\n\n"
 
             from .config import COUNCIL_MODELS as _COUNCIL_MODELS
@@ -2024,6 +2088,7 @@ Now provide your complete evaluation:"""
             # a different model on failure — no need for 2 retries + 4.5s
             # of backoff delay per failing model).
             pending_tasks = {}
+            _s1_model_starts = {}  # track per-model start times
             for model in s1_models:
                 task = asyncio.create_task(
                     query_model(model, s1_messages,
@@ -2034,6 +2099,7 @@ Now provide your complete evaluation:"""
                                 max_tokens=SPEED_S1_MAX_TOKENS)
                 )
                 pending_tasks[task] = model
+                _s1_model_starts[model] = time.perf_counter()
 
             stage1_results = []
             s1_failed_models = []
@@ -2048,6 +2114,8 @@ Now provide your complete evaluation:"""
                     model = pending_tasks.pop(task)
                     try:
                         response = task.result()
+                        _s1_model_ms = round((time.perf_counter() - _s1_model_starts.get(model, 0)) * 1000, 1)
+                        timer.record_model("stage1", model, _s1_model_ms)
                         if response is not None:
                             result_item = {
                                 "model": model,
@@ -2105,6 +2173,7 @@ Now provide your complete evaluation:"""
             # Record Stage 1 token usage
             for r in stage1_results:
                 cost_tracker.record("stage1", r["model"], r.get("usage"))
+            timer.stop("stage1")
             yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_results})}\n\n"
 
             # ── Checkpoint: Stage 1 complete ──────────────────────────
@@ -2129,20 +2198,26 @@ Now provide your complete evaluation:"""
             context_tags = None
             if title_task:
                 try:
+                    timer.start("title_generation")
                     title = await title_task
+                    timer.stop("title_generation")
                     title_task = None  # consumed
                     storage.update_conversation_title(user_id, conversation_id, title)
                     yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
                 except Exception as e:
+                    timer.stop("title_generation")
                     logger.warning(f"[EarlyTitle] Non-fatal: {e}")
 
             # Classify the query for context tagging (domain, type, complexity)
             try:
                 from .memory import UserProfileMemory
+                timer.start("context_classify")
                 context_tags = UserProfileMemory.classify_query(augmented_content)
+                timer.stop("context_classify")
                 storage.update_conversation_context(user_id, conversation_id, context_tags)
                 yield f"data: {json.dumps({'type': 'context_classified', 'data': context_tags})}\n\n"
             except Exception as e:
+                timer.stop("context_classify")
                 logger.warning(f"[ContextTags] Non-fatal: {e}")
 
             # Kill switch check between stages
@@ -2152,7 +2227,9 @@ Now provide your complete evaluation:"""
 
             # ── OPT-3: Incremental Stage 2 — stream each ranking as it arrives ──
             # Also fires evidence retrieval in parallel with Stage 2.
+            timer.start("stage2")
             yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
+            timer.start("evidence_retrieval")
             evidence_task = asyncio.create_task(run_evidence_skills(augmented_content, web_search_enabled=web_search_enabled))
 
             # Build Stage 2 prompt (same logic as stage2_collect_rankings but inline)
@@ -2203,6 +2280,7 @@ Now provide your complete evaluation:"""
                 ): m
                 for m in _s2_models
             }
+            _s2_model_starts = {m: time.perf_counter() for m in _s2_models}
             stage2_results = []
             _s2_pending = set(_s2_tasks.keys())
             _s2_total = len(_s2_models)
@@ -2213,6 +2291,8 @@ Now provide your complete evaluation:"""
                     model_name = _s2_tasks[task]
                     try:
                         resp = task.result()
+                        _s2_model_ms = round((time.perf_counter() - _s2_model_starts.get(model_name, 0)) * 1000, 1)
+                        timer.record_model("stage2", model_name, _s2_model_ms)
                         if resp is not None:
                             full_text = resp.get('content', '')
                             parsed = parse_ranking_from_text(full_text)
@@ -2237,12 +2317,16 @@ Now provide your complete evaluation:"""
 
             aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
             # Compute grounding scores
+            timer.start("grounding_compute")
             grounding_scores = compute_response_grounding_scores(
                 stage2_results, label_to_model, aggregate_rankings
             )
+            timer.stop("grounding_compute")
             # Await evidence retrieval (should be done by now — ran during Stage 2)
             evidence_bundle = await evidence_task
+            timer.stop("evidence_retrieval")
             yield f"data: {json.dumps({'type': 'evidence_complete', 'data': evidence_bundle})}\n\n"
+            timer.stop("stage2")
             yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'grounding_scores': grounding_scores}})}\n\n"
 
             # ── Checkpoint: Stage 2 complete ──────────────────────────
@@ -2350,8 +2434,10 @@ Now provide your complete evaluation:"""
                         yield f"data: {json.dumps({'type': 'stage3_chunk', 'data': {'text': chunk}})}\n\n"
                 if streamed_text:
                     stream_succeeded = True
+                    timer.stop("stage3_streaming")
                     logger.info(f"[Stage3] Streaming complete — {len(streamed_text)} chars from {chairman_to_use}")
             except Exception as e:
+                timer.stop("stage3_streaming")
                 logger.warning(f"[Stage3] Streaming failed ({e}), falling back to non-streaming")
 
             # If streaming produced no text, fall back to non-streaming with speculative racing
@@ -2362,6 +2448,7 @@ Now provide your complete evaluation:"""
                     "usage": stage3_usage,
                 }
             else:
+                timer.start("stage3_fallback")
                 stage3_result = await stage3_synthesize_final(
                     augmented_content, stage1_results, stage2_results,
                     user_chairman_model, conversation_history, web_search_enabled,
@@ -2373,6 +2460,7 @@ Now provide your complete evaluation:"""
                     max_tokens=SPEED_S3_MAX_TOKENS,
                     timeout=SPEED_TIMEOUT,
                 )
+                timer.stop("stage3_fallback")
                 logger.info(f"[Stage3] Fallback completed — {stage3_result.get('model', 'unknown')}")
 
             # Record Stage 3 token usage
@@ -2382,7 +2470,9 @@ Now provide your complete evaluation:"""
             # Skipped in speed mode (ca_validation_task is None)
             if ca_validation_task is not None:
                 try:
+                    timer.start("ca_validation")
                     ca_validation_results = await ca_validation_task
+                    timer.stop("ca_validation")
                     if ca_validation_results:
                         # Record CA validation token usage
                         for model_name, val_data in ca_validation_results.items():
@@ -2410,40 +2500,40 @@ Now provide your complete evaluation:"""
                         except Exception as e:
                             logger.debug(f"[CA Tracking] Non-fatal persistence error: {e}")
                 except Exception as e:
+                    timer.stop("ca_validation")
                     logger.warning(f"[CA Validation] Non-fatal error: {e}")
                     # Continue without enhanced CA — original grounding_scores remain
 
             # ── Doubting Thomas: detect-and-fix self-reflection loop ──
             # (arXiv:2602.03837 §Adversarial Reviewer; arXiv:2602.13949 §Reflection)
-            # Skipped in speed mode to reduce latency
+            # ALWAYS runs — even in speed mode — to preserve quality assurance
             dt_result = None
-            if not speed_mode:
-                try:
-                    yield f"data: {json.dumps({'type': 'doubting_thomas_start'})}\n\n"
-                    dt_result = await doubting_thomas_review(
-                        user_query=augmented_content,
-                        draft_response=stage3_result.get("response", ""),
-                        stage1_results=stage1_results,
-                        relevancy_gate=relevancy_gate,
-                        chairman_model=user_chairman_model,
-                        web_search_enabled=web_search_enabled,
-                        session_id=session_id,
+            try:
+                yield f"data: {json.dumps({'type': 'doubting_thomas_start'})}\n\n"
+                timer.start("doubting_thomas")
+                dt_result = await doubting_thomas_review(
+                    user_query=augmented_content,
+                    draft_response=stage3_result.get("response", ""),
+                    stage1_results=stage1_results,
+                    relevancy_gate=relevancy_gate,
+                    chairman_model=user_chairman_model,
+                    web_search_enabled=web_search_enabled,
+                    session_id=session_id,
+                )
+                if dt_result.get("fix_applied"):
+                    stage3_result["response"] = dt_result["revised_response"]
+                    # Record DT token usage
+                    cost_tracker.record("doubting_thomas", user_chairman_model or "chairman", dt_result.get("usage"))
+                    logger.info(
+                        f"[Doubting Thomas] Revised synthesis applied — "
+                        f"{dt_result['defect_count']} defect(s) fixed"
                     )
-                    if dt_result.get("fix_applied"):
-                        stage3_result["response"] = dt_result["revised_response"]
-                        # Record DT token usage
-                        cost_tracker.record("doubting_thomas", user_chairman_model or "chairman", dt_result.get("usage"))
-                        logger.info(
-                            f"[Doubting Thomas] Revised synthesis applied — "
-                            f"{dt_result['defect_count']} defect(s) fixed"
-                        )
-                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False), 'criteria': dt_result.get('criteria', []), 'fix_instructions': dt_result.get('fix_instructions', []), 'critique': dt_result.get('critique') or None}})}\n\n"
-                except Exception as e:
-                    logger.warning(f"[Doubting Thomas] Non-fatal error: {e}")
-                    yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'criteria': [], 'fix_instructions': [], 'error': str(e)}})}\n\n"
-            else:
-                # Speed mode: emit skipped events so frontend doesn't wait
-                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'skipped': True}})}\n\n"
+                timer.stop("doubting_thomas")
+                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': dt_result.get('defect_count', 0), 'needs_fix': dt_result.get('needs_fix', False), 'fix_applied': dt_result.get('fix_applied', False), 'criteria': dt_result.get('criteria', []), 'fix_instructions': dt_result.get('fix_instructions', []), 'critique': dt_result.get('critique') or None}})}\n\n"
+            except Exception as e:
+                timer.stop("doubting_thomas")
+                logger.warning(f"[Doubting Thomas] Non-fatal error: {e}")
+                yield f"data: {json.dumps({'type': 'doubting_thomas_complete', 'data': {'defect_count': 0, 'needs_fix': False, 'fix_applied': False, 'criteria': [], 'fix_instructions': [], 'error': str(e)}})}\n\n"
 
             # Extract infographic data from the chairman's response
             infographic_data = None
@@ -2453,18 +2543,23 @@ Now provide your complete evaluation:"""
             stage3_result["response"] = strip_infographic_block(raw_response)
 
             # ── Citation Supervisor: enrich references with clickable links ──
+            timer.start("citation_enrich")
             stage3_result["response"] = enrich_stage3_citations(
                 stage3_result["response"]
             )
+            timer.stop("citation_enrich")
 
             # ── Citation Validator: verify URLs are reachable, fix broken ones ──
             # Skipped in speed mode (URL validation is I/O-heavy)
             if not speed_mode:
                 try:
+                    timer.start("citation_validate")
                     stage3_result["response"] = await validate_and_fix_citations(
                         stage3_result["response"]
                     )
+                    timer.stop("citation_validate")
                 except Exception as e:
+                    timer.stop("citation_validate")
                     logger.warning(f"[Citation Validator] Non-fatal error: {e}")
 
             yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
@@ -2509,13 +2604,25 @@ Now provide your complete evaluation:"""
             )
 
             # Emit cost summary before completion
+            timer.stop("total")
+            timing_summary = timer.summary()
             cost_summary = cost_tracker.compute_summary()
+            cost_summary["timing"] = timing_summary
+            # Attach Redis cache stats if available
+            try:
+                from .memory_store import get_redis_stats, _get_redis_client
+                if _get_redis_client() is not None:
+                    cost_summary["redis_cache"] = get_redis_stats()
+            except Exception:
+                pass
             yield f"data: {json.dumps({'type': 'cost_summary', 'data': cost_summary})}\n\n"
 
             # ── OPT-5: Agent Team ∥ Post-Stage 3 Learning ─────────
             # Both are independent of each other — fire in parallel.
             overall_grounding = grounding_scores.get("overall_score", 0) / 100.0
 
+            timer.start("agent_team")
+            timer.start("learning")
             agent_team_task = asyncio.create_task(
                 run_agent_team(
                     user_query=augmented_content,
@@ -2552,6 +2659,8 @@ Now provide your complete evaluation:"""
                 )
             except Exception as e:
                 logger.warning(f"[Parallel post-pipeline] gather error: {e}")
+            timer.stop("agent_team")
+            timer.stop("learning")
 
             # Emit agent team result
             if agent_team_result and not isinstance(agent_team_result, Exception):

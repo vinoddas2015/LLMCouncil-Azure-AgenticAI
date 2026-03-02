@@ -157,12 +157,28 @@ _INJECTION_PATTERNS = re.compile(
 )
 
 # PII / PHI patterns (SSN, real patient names with medical context, etc.)
+# NOTE: SSN regex requires dash or space separators (NOT dots) to avoid
+#       false positives on DOIs, lab values, and scientific identifiers.
+#       e.g. DOI "10.2174/138161282" or concentration "138.16.1282 pg/mL"
+#       would previously false-match the SSN pattern.
 _PII_PATTERNS = re.compile(
     r'(?:'
-    r'\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b|'              # SSN
+    r'\b\d{3}[-\s]\d{2}[-\s]\d{4}\b|'                # SSN (123-45-6789 or 123 45 6789)
     r'\b(?:patient|subject)\s+(?:name|id)\s*(?:is|:)\s*[A-Z][a-z]+\s+[A-Z][a-z]+|'  # "patient name is John Doe"
     r'\bMRN\s*(?::|is|=)\s*\d{5,}|'                      # Medical Record Number
     r'\b(?:date\s+of\s+birth|DOB)\s*(?::|is|=)\s*\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}'  # DOB
+    r')',
+    re.IGNORECASE,
+)
+
+# Scientific number patterns stripped before PII check to prevent
+# DOIs, PMIDs, and other identifiers from triggering false positives.
+_SCIENTIFIC_NUMBERS = re.compile(
+    r'(?:'
+    r'10\.\d{4,}/[^\s]+|'        # DOIs (10.xxxx/...)
+    r'\bPMID\s*:?\s*\d{5,}|'     # PMID references
+    r'\bPMC\d{5,}|'              # PMC IDs
+    r'\bISSN\s*:?\s*\d{4}-\d{4}' # ISSNs
     r')',
     re.IGNORECASE,
 )
@@ -238,6 +254,9 @@ _OFFTOPIC_STRONG = re.compile(
     r'world\s+cup|olympics?|championship|tournament|league|'
     r'movie|film|tv\s+show|netflix|anime|manga|disney|marvel|'
     r'recipe|cooking|bake|ingredients\s+for\s+(?:cake|pie|bread|soup|pasta)|'
+    # Food / meals / casual daily-life (not pharma-relevant)
+    r'pizza|burger|sushi|tacos?|sandwich|breakfast|lunch|dinner|dessert|'
+    r'restaurant|fast\s+food|takeout|delivery|groceries|'
     r'stock\s+(?:price|market|portfolio|trading)|'
     r'cryptocurrency|bitcoin|ethereum|NFT|'
     r'write\s+(?:a\s+)?(?:poem|song|story|novel|essay\s+about\s+(?!drug|pharma|medicine|health))|'
@@ -249,7 +268,15 @@ _OFFTOPIC_STRONG = re.compile(
     r'travel\s+(?:to|in|guide)|vacation|hotel|flight\s+(?:to|from)|'
     r'real\s+estate|mortgage|home\s+(?:loan|buying)|'
     r'dating|relationship\s+advice|'
-    r'who\s+won\s+(?:the\s+)?(?:game|match|election|race|award|oscar)'
+    r'who\s+won\s+(?:the\s+)?(?:game|match|election|race|award|oscar)|'
+    # Pets / hobbies / shopping (non-pharma)
+    r'(?:adopt|buy)\s+(?:a\s+)?(?:puppy|kitten|dog|cat)|'
+    r'fashion|outfit|clothing|shoes|sneakers|'
+    r'furniture|interior\s+design|home\s+decor|'
+    # Greetings / small talk with no question
+    r'good\s+(?:morning|afternoon|evening|night)|'
+    r"how\s+are\s+you|what\s*(?:is|'\s*s)\s+your\s+name|"
+    r'(?:car|auto)\s+(?:insurance|repair|lease|loan)'
     r')\b',
     re.IGNORECASE,
 )
@@ -407,7 +434,10 @@ async def evaluate_prompt(prompt: str, *, has_attachments: bool = False) -> Guar
         )
 
     # ── 5. PII / PHI ──────────────────────────────────────────────
-    if _PII_PATTERNS.search(cleaned):
+    # Strip known scientific number formats (DOIs, PMIDs, ISSNs) before
+    # checking PII patterns — prevents false positives on academic content.
+    cleaned_for_pii = _SCIENTIFIC_NUMBERS.sub(' ', cleaned)
+    if _PII_PATTERNS.search(cleaned_for_pii):
         logger.warning(f"[PromptGuard] BLOCKED — PII/PHI detected")
         return GuardVerdict(
             allowed=False,

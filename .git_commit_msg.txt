@@ -1,0 +1,19 @@
+feat: Azure Redis Enterprise cache + pipeline timing + bug fixes
+
+- Azure Cache for Redis Enterprise E10 (3-zone HA, AOF 1s, encrypted)
+- RedisCacheBackend: write-through cache for Cosmos DB (RedisCluster client)
+- Cache key schema: mem:{user}:{collection}:{key}, search:{user}:{collection}:{query}:{limit}
+- Graceful degradation: all Redis failures non-fatal, falls to direct Cosmos
+- Health probe: Redis 7th subsystem check with cluster-aware info()
+- Frontend: Redis cache stats in PipelineTiming dashboard
+
+- PipelineTimer: 16-stage instrumentation with per-model latency tracking
+- Provider-level aggregation (Bayer myGenAssist vs Google Direct)
+- Frontend: PipelineTiming dashboard with waterfall bars + bottleneck detection
+- DIAGNOSTICS.md: 8 Azure acceleration recommendations
+
+- Fix: SSN/PII false positive on DOIs (removed dots from SSN regex separators)
+- Fix: Off-topic bypass for non-pharma queries (expanded regex bank)
+- Fix: Missing chat labels on rejected prompts (3-pronged fix)
+- Fix: 0% pharma safety metrics in Speed Mode (emit None when no claims)
+- Fix: SyntaxError in prompt_guard.py regex (unescaped quote in raw string)

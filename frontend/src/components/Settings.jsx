@@ -239,7 +239,7 @@ export default function Settings({ isOpen, onClose, preferences, onSave }) {
             <div className="settings-section">
               <h3>⚡ Speed Mode</h3>
               <p className="settings-description">
-                Accelerate the council pipeline by streamlining evaluations. Stage 2 uses a simplified ranking prompt (no claim analysis), skips Doubting Thomas self-reflection, and reduces model timeouts.
+                Accelerate the council pipeline by streamlining evaluations. Stage 2 uses a simplified ranking prompt (no claim analysis) and reduces model timeouts. Doubting Thomas self-reflection always runs to preserve quality assurance.
               </p>
               <div className="web-search-toggle">
                 <div className="toggle-info">

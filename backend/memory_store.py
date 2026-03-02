@@ -13,6 +13,7 @@ Per-user isolation:
 
     - Local JSON: ``data/memory/{user_hash}/{collection}/{key}.json``
     - Cosmos DB:  ``_user_id`` field on every document, filtered in queries
+    - Redis Cache: write-through cache wrapping CosmosDB for sub-100ms recall
 
 Directory layout (local backend):
     data/memory/{user_hash}/
@@ -28,6 +29,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 import uuid
 import math
 import re
@@ -409,6 +411,266 @@ class CosmosDBBackend(MemoryStoreBackend):
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
+# ║  Azure Cache for Redis — write-through cache (Enterprise tier)      ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+_redis_client = None  # Shared Redis connection (lazy-init, thread-safe)
+_redis_stats: Dict[str, int] = {"hits": 0, "misses": 0, "errors": 0}
+
+
+def _get_redis_client():
+    """Lazy-init a shared Redis Cluster connection (one per process).
+
+    Azure Cache for Redis Enterprise uses OSS Cluster mode, requiring
+    ``RedisCluster`` to handle automatic MOVED/ASK redirection.
+    Returns None if Redis is not configured or connection fails.
+    """
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+
+    from .config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_SSL
+    if not REDIS_HOST:
+        return None
+
+    try:
+        import redis as redis_lib
+        client = redis_lib.RedisCluster(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            password=REDIS_PASSWORD or None,
+            ssl=REDIS_SSL,
+            ssl_cert_reqs=None,  # Azure Enterprise manages certs
+            socket_timeout=5,
+            socket_connect_timeout=3,
+            retry_on_timeout=True,
+            decode_responses=True,
+        )
+        # Verify connectivity
+        client.ping()
+        _redis_client = client
+        logger.info(
+            f"[Redis] Connected to Azure Cache for Redis Enterprise (Cluster) at "
+            f"{REDIS_HOST}:{REDIS_PORT} (SSL={REDIS_SSL})"
+        )
+        return _redis_client
+    except Exception as e:
+        logger.warning(f"[Redis] Connection failed (falling back to direct Cosmos): {e}")
+        return None
+
+
+def get_redis_stats() -> Dict[str, Any]:
+    """Return Redis cache hit/miss statistics for diagnostics."""
+    total = _redis_stats["hits"] + _redis_stats["misses"]
+    hit_rate = (_redis_stats["hits"] / total * 100) if total > 0 else 0.0
+    return {
+        **_redis_stats,
+        "total_requests": total,
+        "hit_rate_pct": round(hit_rate, 1),
+    }
+
+
+class RedisCacheBackend(MemoryStoreBackend):
+    """
+    Write-through Redis cache wrapping any MemoryStoreBackend (typically CosmosDB).
+
+    Architecture:
+      READ  → Redis cache first → on miss → delegate (Cosmos DB) → backfill cache
+      WRITE → delegate first (source of truth) → update Redis cache
+      DELETE → delegate first → invalidate Redis cache + search caches
+
+    Cache key schema:
+      Document:  mem:{user_hash}:{collection}:{key}
+      Search:    search:{user_hash}:{collection}:{query_md5}:{limit}
+      List keys: keys:{user_hash}:{collection}
+
+    TTL:
+      Search results: 5 minutes (configurable via REDIS_SEARCH_TTL)
+      Documents:      10 minutes (configurable via REDIS_DOC_TTL)
+      List keys:      2 minutes (short — keys change on writes)
+
+    Performance target: <5ms cache hits vs 200-800ms Cosmos queries.
+    """
+
+    def __init__(self, redis_client, delegate: MemoryStoreBackend,
+                 user_id: str = "shared",
+                 search_ttl: int = 300, doc_ttl: int = 600):
+        self._redis = redis_client
+        self._delegate = delegate
+        self._user_hash = _user_hash(user_id)
+        self._search_ttl = search_ttl
+        self._doc_ttl = doc_ttl
+        self._keys_ttl = 120  # 2 min for list_keys cache
+
+    # ── Cache key builders ──────────────────────────────────────────
+
+    def _doc_key(self, collection: str, key: str) -> str:
+        return f"mem:{self._user_hash}:{collection}:{key}"
+
+    def _search_key(self, collection: str, query_text: str, limit: int) -> str:
+        q_hash = hashlib.md5(query_text.lower().strip().encode()).hexdigest()[:12]
+        return f"search:{self._user_hash}:{collection}:{q_hash}:{limit}"
+
+    def _keys_key(self, collection: str) -> str:
+        return f"keys:{self._user_hash}:{collection}"
+
+    def _collection_pattern(self, collection: str) -> str:
+        """Pattern for invalidating all search caches in a collection."""
+        return f"search:{self._user_hash}:{collection}:*"
+
+    # ── CRUD (write-through) ─────────────────────────────────────────
+
+    def put(self, collection: str, key: str, doc: Dict[str, Any]) -> None:
+        # Source of truth: delegate first
+        self._delegate.put(collection, key, doc)
+        try:
+            pipe = self._redis.pipeline(transaction=False)
+            # Cache the document
+            pipe.setex(
+                self._doc_key(collection, key),
+                self._doc_ttl,
+                json.dumps(doc, default=str),
+            )
+            # Invalidate search + list caches (stale after write)
+            pipe.delete(self._keys_key(collection))
+            pipe.execute()
+            # Invalidate search caches via pattern scan (non-blocking)
+            self._invalidate_search_cache(collection)
+        except Exception as e:
+            _redis_stats["errors"] += 1
+            logger.debug(f"[Redis] Cache write failed (non-fatal): {e}")
+
+    def get(self, collection: str, key: str) -> Optional[Dict[str, Any]]:
+        # Try Redis first
+        try:
+            cached = self._redis.get(self._doc_key(collection, key))
+            if cached is not None:
+                _redis_stats["hits"] += 1
+                return json.loads(cached)
+        except Exception as e:
+            _redis_stats["errors"] += 1
+            logger.debug(f"[Redis] Cache read failed: {e}")
+
+        # Cache miss — fetch from delegate
+        _redis_stats["misses"] += 1
+        doc = self._delegate.get(collection, key)
+        if doc is not None:
+            try:
+                self._redis.setex(
+                    self._doc_key(collection, key),
+                    self._doc_ttl,
+                    json.dumps(doc, default=str),
+                )
+            except Exception:
+                pass
+        return doc
+
+    def delete(self, collection: str, key: str) -> bool:
+        result = self._delegate.delete(collection, key)
+        try:
+            pipe = self._redis.pipeline(transaction=False)
+            pipe.delete(self._doc_key(collection, key))
+            pipe.delete(self._keys_key(collection))
+            pipe.execute()
+            self._invalidate_search_cache(collection)
+        except Exception as e:
+            _redis_stats["errors"] += 1
+            logger.debug(f"[Redis] Cache invalidation failed: {e}")
+        return result
+
+    def list_keys(self, collection: str) -> List[str]:
+        # Try cached key list
+        try:
+            cached = self._redis.get(self._keys_key(collection))
+            if cached is not None:
+                _redis_stats["hits"] += 1
+                return json.loads(cached)
+        except Exception:
+            pass
+
+        _redis_stats["misses"] += 1
+        keys = self._delegate.list_keys(collection)
+        try:
+            self._redis.setex(
+                self._keys_key(collection),
+                self._keys_ttl,
+                json.dumps(keys),
+            )
+        except Exception:
+            pass
+        return keys
+
+    def query(self, collection: str, filters: Dict[str, Any],
+              limit: int = 50) -> List[Dict[str, Any]]:
+        # Query is complex/dynamic — pass through to delegate (no caching)
+        # Filter queries are rare and change based on arbitrary filter combos
+        return self._delegate.query(collection, filters, limit)
+
+    def search(self, collection: str, query_text: str,
+               limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Cached search — the HOT PATH for memory recall acceleration.
+
+        Cache hit: ~2-5ms (Redis GET + JSON deserialize)
+        Cache miss: ~200-800ms (Cosmos CONTAINS query) + backfill
+        """
+        cache_key = self._search_key(collection, query_text, limit)
+
+        # Try Redis cache first
+        try:
+            t0 = time.perf_counter()
+            cached = self._redis.get(cache_key)
+            if cached is not None:
+                _redis_stats["hits"] += 1
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                logger.debug(f"[Redis] Search HIT ({elapsed_ms:.1f}ms): {collection}/{query_text[:50]}")
+                return json.loads(cached)
+        except Exception as e:
+            _redis_stats["errors"] += 1
+            logger.debug(f"[Redis] Search cache read failed: {e}")
+
+        # Cache miss — query delegate
+        _redis_stats["misses"] += 1
+        t0 = time.perf_counter()
+        results = self._delegate.search(collection, query_text, limit)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.debug(f"[Redis] Search MISS ({elapsed_ms:.1f}ms delegate): {collection}/{query_text[:50]}")
+
+        # Backfill cache
+        if results:
+            try:
+                self._redis.setex(
+                    cache_key,
+                    self._search_ttl,
+                    json.dumps(results, default=str),
+                )
+            except Exception:
+                pass
+
+        return results
+
+    # ── Internal helpers ─────────────────────────────────────────────
+
+    def _invalidate_search_cache(self, collection: str):
+        """Remove all search cache entries for a collection.
+
+        Uses ``scan_iter`` which handles cluster-mode SCAN across all nodes.
+        Falls back gracefully — stale caches expire via TTL anyway.
+        """
+        try:
+            pattern = self._collection_pattern(collection)
+            keys = list(self._redis.scan_iter(match=pattern, count=100))
+            if keys:
+                for key in keys:
+                    try:
+                        self._redis.delete(key)
+                    except Exception:
+                        pass  # Best effort per-key deletion in cluster mode
+        except Exception:
+            pass  # Best effort — stale caches expire via TTL anyway
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
 # ║  User-scoped backend accessor                                      ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -442,8 +704,9 @@ def get_memory_backend() -> MemoryStoreBackend:
 
     Priority:
       1. local-user → always Local JSON (dev mode, no cloud dependency)
-      2. Cosmos DB — if COSMOS_ENDPOINT + COSMOS_KEY are set
-      3. Local JSON — file-based fallback (per-user directory)
+      2. Cosmos DB + Redis Cache → if both COSMOS + REDIS env vars are set
+      3. Cosmos DB alone → if only COSMOS env vars are set
+      4. Local JSON → file-based fallback (per-user directory)
     """
     user_id = get_memory_user()
 
@@ -454,15 +717,31 @@ def get_memory_backend() -> MemoryStoreBackend:
     if user_id == "local-user":
         backend = LocalJSONBackend(user_id=user_id)
     else:
-        from .config import COSMOS_ENDPOINT, COSMOS_KEY, COSMOS_DATABASE, COSMOS_MEMORY_CONTAINER
+        from .config import (
+            COSMOS_ENDPOINT, COSMOS_KEY, COSMOS_DATABASE, COSMOS_MEMORY_CONTAINER,
+            REDIS_HOST, REDIS_SEARCH_TTL, REDIS_DOC_TTL,
+        )
         if COSMOS_ENDPOINT and COSMOS_KEY:
-            backend = CosmosDBBackend(
+            cosmos_backend = CosmosDBBackend(
                 endpoint=COSMOS_ENDPOINT,
                 key=COSMOS_KEY,
                 database=COSMOS_DATABASE,
                 container_name=COSMOS_MEMORY_CONTAINER,
                 user_id=user_id,
             )
+            # Wrap Cosmos with Redis cache if Redis is configured
+            redis_client = _get_redis_client() if REDIS_HOST else None
+            if redis_client is not None:
+                backend = RedisCacheBackend(
+                    redis_client=redis_client,
+                    delegate=cosmos_backend,
+                    user_id=user_id,
+                    search_ttl=REDIS_SEARCH_TTL,
+                    doc_ttl=REDIS_DOC_TTL,
+                )
+                logger.info(f"[MemoryStore] Using Redis-cached Cosmos backend for user {_user_hash(user_id)}")
+            else:
+                backend = cosmos_backend
         else:
             backend = LocalJSONBackend(user_id=user_id)
 

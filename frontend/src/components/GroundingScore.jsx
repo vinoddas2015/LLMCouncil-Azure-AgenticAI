@@ -142,7 +142,7 @@ const GroundingScore = memo(function GroundingScore({ groundingScores }) {
           )}
 
           {/* Pharma Safety Metrics */}
-          {per_response && per_response.some(r => r.pharma_metrics) && (
+          {per_response && per_response.some(r => r.pharma_metrics) ? (
             <div className="grounding-pharma">
               <h5>Pharma Safety Metrics</h5>
               <p className="pharma-explainer">
@@ -173,6 +173,13 @@ const GroundingScore = memo(function GroundingScore({ groundingScores }) {
                   </div>
                 );
               })}
+            </div>
+          ) : per_response && groundingScores.claim_analysis_available === false && (
+            <div className="grounding-pharma grounding-pharma-skipped">
+              <h5>Pharma Safety Metrics</h5>
+              <p className="pharma-explainer pharma-skipped-info">
+                Claim analysis was skipped in Speed Mode. Disable Speed Mode for full TP/FP/FN peer-reviewed metrics.
+              </p>
             </div>
           )}
 

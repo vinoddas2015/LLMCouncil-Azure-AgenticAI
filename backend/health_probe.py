@@ -169,6 +169,54 @@ class HealthProbeAgent:
         except Exception as e:
             return {"status": "error", "configured": True, "error": str(e)[:200]}
 
+    async def check_redis_cache(self) -> Dict[str, Any]:
+        """Check Azure Cache for Redis connectivity and cache statistics."""
+        try:
+            from .config import REDIS_HOST
+            if not REDIS_HOST:
+                return {"status": "warning", "configured": False, "detail": "Redis not configured — memory recall uses direct Cosmos"}
+
+            from .memory_store import _get_redis_client, get_redis_stats
+            client = _get_redis_client()
+            if client is None:
+                return {"status": "error", "configured": True, "error": "Redis client not initialised"}
+
+            # Verify connectivity
+            t0 = time.monotonic()
+            pong = client.ping()
+            latency_ms = round((time.monotonic() - t0) * 1000, 1)
+
+            stats = get_redis_stats()
+
+            # In Cluster mode, info() returns a dict of {node: info_dict}
+            # Sum used_memory across all nodes for total
+            info = client.info(section="memory")
+            used_memory = 0
+            if isinstance(info, dict):
+                # Check if it's a per-node response (cluster) or direct response
+                first_val = next(iter(info.values()), None)
+                if isinstance(first_val, dict):
+                    # Cluster mode: {node_addr: {used_memory: ...}, ...}
+                    used_memory = sum(
+                        node_info.get("used_memory", 0)
+                        for node_info in info.values()
+                        if isinstance(node_info, dict)
+                    )
+                else:
+                    # Standalone mode: {used_memory: ..., ...}
+                    used_memory = info.get("used_memory", 0)
+            used_memory_mb = round(used_memory / (1024 * 1024), 2)
+
+            return {
+                "status": "ok" if pong else "error",
+                "configured": True,
+                "ping_latency_ms": latency_ms,
+                "used_memory_mb": used_memory_mb,
+                "cache_stats": stats,
+            }
+        except Exception as e:
+            return {"status": "error", "configured": True, "error": str(e)[:200]}
+
     async def run_deep_check(self) -> Dict[str, Any]:
         """Run all health checks in parallel and return comprehensive status."""
         t0 = time.monotonic()
@@ -180,10 +228,11 @@ class HealthProbeAgent:
             self.check_models(),
             self.check_resilience(),
             self.check_blob_storage(),
+            self.check_redis_cache(),
             return_exceptions=True,
         )
 
-        check_names = ["cosmos_db", "api_key", "memory_store", "models", "resilience", "blob_storage"]
+        check_names = ["cosmos_db", "api_key", "memory_store", "models", "resilience", "blob_storage", "redis_cache"]
         subsystems = {}
         overall = "ok"
 
