@@ -169,7 +169,10 @@ export default function ChatInterface({
     if (!conversation) return;
     const msgs = conversation.messages || [];
     const last = msgs[msgs.length - 1];
-    const streaming = !!(last?.loading?.stage1 || last?.loading?.stage2 || last?.loading?.stage3);
+    const streaming = !!(
+      last?.loading?.stage1 || last?.loading?.stage2 || last?.loading?.stage3
+      || last?.doubtingThomas?.status === 'running'
+    );
     isStreamingRef.current = streaming;
     if (streaming) {
       scrollToBottom();
@@ -180,8 +183,16 @@ export default function ChatInterface({
     conversation?.messages?.[conversation?.messages?.length - 1]?.stage2?.length,
     conversation?.messages?.[conversation?.messages?.length - 1]?.stage3?.response,
     conversation?.messages?.[conversation?.messages?.length - 1]?.loading,
+    conversation?.messages?.[conversation?.messages?.length - 1]?.doubtingThomas,
     scrollToBottom,
   ]);
+
+  // Auto-scroll when Enhance Prompt card appears
+  useEffect(() => {
+    if (enhanceState === 'loading' || enhanceState === 'ready') {
+      scrollToBottom(true);
+    }
+  }, [enhanceState, scrollToBottom]);
 
   const validateFile = (file) => {
     // Check file type — also allow by extension for .md files (browsers may report text/plain)

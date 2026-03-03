@@ -232,6 +232,7 @@ const Stage3 = memo(function Stage3({ finalResponse, evidence }) {
   }
 
   const isStreaming = !finalResponse.response;
+  const isChunking = !!finalResponse.streaming; // true while chunks are arriving, cleared on stage3_complete
   const benchmark = evidence?.benchmark || {};
 
   return (
@@ -258,11 +259,21 @@ const Stage3 = memo(function Stage3({ finalResponse, evidence }) {
             </div>
           </div>
         ) : (
-          <div className="final-text markdown-content">
-            <SciMarkdown extraComponents={CITATION_LINK_COMPONENTS}>
-              {linkedResponse}
-            </SciMarkdown>
-          </div>
+          <>
+            <div className="final-text markdown-content">
+              <SciMarkdown extraComponents={CITATION_LINK_COMPONENTS}>
+                {linkedResponse}
+              </SciMarkdown>
+            </div>
+            {isChunking && (
+              <div className="stage3-inline-progress" role="status" aria-label="Chairman is still generating">
+                <div className="streaming-progress-bar" aria-hidden="true">
+                  <div className="streaming-progress-fill"></div>
+                </div>
+                <span className="inline-progress-text">Chairman is generating…</span>
+              </div>
+            )}
+          </>
         )}
 
         {/* Evidence sources panel */}
