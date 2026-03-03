@@ -399,12 +399,14 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
             // Route to the correct loading state based on target
             const tgt = event.data?.target || '';
             const isStage1 = tgt === 'Stage 1';
+            const isModelTarget = event.data?.target_type === 'model';
             streamUpdate((prev) => cloneLastMsg(prev, msg => {
               msg.loading.stage1 = isStage1;
               msg.loading.stage2 = false;
               msg.loading.stage3 = !isStage1;
               msg.targetedFollowup = event.data; // {target_type, target}
               if (isStage1) msg.stage1Progress = { completed: 0, failed: 0, total: 0 };
+              if (isModelTarget) msg._directModelTarget = tgt;
             }));
             break;
           }

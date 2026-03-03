@@ -3,6 +3,20 @@
   border-color: rgba(52, 211, 153, 0.3);
 }
 
+/* Direct model response variant — blue tint to distinguish from chairman synthesis */
+.stage3.direct-model {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.stage3.direct-model .final-response {
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.stage3.direct-model .chairman-label {
+  color: var(--accent);
+}
+
 .final-response {
   background: var(--bg-primary);
   padding: 20px;

@@ -1602,22 +1602,122 @@ Maintain pharmaceutical domain expertise and cite evidence where applicable."""
         yield f"data: {json.dumps({'type': 'complete'})}\n\n"
         return
 
-    # ━━ STAGE 3 / MODEL TARGET: Chairman-only fast path ━━━━━━━━━
-    # (original behavior: Stage 3 follow-ups and model-specific follow-ups)
+    # ━━ MODEL TARGET: Direct model response ━━━━━━━━━━━━━━━━━━━━━
+    # When the user targets a specific model, that MODEL answers directly
+    # (not the chairman). Falls back to chairman if the model fails.
+    if target_type == "model":
+        target_model = targeted.get("full_model_id", target_label)
+        logger.info("[Targeted Follow-Up] %s → direct model query to %s", target_label, target_model)
+
+        direct_prompt = f"""You previously answered a question as part of a multi-LLM council deliberation.
+The user is now asking YOU a follow-up question specifically about YOUR response.
+
+--- YOUR PREVIOUS RESPONSE ---
+{(reference_data or '')[:8000]}
+
+--- USER'S FOLLOW-UP QUESTION ---
+{user_question}
+
+Answer the follow-up question directly and thoroughly in your own voice.
+You are the council member being addressed — respond as the expert, not as a summariser.
+If the user asks for elaboration, go deeper into the topic with additional detail.
+If they ask for clarification, clarify your reasoning and provide supporting evidence.
+Maintain pharmaceutical domain expertise and cite evidence where applicable."""
+
+        yield f"data: {json.dumps({'type': 'stage3_start', 'data': {'direct_model': True, 'model': target_model}})}\n\n"
+
+        direct_response = None
+        try:
+            direct_response = await query_model(
+                target_model,
+                [{"role": "user", "content": direct_prompt}],
+                timeout=SPEED_TIMEOUT,
+                max_tokens=SPEED_S3_MAX_TOKENS,
+                session_id=session_id,
+            )
+        except Exception as e:
+            logger.warning(f"[Targeted Follow-Up] Direct model {target_model} failed: {e}, falling back to chairman")
+
+        # Fallback to chairman if target model fails
+        if direct_response is None:
+            logger.info(f"[Targeted Follow-Up] Falling back to chairman {chairman} for {target_label}")
+            fallback_prompt = f"""The user asked a follow-up about {target_label}'s response, but that model
+is unavailable. Please answer on behalf of the council.
+
+--- REFERENCED RESPONSE ({target_label}) ---
+{(reference_data or '')[:8000]}
+
+--- FOLLOW-UP QUESTION ---
+{user_question}
+
+Provide a thorough, direct answer. Maintain pharmaceutical domain expertise."""
+            try:
+                direct_response = await query_model(
+                    chairman,
+                    [{"role": "user", "content": fallback_prompt}],
+                    timeout=SPEED_TIMEOUT,
+                    max_tokens=SPEED_S3_MAX_TOKENS,
+                    session_id=session_id,
+                )
+                target_model = f"{chairman} (fallback for {target_label})"
+            except Exception as e2:
+                logger.error(f"[Targeted Follow-Up] Chairman fallback also failed: {e2}")
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Follow-up query failed: {e2}'})}\n\n"
+                return
+
+        stage3_result = {
+            "model": target_model,
+            "response": enrich_stage3_citations((direct_response or {}).get("content", "")),
+            "direct_model": True,
+        }
+
+        yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
+
+        # Cost, agents, storage — same flow as below
+        cost_summary = cost_tracker.summary()
+        yield f"data: {json.dumps({'type': 'cost_summary', 'data': cost_summary})}\n\n"
+
+        agent_team_result = None
+        try:
+            agent_team_result = await run_agent_team(
+                user_query=user_query,
+                stage1_results=prev_s1,
+                stage2_results=prev_s2,
+                stage3_result=stage3_result,
+                aggregate_rankings=prev_rankings,
+                grounding_scores=prev_grounding,
+                evidence_bundle=prev_evidence,
+                cost_summary=cost_summary,
+                web_search_enabled=web_search_enabled,
+            )
+        except Exception as e:
+            logger.warning(f"[Targeted Follow-Up] Agent team error: {e}")
+        if agent_team_result:
+            yield f"data: {json.dumps({'type': 'agent_team_complete', 'data': agent_team_result})}\n\n"
+
+        storage.add_assistant_message(
+            user_id, conversation_id, prev_s1, prev_s2, stage3_result,
+            metadata={
+                "label_to_model": prev_meta.get("label_to_model", {}),
+                "aggregate_rankings": prev_rankings,
+                "grounding_scores": prev_grounding,
+                "evidence": prev_evidence,
+                "targeted_followup": {"type": target_type, "target": target_label},
+                "context_tags": tf_context_tags,
+                **({"agent_team": agent_team_result} if agent_team_result else {}),
+            },
+        )
+        yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+        return
+
+    # ━━ STAGE 3 TARGET: Chairman fast path ━━━━━━━━━━━━━━━━━━━━━
+    # Stage 3 follow-ups go to the chairman for re-synthesis
     logger.info("[Targeted Follow-Up] %s → chairman fast path", target_label)
 
-    # ── Build a focused prompt for the chairman ──
-    if target_type == "stage":
-        # Stage 3
-        context_block = reference_data if isinstance(reference_data, str) else json.dumps(reference_data)
-    else:  # model
-        context_block = (
-            f"**{targeted.get('full_model_id', target_label)}**'s response:\n\n"
-            + (reference_data or "")
-        )
+    context_block = reference_data if isinstance(reference_data, str) else json.dumps(reference_data)
 
     focused_prompt = f"""The user previously asked a question and received a council deliberation.
-Now they have a follow-up question specifically about {target_label}{'`s response' if target_type == 'model' else ''}.
+Now they have a follow-up question specifically about {target_label}.
 
 --- REFERENCED CONTENT ---
 {context_block[:8000]}

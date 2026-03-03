@@ -531,7 +531,9 @@ export default function ChatInterface({
                     <div className="stage-loading">
                       <div className="spinner"></div>
                       <span>{msg.targetedFollowup
-                        ? `⚡ Focused follow-up on ${msg.targetedFollowup.target}...`
+                        ? msg.targetedFollowup.target_type === 'model'
+                          ? `⚡ ${msg.targetedFollowup.target} is responding directly...`
+                          : `⚡ Focused follow-up on ${msg.targetedFollowup.target}...`
                         : 'Running Stage 3: Final synthesis...'}</span>
                     </div>
                   )}

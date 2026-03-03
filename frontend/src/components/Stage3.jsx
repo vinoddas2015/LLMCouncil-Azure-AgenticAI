@@ -233,14 +233,18 @@ const Stage3 = memo(function Stage3({ finalResponse, evidence }) {
 
   const isStreaming = !finalResponse.response;
   const isChunking = !!finalResponse.streaming; // true while chunks are arriving, cleared on stage3_complete
+  const isDirectModel = !!finalResponse.direct_model;
   const benchmark = evidence?.benchmark || {};
+  const modelShort = finalResponse.model ? (finalResponse.model.split('/')[1] || finalResponse.model) : '…';
 
   return (
-    <div className="stage stage3">
-      <h3 className="stage-title">Stage 3: Final Council Answer</h3>
+    <div className={`stage stage3${isDirectModel ? ' direct-model' : ''}`}>
+      <h3 className="stage-title">
+        {isDirectModel ? `Direct Response from ${modelShort}` : 'Stage 3: Final Council Answer'}
+      </h3>
       <div className="final-response">
         <div className="chairman-label">
-          Chairman: {finalResponse.model ? (finalResponse.model.split('/')[1] || finalResponse.model) : '…'}
+          {isDirectModel ? '' : 'Chairman: '}{modelShort}
           {citations.length > 0 && (
             <span className="citation-badge" title={`${citations.length} citations from ${evidence.skills_used?.join(', ')}`}>
               📚 {citations.length} citations
@@ -249,11 +253,11 @@ const Stage3 = memo(function Stage3({ finalResponse, evidence }) {
         </div>
 
         {isStreaming ? (
-          <div className="stage3-streaming-indicator" role="status" aria-label="Chairman is synthesizing the final answer">
+          <div className="stage3-streaming-indicator" role="status" aria-label={isDirectModel ? `${modelShort} is responding` : 'Chairman is synthesizing the final answer'}>
             <div className="streaming-waves" aria-hidden="true">
               <span></span><span></span><span></span><span></span><span></span>
             </div>
-            <p className="streaming-text">Chairman is synthesizing the final answer…</p>
+            <p className="streaming-text">{isDirectModel ? `${modelShort} is responding…` : 'Chairman is synthesizing the final answer…'}</p>
             <div className="streaming-progress-bar" aria-hidden="true">
               <div className="streaming-progress-fill"></div>
             </div>
@@ -266,11 +270,11 @@ const Stage3 = memo(function Stage3({ finalResponse, evidence }) {
               </SciMarkdown>
             </div>
             {isChunking && (
-              <div className="stage3-inline-progress" role="status" aria-label="Chairman is still generating">
+              <div className="stage3-inline-progress" role="status" aria-label={isDirectModel ? `${modelShort} is generating` : 'Chairman is still generating'}>
                 <div className="streaming-progress-bar" aria-hidden="true">
                   <div className="streaming-progress-fill"></div>
                 </div>
-                <span className="inline-progress-text">Chairman is generating…</span>
+                <span className="inline-progress-text">{isDirectModel ? `${modelShort} is generating…` : 'Chairman is generating…'}</span>
               </div>
             )}
           </>
