@@ -235,7 +235,29 @@ _ONTOPIC_KEYWORDS = re.compile(
     r'research|study|literature|evidence|hypothesis|experiment|'
     r'data\s+analysis|mechanism\s+of\s+action|ADME|'
     r'toxicology|pharmacovigilance|'
-    r'PubMed|ClinicalTrials|DailyMed|DrugBank|RCSB|PDB|UniProt'
+    r'PubMed|ClinicalTrials|DailyMed|DrugBank|RCSB|PDB|UniProt|'
+    # Health Technology, Digital Health & Biotech Innovation
+    r'digital\s+health|health[\-\s]?tech|med[\-\s]?tech|biotech|'
+    r'bio[\-\s]?technology|digital\s+therapeutics|telemedicine|telehealth|'
+    r'wearable\s+health|remote\s+patient\s+monitoring|eHealth|mHealth|'
+    r'health\s+informatics|clinical\s+informatics|bioinformatics|'
+    r'computational\s+biology|systems\s+biology|synthetic\s+biology|'
+    r'precision\s+medicine|personalized\s+medicine|companion\s+diagnostic|'
+    r'CRISPR|gene\s+therapy|gene\s+editing|mRNA\s+technology|'
+    r'cell\s+therapy|CAR[\-\s]?T|organoid|organ[\-\s]?on[\-\s]?a[\-\s]?chip|'
+    r'AI\s+in\s+(?:pharma|drug\s+discovery|healthcare|medicine|diagnostics)|'
+    r'machine\s+learning\s+in\s+(?:pharma|drug|healthcare|clinical)|'
+    r'drug\s+discovery|drug\s+development|drug\s+design|'
+    r'real[\-\s]?world\s+(?:evidence|data)|electronic\s+health\s+record|EHR|'
+    r'clinical\s+decision\s+support|health\s+(?:IT|technology)|'
+    r'pharmaceutical\s+(?:technology|innovation|manufacturing)|'
+    r'continuous\s+manufacturing|process\s+analytical\s+technology|'
+    r'quality\s+by\s+design|GxP|lab\s+automation|'
+    r'robotic\s+surgery|surgical\s+robot|medical\s+device|'
+    r'3D\s+bio[\-\s]?printing|nano[\-\s]?medicine|nano[\-\s]?technology|'
+    r'pharmaceutical\s+supply\s+chain|serialization|track\s+and\s+trace|'
+    r'real[\-\s]?world\s+evidence|decentralized\s+trial|adaptive\s+trial|'
+    r'trend|innovation|emerging|landscape|disruption|transformation'
     r')\b',
     re.IGNORECASE,
 )
@@ -286,7 +308,7 @@ _OFFTOPIC_STRONG = re.compile(
 # LLM relevance check prompt (for ambiguous queries)
 # ═══════════════════════════════════════════════════════════════════
 
-_RELEVANCE_SYSTEM = """You are a gate-keeper for a pharmaceutical and life-sciences LLM council.
+_RELEVANCE_SYSTEM = """You are a gate-keeper for a pharmaceutical, biotech, and life-sciences LLM council.
 Your ONLY job is to decide whether a user's query is related to ANY of these domains:
   - Pharmaceutical sciences, drugs, medications, drug safety
   - Clinical research, clinical trials, regulatory affairs
@@ -299,12 +321,23 @@ Your ONLY job is to decide whether a user's query is related to ANY of these dom
   - Medical devices (if related to therapy/diagnosis)
   - Forensic medicine, forensic pathology, forensic toxicology, medico-legal science
   - Any medical speciality (radiology, anaesthesiology, ophthalmology, orthopaedics, etc.)
+  - Health technology, digital health, medtech, telemedicine, eHealth, mHealth
+  - AI/ML applied to drug discovery, diagnostics, clinical decision support, or healthcare
+  - Pharmaceutical technology trends, innovation, digital transformation in pharma/biotech
+  - Precision medicine, personalised medicine, companion diagnostics
+  - Gene therapy, cell therapy, mRNA technology, CRISPR, synthetic biology
+  - Pharmaceutical manufacturing technology (continuous manufacturing, PAT, QbD)
+  - Biotech industry trends, pharmaceutical industry landscape, market access
+  - Real-world evidence, decentralised trials, adaptive trial design
+  - Technology trends, emerging technologies, or innovation when related to any of the above
 
 Rules:
 - If the query is clearly about one of these domains → respond EXACTLY: YES
 - If the query mentions ANY medical speciality, field of medicine, or healthcare discipline → respond EXACTLY: YES
+- If the query is about technology trends, innovation, or emerging technologies → ASSUME pharmaceutical/biotech context and respond: YES
 - If the query mentions a term you do not recognise and it is NOT clearly a scientific/medical term → respond EXACTLY: NO
-- If the query is about general knowledge, entertainment, technology, coding, business, sports, cooking, travel, or any non-life-science topic → respond EXACTLY: NO
+- If the query is PURELY about consumer entertainment, sports, cooking, travel, gaming, or celebrity gossip → respond EXACTLY: NO
+- NOTE: "technology", "AI", "innovation", "trends", "digital" are ON-TOPIC when they can reasonably apply to pharma, biotech, healthcare, or life sciences. Only reject if the query is explicitly about consumer tech (e.g., "best smartphone", "laptop reviews")
 - When file attachments are mentioned (e.g. [Attachments: filename.png]), consider the filename as additional context — a file named 'forensic medicine.png' implies a medical topic
 - If the prompt includes extracted text from attached documents (after '---\nAttached Files:'), evaluate the EXTRACTED CONTENT for domain relevance, not just the user's short query
 - If the user is asking about "this document" / "the file" / "attached data" and the extracted content appears scientific or medical, respond: YES

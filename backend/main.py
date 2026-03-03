@@ -1527,48 +1527,148 @@ async def _run_targeted_followup(
         return
 
     elif target_type == "stage" and target_label == "Stage 2":
-        # ━━ STAGE 2 FOLLOW-UP: Re-run peer rankings with the follow-up context ━━
-        logger.info("[Targeted Follow-Up] Stage 2 → re-running peer evaluations")
+        # ━━ STAGE 2 FOLLOW-UP: Re-run actual peer evaluations ━━━━━━━
+        # Uses all council models to re-evaluate Stage 1 responses,
+        # injecting the follow-up question as additional context.
+        # Emits stage2_start → stage2_model_response → stage2_complete
+        # (NOT stage3 events — Stage 2 stays as Stage 2).
+        logger.info("[Targeted Follow-Up] Stage 2 → re-running peer evaluations with all council models")
 
-        # Build context: previous Stage 1 responses + follow-up question
-        context_lines = []
-        for r in (prev_s1 or []):
-            model_name = r.get("model", "unknown")
-            resp_text = (r.get("response", "") or "")[:2000]
-            context_lines.append(f"**{model_name}**:\n{resp_text}")
-        context_block = "\n\n---\n\n".join(context_lines)
+        yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
 
-        focused_prompt = f"""The user previously asked a question and the council provided Stage 1 responses.
-The user now has a follow-up question specifically about the Stage 2 peer evaluations.
+        # ── Build Stage 2 prompt with follow-up context ──
+        SPEED_S2_MAX_TOKENS = 1536 if speed_mode else None
+        s2_models = user_council_models or _COUNCIL_MODELS
+        s2_labels = [chr(65 + i) for i in range(len(prev_s1 or []))]
+        label_to_model = {
+            f"Response {label}": result['model']
+            for label, result in zip(s2_labels, prev_s1 or [])
+        }
 
---- ORIGINAL STAGE 1 RESPONSES ---
-{context_block[:8000]}
+        # Build conversation context for follow-up note
+        s2_context = build_conversation_context(conversation_history)
+        s2_context_note = f"\nNote: This is a follow-up question in an ongoing conversation.\n{s2_context}\n" if s2_context else ""
 
---- FOLLOW-UP QUESTION ---
+        # Augmented question includes follow-up context
+        augmented_question = f"""{user_query}
+
+[FOLLOW-UP CONTEXT] The user has a specific follow-up regarding the peer evaluations:
 {user_question}
 
-Re-evaluate the Stage 1 responses in light of this follow-up question.
-Provide detailed peer evaluation addressing the specific follow-up concern.
-Maintain pharmaceutical domain expertise and cite evidence where applicable."""
+Please re-evaluate the responses with this follow-up concern in mind."""
 
-        yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
+        # ── Position Debiasing per reviewer ──
+        s2_per_model_responses = {}
+        for m in s2_models:
+            shuf = list(range(len(prev_s1 or [])))
+            import random
+            random.shuffle(shuf)
+            s2_per_model_responses[m] = "\n\n".join([
+                f"Response {s2_labels[i]}:\n{(prev_s1 or [])[i].get('response', '')}"
+                for i in shuf
+            ])
 
-        try:
-            chairman_response = await query_model(
-                chairman, [{"role": "user", "content": focused_prompt}],
-                timeout=SPEED_TIMEOUT, max_tokens=SPEED_S3_MAX_TOKENS,
-                session_id=session_id,
-            )
-        except Exception as e:
-            logger.error(f"[Targeted S2] Chairman query failed: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'message': f'Follow-up query failed: {e}'})}\n\n"
-            return
+        # Use the same prompt template as the main pipeline
+        s2_prompt_template = """You are a pharmaceutical domain expert evaluating different responses to the following question:
+{context_note}
+Question: {question}
 
-        stage3_result = {
-            "model": chairman,
-            "response": enrich_stage3_citations((chairman_response or {}).get("content", "")),
+Here are the responses from different models (anonymized):
+
+{responses_text}
+
+═══════════════════════════════════════════════════════════
+PART 1 — RUBRIC EVALUATION
+═══════════════════════════════════════════════════════════
+For EACH response, provide a score from 0 to 10 on each criterion below.
+After each score, give a brief justification (1 sentence).
+
+Criteria:
+  • Relevancy (0-10): How directly and completely the response addresses the original question
+  • Faithfulness (0-10): Factual accuracy, absence of hallucinations
+  • Context Recall (0-10): Coverage of key concepts and nuances
+  • Output Quality (0-10): Clarity, structure, depth
+  • Consensus (0-10): Would other domain experts broadly agree?
+
+Format EXACTLY as follows for each response:
+
+RUBRIC Response X:
+  Relevancy: <score>/10 — <justification>
+  Faithfulness: <score>/10 — <justification>
+  Context Recall: <score>/10 — <justification>
+  Output Quality: <score>/10 — <justification>
+  Consensus: <score>/10 — <justification>
+
+═══════════════════════════════════════════════════════════
+FINAL RANKING
+═══════════════════════════════════════════════════════════
+Based on your rubric evaluation above, provide your final ranking
+from best to worst.
+
+IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
+- Start with the line "FINAL RANKING:" (all caps, with colon)
+- Then list the responses from best to worst as a numbered list
+- Each line should be: number, period, space, then ONLY the response label (e.g., "1. Response A")
+
+Now provide your complete evaluation:"""
+
+        # Build per-model messages
+        s2_per_model_msgs = {}
+        for m in s2_models:
+            s2_per_model_msgs[m] = [{"role": "user", "content": s2_prompt_template.format(
+                context_note=s2_context_note,
+                question=augmented_question,
+                responses_text=s2_per_model_responses.get(m, ""),
+            )}]
+
+        # ── Fire all reviewers in parallel ──
+        s2_tasks = {
+            asyncio.create_task(
+                query_model(m, s2_per_model_msgs[m],
+                            timeout=SPEED_TIMEOUT,
+                            web_search_enabled=web_search_enabled,
+                            session_id=session_id,
+                            max_tokens=SPEED_S2_MAX_TOKENS)
+            ): m
+            for m in s2_models
         }
-        yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
+
+        stage2_results = []
+        s2_pending = set(s2_tasks.keys())
+        s2_total = len(s2_models)
+
+        while s2_pending:
+            done, s2_pending = await asyncio.wait(s2_pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                model_name = s2_tasks[task]
+                try:
+                    resp = task.result()
+                    if resp is not None:
+                        full_text = resp.get('content', '')
+                        parsed = parse_ranking_from_text(full_text)
+                        rubric = parse_rubric_scores(full_text)
+                        claims = parse_claim_counts(full_text)
+                        result_item = {
+                            "model": model_name,
+                            "ranking": full_text,
+                            "parsed_ranking": parsed,
+                            "rubric_scores": rubric,
+                            "claim_counts": claims,
+                            "usage": resp.get('usage'),
+                        }
+                        stage2_results.append(result_item)
+                        cost_tracker.record("stage2", model_name, resp.get('usage'))
+                        yield f"data: {json.dumps({'type': 'stage2_model_response', 'data': result_item, 'progress': {'completed': len(stage2_results), 'total': s2_total}})}\n\n"
+                except Exception as e:
+                    logger.error(f"[Targeted S2] {model_name} failed: {e}")
+
+        # Compute aggregate rankings and grounding scores
+        aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
+        grounding_scores = compute_response_grounding_scores(
+            stage2_results, label_to_model, aggregate_rankings
+        )
+
+        yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'grounding_scores': grounding_scores}})}\n\n"
 
         cost_summary = cost_tracker.summary()
         yield f"data: {json.dumps({'type': 'cost_summary', 'data': cost_summary})}\n\n"
@@ -1577,8 +1677,8 @@ Maintain pharmaceutical domain expertise and cite evidence where applicable."""
         try:
             agent_team_result = await run_agent_team(
                 user_query=user_query, stage1_results=prev_s1,
-                stage2_results=prev_s2, stage3_result=stage3_result,
-                aggregate_rankings=prev_rankings, grounding_scores=prev_grounding,
+                stage2_results=stage2_results, stage3_result=prev_s3,
+                aggregate_rankings=aggregate_rankings, grounding_scores=grounding_scores,
                 evidence_bundle=prev_evidence, cost_summary=cost_summary,
                 web_search_enabled=web_search_enabled,
             )
@@ -1588,11 +1688,11 @@ Maintain pharmaceutical domain expertise and cite evidence where applicable."""
             yield f"data: {json.dumps({'type': 'agent_team_complete', 'data': agent_team_result})}\n\n"
 
         storage.add_assistant_message(
-            user_id, conversation_id, prev_s1, prev_s2, stage3_result,
+            user_id, conversation_id, prev_s1, stage2_results, prev_s3,
             metadata={
-                "label_to_model": prev_meta.get("label_to_model", {}),
-                "aggregate_rankings": prev_rankings,
-                "grounding_scores": prev_grounding,
+                "label_to_model": label_to_model,
+                "aggregate_rankings": aggregate_rankings,
+                "grounding_scores": grounding_scores,
                 "evidence": prev_evidence,
                 "targeted_followup": {"type": target_type, "target": target_label},
                 "context_tags": tf_context_tags,

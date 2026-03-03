@@ -2191,6 +2191,148 @@ _CI_KEYWORDS = re.compile(
 )
 
 
+# ═══════════════════════════════════════════════════════════════════
+# WEB SEARCH SKILL 29: SerpAPI — Google Search for Pharma/Biotech
+# Uses Google Search API via SerpAPI for high-quality pharma results
+# Env: SERPAPI_API_KEY
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_serpapi(query: str) -> List[Citation]:
+    """Search Google via SerpAPI filtered for pharma/biotech/clinical domains."""
+    citations: List[Citation] = []
+    api_key = os.getenv("SERPAPI_API_KEY", "")
+    if not api_key:
+        logger.debug("[SerpAPI] No SERPAPI_API_KEY configured — skipping")
+        return citations
+
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = " ".join(keywords[:6]) + " pharmaceutical biotech clinical"
+
+    url = "https://serpapi.com/search.json"
+    params = {
+        "q": search_term,
+        "api_key": api_key,
+        "engine": "google",
+        "num": MAX_CITATIONS_PER_SKILL * 2,
+        "hl": "en",
+        "gl": "us",
+    }
+
+    async with httpx.AsyncClient(http2=True, timeout=WEB_SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.get(url, params=params)
+            if resp.status_code != 200:
+                logger.warning(f"[SerpAPI] HTTP {resp.status_code}")
+                return citations
+
+            data = resp.json()
+            organic = data.get("organic_results", [])
+
+            for i, result in enumerate(organic[:MAX_CITATIONS_PER_SKILL]):
+                link = result.get("link", "")
+                title = result.get("title", "Search Result")
+                snippet = result.get("snippet", "")[:200]
+
+                if not link.startswith("http"):
+                    continue
+
+                is_auth = _is_authoritative(link)
+                base_relevance = 0.78 - i * 0.06
+                if is_auth:
+                    base_relevance = min(base_relevance + 0.10, 0.92)
+
+                citations.append(Citation(
+                    id=f"SERP-{len(citations)+1}",
+                    source="SerpAPI/Google" if not is_auth else "SerpAPI (.gov/.edu)",
+                    title=title[:150],
+                    url=link,
+                    snippet=snippet or f"Google Search: {' '.join(keywords[:3])}",
+                    relevance=base_relevance,
+                ))
+        except Exception as e:
+            logger.warning(f"[SerpAPI] Query failed: {e}")
+
+    return citations
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WEB SEARCH SKILL 30: Tavily — AI-Powered Research Search
+# Tavily provides AI-optimised search results for research queries
+# Env: TAVILY_API_KEY
+# ═══════════════════════════════════════════════════════════════════
+
+async def _query_tavily(query: str) -> List[Citation]:
+    """Search Tavily AI for pharma/biotech/clinical research content."""
+    citations: List[Citation] = []
+    api_key = os.getenv("TAVILY_API_KEY", "")
+    if not api_key:
+        logger.debug("[Tavily] No TAVILY_API_KEY configured — skipping")
+        return citations
+
+    keywords = _extract_medical_keywords(query)
+    if not keywords:
+        return citations
+
+    search_term = " ".join(keywords[:6])
+
+    url = "https://api.tavily.com/search"
+    payload = {
+        "api_key": api_key,
+        "query": search_term + " pharmaceutical biotech clinical research",
+        "search_depth": "advanced",
+        "include_domains": [
+            "nih.gov", "fda.gov", "ema.europa.eu", "who.int",
+            "pubmed.ncbi.nlm.nih.gov", "clinicaltrials.gov",
+            "nature.com", "sciencedirect.com", "thelancet.com",
+            "nejm.org", "bmj.com", "springer.com", "wiley.com",
+            "biorxiv.org", "medrxiv.org", "fiercepharma.com",
+            "fiercebiotech.com", "statnews.com", "endpts.com",
+            "evaluate.com", "pharmaintelligence.informa.com",
+        ],
+        "max_results": MAX_CITATIONS_PER_SKILL,
+    }
+
+    async with httpx.AsyncClient(http2=True, timeout=WEB_SKILL_TIMEOUT, verify=False) as client:
+        try:
+            resp = await client.post(url, json=payload)
+            if resp.status_code != 200:
+                logger.warning(f"[Tavily] HTTP {resp.status_code}")
+                return citations
+
+            data = resp.json()
+            results = data.get("results", [])
+
+            for i, result in enumerate(results[:MAX_CITATIONS_PER_SKILL]):
+                link = result.get("url", "")
+                title = result.get("title", "Research Result")
+                snippet = result.get("content", "")[:200]
+                score = result.get("score", 0.5)
+
+                if not link.startswith("http"):
+                    continue
+
+                is_auth = _is_authoritative(link)
+                base_relevance = min(0.70 + score * 0.20, 0.92) - i * 0.03
+                if is_auth:
+                    base_relevance = min(base_relevance + 0.05, 0.95)
+
+                citations.append(Citation(
+                    id=f"TAV-{len(citations)+1}",
+                    source="Tavily AI" if not is_auth else "Tavily (.gov/.edu)",
+                    title=title[:150],
+                    url=link,
+                    snippet=snippet or f"AI research: {' '.join(keywords[:3])}",
+                    relevance=base_relevance,
+                ))
+        except Exception as e:
+            logger.warning(f"[Tavily] Query failed: {e}")
+
+    return citations
+
+
 async def _query_competitive_intel(query: str) -> List[Citation]:
     """Competitive intelligence: track competitor pipelines, launches, messaging."""
     citations: List[Citation] = []
@@ -2933,6 +3075,8 @@ async def run_evidence_skills(
         tasks["OECD.AI"]          = asyncio.create_task(_query_oecd_ai(user_query))
         tasks["Endpoints News"]   = asyncio.create_task(_query_endpoints_news(user_query))
         tasks["Doctor Penguin"]   = asyncio.create_task(_query_doctor_penguin(user_query))
+        tasks["SerpAPI"]          = asyncio.create_task(_query_serpapi(user_query))
+        tasks["Tavily"]           = asyncio.create_task(_query_tavily(user_query))
 
     # Await all tasks and collect benchmarks
     results = {}
