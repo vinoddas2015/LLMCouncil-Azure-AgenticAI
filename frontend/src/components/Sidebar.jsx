@@ -2,6 +2,28 @@ import { useState, useEffect } from 'react';
 import ThemeToggle from './ThemeToggle';
 import './Sidebar.css';
 
+/**
+ * Format an ISO-8601 timestamp into a short, human-friendly string.
+ * - Today      → "14:32"
+ * - This year  → "26 Jun, 14:32"
+ * - Older      → "26 Jun 2024"
+ */
+function formatTimestamp(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const day = d.getDate();
+  const mon = months[d.getMonth()];
+
+  if (d.toDateString() === now.toDateString()) return time;                     // today
+  if (d.getFullYear() === now.getFullYear()) return `${day} ${mon}, ${time}`;   // this year
+  return `${day} ${mon} ${d.getFullYear()}`;                                     // older
+}
+
 export default function Sidebar({
   conversations,
   currentConversationId,
@@ -90,7 +112,12 @@ export default function Sidebar({
                 {conv.title || 'New Conversation'}
               </div>
               <div className="conversation-meta">
-                {conv.message_count} messages
+                <span className="meta-messages">{conv.message_count} messages</span>
+                {conv.created_at && (
+                  <span className="meta-timestamp" title={new Date(conv.created_at).toLocaleString()}>
+                    {formatTimestamp(conv.created_at)}
+                  </span>
+                )}
                 {conv.context_tags?.domain && conv.context_tags.domain !== 'general' && (
                   <span className="domain-tag" title={`Domain: ${conv.context_tags.domain_display || conv.context_tags.domain}`}>
                     {conv.context_tags.domain_display || conv.context_tags.domain.replace(/_/g, ' ').toUpperCase()}
