@@ -1984,7 +1984,6 @@ Now provide your complete evaluation:"""
                 except Exception:
                     pass  # non-fatal
                 try:
-                    from .council import generate_conversation_title
                     guard_title = await generate_conversation_title(storage_content_early)
                     if guard_title:
                         storage.update_conversation_title(user_id, conversation_id, guard_title)
@@ -2466,7 +2465,24 @@ Now provide your complete evaluation:"""
             # Record Stage 3 token usage
             cost_tracker.record("stage3", stage3_result.get("model", "unknown"), stage3_result.get("usage"))
 
-            # Await CA validation (should be done — ran during Stage 3)
+            # ── OPT-7: Fire DT immediately ∥ CA processing ─────────
+            # DT does NOT depend on CA results — fire its LLM call now
+            # so it overlaps with CA post-processing (saves 5-15s).
+            yield f"data: {json.dumps({'type': 'doubting_thomas_start'})}\n\n"
+            timer.start("doubting_thomas")
+            dt_task = asyncio.create_task(
+                doubting_thomas_review(
+                    user_query=augmented_content,
+                    draft_response=stage3_result.get("response", ""),
+                    stage1_results=stage1_results,
+                    relevancy_gate=relevancy_gate,
+                    chairman_model=user_chairman_model,
+                    web_search_enabled=web_search_enabled,
+                    session_id=session_id,
+                )
+            )
+
+            # While DT runs, process CA validation (should already be complete from Stage 3)
             # Skipped in speed mode (ca_validation_task is None)
             if ca_validation_task is not None:
                 try:
@@ -2504,22 +2520,12 @@ Now provide your complete evaluation:"""
                     logger.warning(f"[CA Validation] Non-fatal error: {e}")
                     # Continue without enhanced CA — original grounding_scores remain
 
-            # ── Doubting Thomas: detect-and-fix self-reflection loop ──
+            # ── Await Doubting Thomas (detect-and-fix self-reflection) ──
             # (arXiv:2602.03837 §Adversarial Reviewer; arXiv:2602.13949 §Reflection)
             # ALWAYS runs — even in speed mode — to preserve quality assurance
             dt_result = None
             try:
-                yield f"data: {json.dumps({'type': 'doubting_thomas_start'})}\n\n"
-                timer.start("doubting_thomas")
-                dt_result = await doubting_thomas_review(
-                    user_query=augmented_content,
-                    draft_response=stage3_result.get("response", ""),
-                    stage1_results=stage1_results,
-                    relevancy_gate=relevancy_gate,
-                    chairman_model=user_chairman_model,
-                    web_search_enabled=web_search_enabled,
-                    session_id=session_id,
-                )
+                dt_result = await dt_task
                 if dt_result.get("fix_applied"):
                     stage3_result["response"] = dt_result["revised_response"]
                     # Record DT token usage
@@ -2579,29 +2585,33 @@ Now provide your complete evaluation:"""
                     pass  # non-critical fallback
 
             # Save complete assistant message (including metadata for reload)
-            storage.add_assistant_message(
-                user_id,
-                conversation_id,
-                stage1_results,
-                stage2_results,
-                stage3_result,
-                metadata={
-                    "label_to_model": label_to_model,
-                    "aggregate_rankings": aggregate_rankings,
-                    "grounding_scores": grounding_scores,
-                    "evidence": evidence_bundle,
-                    "infographic": infographic_data,
-                    "memory_recall": memory_recall_data,
-                    "memory_gate": stage2_gate,
-                    "relevancy_gate": relevancy_gate,
-                    "doubting_thomas": {
-                        "defect_count": dt_result.get("defect_count", 0) if dt_result else 0,
-                        "needs_fix": dt_result.get("needs_fix", False) if dt_result else False,
-                        "fix_applied": dt_result.get("fix_applied", False) if dt_result else False,
+            try:
+                storage.add_assistant_message(
+                    user_id,
+                    conversation_id,
+                    stage1_results,
+                    stage2_results,
+                    stage3_result,
+                    metadata={
+                        "label_to_model": label_to_model,
+                        "aggregate_rankings": aggregate_rankings,
+                        "grounding_scores": grounding_scores,
+                        "evidence": evidence_bundle,
+                        "infographic": infographic_data,
+                        "memory_recall": memory_recall_data,
+                        "memory_gate": stage2_gate,
+                        "relevancy_gate": relevancy_gate,
+                        "doubting_thomas": {
+                            "defect_count": dt_result.get("defect_count", 0) if dt_result else 0,
+                            "needs_fix": dt_result.get("needs_fix", False) if dt_result else False,
+                            "fix_applied": dt_result.get("fix_applied", False) if dt_result else False,
+                        },
+                        "context_tags": context_tags,
                     },
-                    "context_tags": context_tags,
-                },
-            )
+                )
+            except Exception as e:
+                logger.error(f"[Storage] Failed to save assistant message: {e}")
+                yield f"data: {json.dumps({'type': 'storage_warning', 'data': {'message': 'Results displayed but could not be saved to history.'}})}\n\n"
 
             # Emit cost summary before completion
             timer.stop("total")

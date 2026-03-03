@@ -1572,7 +1572,7 @@ async def doubting_thomas_review(
     critique_result = await query_model(
         reviewer_to_use,
         critique_messages,
-        timeout=90.0,
+        timeout=45.0,
         web_search_enabled=False,  # no web search for internal review
         session_id=session_id,
     )
@@ -1645,7 +1645,7 @@ async def doubting_thomas_review(
     fix_result = await query_model(
         chairman_to_use,
         fix_messages,
-        timeout=120.0,
+        timeout=60.0,
         web_search_enabled=web_search_enabled,
         session_id=session_id,
     )

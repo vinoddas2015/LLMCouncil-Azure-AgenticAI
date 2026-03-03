@@ -484,7 +484,7 @@ The entire flow is async/parallel where possible to minimize latency.
 
 ### Infrastructure
 - **Resource Group**: `rg-llmcouncil` (East US)
-- **App Service Plan**: `asp-llmcouncil` (Linux, S2 Standard tier, shared by both apps)
+- **App Service Plan**: `asp-llmcouncil` (Linux, P1V3 Premium V3 tier, shared by both apps)
 - **Backend**: `llmcouncil-backend.azurewebsites.net` — Python/FastAPI, Gunicorn
 - **Frontend**: `llmcouncil-frontend.azurewebsites.net` — Node.js 24 LTS, Express 5 SPA server
 - **Redis Enterprise**: `llmcouncil-redis.eastus.redisenterprise.cache.azure.net` — Enterprise E10, capacity 2, 3-zone HA, AOF persistence 1s, port 10000, Redis 7.4, NoEviction policy

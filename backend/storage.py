@@ -71,7 +71,6 @@ def _get_cosmos_container():
         _cosmos_container = db.create_container_if_not_exists(
             id=COSMOS_CONVERSATIONS_CONTAINER,
             partition_key=PartitionKey(path="/user_id"),
-            offer_throughput=400,
         )
     return _cosmos_container
 

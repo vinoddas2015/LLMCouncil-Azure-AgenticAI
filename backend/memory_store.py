@@ -298,7 +298,6 @@ class CosmosDBBackend(MemoryStoreBackend):
         self._container = db.create_container_if_not_exists(
             id=container_name,
             partition_key=PartitionKey(path="/collection"),
-            offer_throughput=400,
         )
         self._user_id = user_id
         self._key_prefix = _user_hash(user_id)
@@ -691,7 +690,6 @@ def _get_cosmos_container():
             _cosmos_container = db.create_container_if_not_exists(
                 id=COSMOS_MEMORY_CONTAINER,
                 partition_key=PartitionKey(path="/collection"),
-                offer_throughput=400,
             )
     return _cosmos_container
 
