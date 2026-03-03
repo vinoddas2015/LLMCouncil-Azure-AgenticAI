@@ -538,7 +538,7 @@ export default function ChatInterface({
                     <div className="pipeline-error-state" role="alert">
                       <span className="pipeline-error-icon">⚠️</span>
                       <div className="pipeline-error-body">
-                        <span>Council response unavailable — the pipeline may have encountered an error.</span>
+                        <span>{msg._errorMessage || 'Council response unavailable — the pipeline may have encountered an error.'}</span>
                         {onRetryFailed && (
                           <button
                             className="pipeline-retry-button"

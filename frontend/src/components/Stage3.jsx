@@ -231,6 +231,7 @@ const Stage3 = memo(function Stage3({ finalResponse, evidence }) {
     return null;
   }
 
+  const isStreaming = !finalResponse.response;
   const benchmark = evidence?.benchmark || {};
 
   return (
@@ -238,18 +239,31 @@ const Stage3 = memo(function Stage3({ finalResponse, evidence }) {
       <h3 className="stage-title">Stage 3: Final Council Answer</h3>
       <div className="final-response">
         <div className="chairman-label">
-          Chairman: {finalResponse.model.split('/')[1] || finalResponse.model}
+          Chairman: {finalResponse.model ? (finalResponse.model.split('/')[1] || finalResponse.model) : '…'}
           {citations.length > 0 && (
             <span className="citation-badge" title={`${citations.length} citations from ${evidence.skills_used?.join(', ')}`}>
               📚 {citations.length} citations
             </span>
           )}
         </div>
-        <div className="final-text markdown-content">
-          <SciMarkdown extraComponents={CITATION_LINK_COMPONENTS}>
-            {linkedResponse}
-          </SciMarkdown>
-        </div>
+
+        {isStreaming ? (
+          <div className="stage3-streaming-indicator" role="status" aria-label="Chairman is synthesizing the final answer">
+            <div className="streaming-waves" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <p className="streaming-text">Chairman is synthesizing the final answer…</p>
+            <div className="streaming-progress-bar" aria-hidden="true">
+              <div className="streaming-progress-fill"></div>
+            </div>
+          </div>
+        ) : (
+          <div className="final-text markdown-content">
+            <SciMarkdown extraComponents={CITATION_LINK_COMPONENTS}>
+              {linkedResponse}
+            </SciMarkdown>
+          </div>
+        )}
 
         {/* Evidence sources panel */}
         {citations.length > 0 && (

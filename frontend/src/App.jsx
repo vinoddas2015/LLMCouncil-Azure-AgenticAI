@@ -609,6 +609,12 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
 
           case 'error':
             console.error('Stream error:', event.message);
+            // Clear ALL loading flags + store error message on the assistant message
+            // so the retry banner can display the actual error to the user
+            streamUpdate((prev) => cloneLastMsg(prev, msg => {
+              msg.loading = { stage1: false, stage2: false, stage3: false };
+              msg._errorMessage = event.message || 'The pipeline encountered an unexpected error.';
+            }));
             setIsLoading(false);
             setActiveSessionId(null);
             break;
@@ -698,6 +704,11 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
         return { ...prev, messages };
       });
       setIsLoading(false);
+    } finally {
+      // Safety net: if stream ended without 'complete' or 'error' event
+      // (e.g. proxy killed connection, network drop), ensure loading is cleared.
+      setIsLoading(false);
+      setActiveSessionId(null);
     }
   };
 

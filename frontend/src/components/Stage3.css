@@ -134,3 +134,91 @@
 [data-theme="light"] .evidence-item:hover {
   background: rgba(5, 150, 105, 0.06);
 }
+
+/* ── Stage 3 Streaming Progress Indicator ─────────────────────── */
+.stage3-streaming-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 20px;
+}
+
+/* Animated wave bars */
+.streaming-waves {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 40px;
+}
+
+.streaming-waves span {
+  display: inline-block;
+  width: 5px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #34d399, #06b6d4);
+  animation: wave-pulse 1.2s ease-in-out infinite;
+}
+
+.streaming-waves span:nth-child(1) { height: 12px; animation-delay: 0s; }
+.streaming-waves span:nth-child(2) { height: 20px; animation-delay: 0.1s; }
+.streaming-waves span:nth-child(3) { height: 32px; animation-delay: 0.2s; }
+.streaming-waves span:nth-child(4) { height: 20px; animation-delay: 0.3s; }
+.streaming-waves span:nth-child(5) { height: 12px; animation-delay: 0.4s; }
+
+@keyframes wave-pulse {
+  0%, 100% { transform: scaleY(0.4); opacity: 0.5; }
+  50%      { transform: scaleY(1);   opacity: 1; }
+}
+
+/* Status text */
+.streaming-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+/* Shimmer progress bar */
+.streaming-progress-bar {
+  width: 220px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(52, 211, 153, 0.12);
+  overflow: hidden;
+}
+
+.streaming-progress-fill {
+  width: 40%;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #34d399, #06b6d4, #34d399);
+  background-size: 200% 100%;
+  animation: shimmer-slide 1.8s linear infinite;
+}
+
+@keyframes shimmer-slide {
+  0%   { transform: translateX(-100%); background-position: 200% 0; }
+  100% { transform: translateX(350%);  background-position: 0 0; }
+}
+
+/* Reduced motion: freeze animations */
+@media (prefers-reduced-motion: reduce) {
+  .streaming-waves span { animation: none; transform: scaleY(0.7); opacity: 0.7; }
+  .streaming-progress-fill { animation: none; transform: none; }
+}
+
+/* Light theme tweaks */
+[data-theme="light"] .streaming-waves span {
+  background: linear-gradient(180deg, #059669, #0891b2);
+}
+
+[data-theme="light"] .streaming-progress-bar {
+  background: rgba(5, 150, 105, 0.1);
+}
+
+[data-theme="light"] .streaming-progress-fill {
+  background: linear-gradient(90deg, #059669, #0891b2, #059669);
+  background-size: 200% 100%;
+}
