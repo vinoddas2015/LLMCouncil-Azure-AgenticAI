@@ -1454,6 +1454,7 @@ async def validate_and_fix_citations(text: str) -> str:
 
     try:
         async with httpx.AsyncClient(
+            http2=True,
             verify=False,
             limits=httpx.Limits(max_connections=15, max_keepalive_connections=5),
             headers={"User-Agent": "LLMCouncil-CitationValidator/1.0"},

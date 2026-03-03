@@ -444,7 +444,7 @@ async def speech_token():
         "/sts/v1.0/issueToken"
     )
     try:
-        async with httpx.AsyncClient(verify=False, timeout=10) as client:
+        async with httpx.AsyncClient(http2=True, verify=False, timeout=10) as client:
             resp = await client.post(
                 token_url,
                 headers={"Ocp-Apim-Subscription-Key": _AZURE_SPEECH_KEY},

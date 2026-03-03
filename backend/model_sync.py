@@ -164,7 +164,7 @@ async def _fetch_catalog() -> List[Dict[str, Any]]:
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Accept": "application/json",
     }
-    async with httpx.AsyncClient(timeout=30, verify=False) as client:
+    async with httpx.AsyncClient(http2=True, timeout=30, verify=False) as client:
         resp = await client.get(_MODELS_URL, headers=headers)
         resp.raise_for_status()
         data = resp.json()

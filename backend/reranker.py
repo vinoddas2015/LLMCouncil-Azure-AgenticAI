@@ -102,7 +102,7 @@ async def rerank_citations(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=RERANK_TIMEOUT, verify=False) as client:
+        async with httpx.AsyncClient(http2=True, timeout=RERANK_TIMEOUT, verify=False) as client:
             response = await client.post(
                 RERANK_API_URL,
                 headers=headers,

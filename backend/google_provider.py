@@ -107,7 +107,7 @@ async def query_google_model(
         payload["tools"] = [{"google_search": {}}]
 
     # Corporate environment: disable SSL verification
-    async with httpx.AsyncClient(timeout=timeout, verify=False) as client:
+    async with httpx.AsyncClient(http2=True, timeout=timeout, verify=False) as client:
         response = await client.post(url, headers=headers, json=payload)
         response.raise_for_status()
 
@@ -187,7 +187,7 @@ async def list_google_models() -> List[Dict[str, str]]:
     headers = {"x-goog-api-key": GOOGLE_API_KEY}
 
     try:
-        async with httpx.AsyncClient(timeout=15, verify=False) as client:
+        async with httpx.AsyncClient(http2=True, timeout=15, verify=False) as client:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
 
