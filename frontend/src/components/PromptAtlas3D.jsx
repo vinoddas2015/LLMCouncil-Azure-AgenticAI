@@ -375,7 +375,7 @@ function buildTree(conversation) {
     const evChildren = ev.citations.slice(0, 12).map((c, i) => ({
       id: `ev-${i}`, type: 'evidence',
       icon: c.source === 'OpenFDA' ? '💊' : c.source === 'PubMed' ? '📄' : '🏥',
-      label: c.title?.slice(0, 100), badge: c.source,
+      label: c.title || 'Untitled source', badge: c.source,
       detail: (<div className="detail-text">
         <strong>{c.id}</strong> — {c.snippet}<br />
         <a href={c.url} target="_blank" rel="noopener noreferrer" className="evidence-link">

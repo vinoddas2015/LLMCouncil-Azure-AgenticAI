@@ -1102,6 +1102,9 @@ async def generate_conversation_title(user_query: str) -> str:
     """
     Generate a short title for a conversation based on the first user message.
 
+    Uses a primary model with a fallback model, and a last-resort heuristic
+    that extracts the first few meaningful words from the query.
+
     Args:
         user_query: The first user message
 
@@ -1117,24 +1120,51 @@ Title:"""
 
     messages = [{"role": "user", "content": title_prompt}]
 
-    # Use gemini-2.5-flash for title generation (fast and cheap)
-    # NOTE: Bayer API uses model IDs without vendor prefixes
-    response = await query_model("gemini-2.5-flash", messages, timeout=30.0)
+    # Try primary model first, then fallback models
+    _TITLE_MODELS = ["gemini-2.5-flash", "gpt-4.1-nano", "gpt-4.1-mini"]
 
-    if response is None:
-        # Fallback to a generic title
+    for model_id in _TITLE_MODELS:
+        try:
+            response = await query_model(model_id, messages, timeout=20.0)
+            if response and response.get('content'):
+                title = response['content'].strip().strip('"\'')
+                # Reject obviously bad titles
+                if title and len(title) > 2 and title.lower() not in ('title:', 'title', 'n/a', 'none'):
+                    if len(title) > 50:
+                        title = title[:47] + "..."
+                    return title
+        except Exception:
+            continue  # try next model
+
+    # Last-resort heuristic: extract first meaningful words from query
+    return _heuristic_title(user_query)
+
+
+def _heuristic_title(query: str) -> str:
+    """
+    Generate a heuristic title from the first meaningful words of a query.
+    Strips common question prefixes and returns 3-6 words.
+    """
+    import re
+    q = query.strip()
+    # Strip common question openers
+    for prefix in [
+        r"^(what|how|why|when|where|who|which|can you|could you|please|tell me about|explain|describe)\s+",
+        r"^(is|are|do|does|did|will|would|should|has|have|had)\s+",
+    ]:
+        q = re.sub(prefix, "", q, flags=re.IGNORECASE).strip()
+    words = q.split()
+    if len(words) == 0:
         return "New Conversation"
-
-    title = response.get('content', 'New Conversation').strip()
-
-    # Clean up the title - remove quotes, limit length
-    title = title.strip('"\'')
-
-    # Truncate if too long
+    # Take 3-6 words, capitalize first letter of each
+    title_words = words[:min(6, max(3, len(words)))]
+    title = " ".join(title_words).rstrip("?.!,;:")
+    # Capitalize first word only for natural look
+    if title:
+        title = title[0].upper() + title[1:]
     if len(title) > 50:
         title = title[:47] + "..."
-
-    return title
+    return title or "New Conversation"
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -792,31 +792,102 @@ class MemoryManager:
 # ╚══════════════════════════════════════════════════════════════════════╝
 
 # Domain keywords for auto-classification
+# Granular sub-domains for specific labelling beyond broad "pharma" / "regulatory"
 _DOMAIN_MAP = {
-    "pharma": [
-        "drug", "compound", "molecule", "clinical", "trial", "fda", "ema",
-        "dosage", "pharmacokinetic", "pharmacodynamic", "pk/pd", "adme",
-        "toxicology", "oncology", "cardiology", "neurology", "immunology",
-        "antibody", "vaccine", "biosimilar", "formulation", "excipient",
+    # ── Pharma sub-domains (most specific first) ─────────────────
+    "clinical_trials": [
+        "clinical trial", "phase 1", "phase 2", "phase 3", "phase i", "phase ii",
+        "phase iii", "phase iv", "rct", "randomized controlled", "placebo",
+        "endpoint", "enrollment", "eligibility criteria", "inclusion criteria",
+        "exclusion criteria", "protocol", "cohort", "arm", "blinding",
+        "double-blind", "open-label", "crossover", "ctgov", "clinicaltrials.gov",
     ],
+    "drug_safety": [
+        "adverse event", "adverse reaction", "side effect", "safety profile",
+        "toxicology", "toxicity", "ld50", "dose-limiting", "black box warning",
+        "contraindication", "drug interaction", "pharmacovigilance", "signal detection",
+        "periodic safety", "psur", "rems", "risk management", "safety signal",
+    ],
+    "oncology": [
+        "oncology", "cancer", "tumor", "tumour", "carcinoma", "lymphoma",
+        "leukemia", "melanoma", "sarcoma", "metastasis", "checkpoint inhibitor",
+        "car-t", "immuno-oncology", "solid tumor", "hematologic malignancy",
+        "progression-free survival", "overall survival", "recist",
+    ],
+    "cardiology": [
+        "cardiology", "cardiovascular", "heart failure", "atrial fibrillation",
+        "myocardial infarction", "stroke", "hypertension", "arrhythmia",
+        "anticoagulant", "attr-cm", "attr-pn", "transthyretin", "tafamidis",
+        "ejection fraction", "echocardiogram", "cardiac",
+    ],
+    "pharmacology": [
+        "pharmacokinetic", "pharmacodynamic", "pk/pd", "adme", "absorption",
+        "distribution", "metabolism", "excretion", "bioavailability",
+        "half-life", "clearance", "volume of distribution", "auc",
+        "cmax", "tmax", "dose-response", "receptor", "mechanism of action",
+    ],
+    "neurology": [
+        "neurology", "neurodegeneration", "alzheimer", "parkinson", "multiple sclerosis",
+        "epilepsy", "seizure", "neuropathy", "cns", "blood-brain barrier",
+        "neurotransmitter", "dopamine", "serotonin", "amyloid", "tau protein",
+    ],
+    "immunology": [
+        "immunology", "immune", "antibody", "monoclonal", "bispecific",
+        "autoimmune", "inflammation", "cytokine", "t-cell", "b-cell",
+        "immunoglobulin", "complement", "adaptive immunity", "innate immunity",
+    ],
+    "vaccines": [
+        "vaccine", "vaccination", "immunization", "mrna vaccine", "adjuvant",
+        "booster", "seroconversion", "antigen", "epitope",
+    ],
+    # ── Broad pharma (catch-all for general drug/molecule topics) ─
+    "pharma": [
+        "drug", "compound", "molecule", "dosage", "formulation", "excipient",
+        "biosimilar", "generic", "active ingredient", "api", "tablet",
+        "capsule", "injection", "infusion", "oral", "topical",
+    ],
+    # ── Chemistry ────────────────────────────────────────────────
     "chemistry": [
         "synthesis", "reaction", "smiles", "inchi", "chemical", "catalyst",
         "reagent", "yield", "stereochemistry", "chromatography", "nmr",
         "mass spec", "ic50", "ec50", "ki", "kd", "binding affinity",
     ],
+    # ── Regulatory sub-domains ───────────────────────────────────
     "regulatory": [
         "regulatory", "compliance", "submission", "ind", "nda", "bla",
         "ectd", "ich", "gmp", "gcp", "glp", "audit", "inspection",
+        "fda", "ema", "mhra", "pmda", "health authority",
     ],
     "market_access": [
         "market access", "payer", "reimbursement", "hta", "nice", "iqwig",
         "pricing", "value proposition", "competitive", "positioning",
+        "formulary", "cost-effectiveness", "qaly", "icer",
     ],
+    # ── Data Science / AI ────────────────────────────────────────
     "data_science": [
-        "machine learning", "deep learning", "neural network", "model",
-        "dataset", "pipeline", "api", "python", "statistics", "bayesian",
+        "machine learning", "deep learning", "neural network",
+        "dataset", "pipeline", "python", "statistics", "bayesian",
         "regression", "classification", "nlp", "llm", "transformer",
+        "fine-tuning", "training data", "feature engineering",
     ],
+}
+
+# Human-readable display labels for each domain
+_DOMAIN_DISPLAY = {
+    "clinical_trials": "CLINICAL TRIALS",
+    "drug_safety": "DRUG SAFETY",
+    "oncology": "ONCOLOGY",
+    "cardiology": "CARDIOLOGY",
+    "pharmacology": "PHARMACOLOGY",
+    "neurology": "NEUROLOGY",
+    "immunology": "IMMUNOLOGY",
+    "vaccines": "VACCINES",
+    "pharma": "PHARMA",
+    "chemistry": "CHEMISTRY",
+    "regulatory": "REGULATORY",
+    "market_access": "MARKET ACCESS",
+    "data_science": "DATA SCIENCE",
+    "general": "GENERAL",
 }
 
 _QUESTION_TYPE_MAP = {
@@ -891,6 +962,7 @@ class UserProfileMemory:
 
         return {
             "domain": top_domain,
+            "domain_display": _DOMAIN_DISPLAY.get(top_domain, top_domain.upper()),
             "domain_scores": domain_scores,
             "question_type": question_type,
             "complexity": complexity,
