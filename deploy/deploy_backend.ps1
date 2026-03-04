@@ -74,6 +74,7 @@ $filesToCopy = @(
     "backend\export_docx.py"
     "backend\export_pptx.py"
     "backend\image_gen.py"
+    "backend\image_cache.py"
     "run_server.py"
     "startup.sh"
     ".well-known\agent-card.json"

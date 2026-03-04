@@ -4,6 +4,11 @@ Providers (priority order):
 1. Google Imagen 4.0 Fast   — highest quality, ~10s per image  (:predict endpoint)
 2. Gemini Flash Image       — fast fallback, generates via chat completions
 
+Caching (3-tier serverless — see image_cache.py):
+  L1: In-memory (10 items, same-request dedup)
+  L2: Redis Enterprise (shared across instances, 1h TTL)
+  L3: Azure Blob Storage (permanent, unlimited, content-addressed)
+
 Quality features:
 - Parallel async generation for speed
 - Per-image quality validation using Gemini vision model
@@ -14,7 +19,6 @@ Quality features:
 import asyncio
 import base64
 import io
-import hashlib
 import logging
 import os
 import re
@@ -37,13 +41,13 @@ GEMINI_IMAGE_MODEL = "gemini-2.0-flash-exp-image-generation"
 # Quality validation model (fast vision model)
 QUALITY_VALIDATOR_MODEL = "gemini-2.5-flash"
 
-# ── In-memory image cache (per-process) ──────────────────────────────────
-_image_cache: Dict[str, bytes] = {}
-_MAX_CACHE_SIZE = 50  # max cached images
+# ── 3-tier serverless image cache ────────────────────────────────────────
+# L1 memory → L2 Redis → L3 Azure Blob  (see image_cache.py)
+from . import image_cache as _icache
 
-
-def _cache_key(prompt: str, aspect: str) -> str:
-    return hashlib.md5(f"{prompt}:{aspect}".encode()).hexdigest()
+# Legacy aliases kept for backward compat (Image Quality Agent reads these)
+_image_cache = _icache._l1_cache   # L1 reference for agents introspection
+_MAX_CACHE_SIZE = _icache._L1_MAX  # L1 max (tiny — dedup only)
 
 
 # ── Provider: Google Imagen 4.0 Fast ─────────────────────────────────────
@@ -225,9 +229,10 @@ async def generate_image(
     
     If validate=True, runs quality check and retries with refined prompt on low scores.
     """
-    key = _cache_key(prompt, aspect_ratio)
-    if key in _image_cache:
-        return _image_cache[key]
+    # ── Check 3-tier cache (L1 → L2 Redis → L3 Blob) ────────────────
+    cached = _icache.get(prompt, aspect_ratio)
+    if cached:
+        return cached
 
     image = None
 
@@ -268,12 +273,8 @@ async def generate_image(
                     image = retry_image
                     logger.info("Retry improved quality: %.2f → %.2f", score, retry_score)
 
-    # Cache result
-    if len(_image_cache) >= _MAX_CACHE_SIZE:
-        # Evict oldest
-        oldest = next(iter(_image_cache))
-        del _image_cache[oldest]
-    _image_cache[key] = image
+    # Write through all 3 cache tiers (L3 Blob → L2 Redis → L1 memory)
+    _icache.put(prompt, aspect_ratio, image)
 
     return image
 

@@ -2166,23 +2166,44 @@ async def image_quality_monitor_agent(
             "Export DOCX/PPTX will generate text-only documents. Set GOOGLE_API_KEY to enable.",
         ))
 
-    # ── Image cache stats ──────────────────────────────────────────
+    # ── Image cache stats (3-tier: L1 memory → L2 Redis → L3 Blob) ──
     try:
-        from .image_gen import _image_cache, _MAX_CACHE_SIZE
-        cache_count = len(_image_cache)
-        cache_pct = (cache_count / _MAX_CACHE_SIZE) * 100 if _MAX_CACHE_SIZE else 0
+        from .image_cache import get_image_cache_stats, get_l2_count, get_l3_count
+        stats = get_image_cache_stats()
+        l2_count = get_l2_count()
+        l3_count = get_l3_count()
+        hit_rate = stats.get("hit_rate_pct", 0)
+        total_hits = stats.get("l1_hits", 0) + stats.get("l2_hits", 0) + stats.get("l3_hits", 0)
+        total_misses = stats.get("misses", 0)
+
+        # Overall cache health signal
+        sev = "success" if hit_rate > 50 else ("info" if total_hits + total_misses < 5 else "warning")
         signals.append(_signal(
-            "quality", "info",
-            f"Image Cache: {cache_count}/{_MAX_CACHE_SIZE}",
-            f"Cache utilization: {cache_pct:.0f}%. Cached images avoid re-generation on repeated exports.",
+            "quality", sev,
+            f"Image Cache: {hit_rate:.0f}% hit rate",
+            f"L1 (memory): {stats.get('l1_hits', 0)} hits · "
+            f"L2 (Redis): {stats.get('l2_hits', 0)} hits ({l2_count} cached) · "
+            f"L3 (Blob): {stats.get('l3_hits', 0)} hits ({l3_count} stored) · "
+            f"Misses: {total_misses} · Writes: {stats.get('writes', 0)} · "
+            f"Errors: {stats.get('errors', 0)}",
         ))
-        metadata["cache_count"] = cache_count
-        metadata["cache_max"] = _MAX_CACHE_SIZE
+
+        # Per-tier detail
+        if l3_count > 0:
+            signals.append(_signal(
+                "quality", "success",
+                f"{l3_count} Permanent Images in Blob",
+                "Azure Blob Storage provides unlimited persistent image cache — survives restarts/redeploys.",
+            ))
+
+        metadata["cache_stats"] = stats
+        metadata["l2_cached"] = l2_count
+        metadata["l3_stored"] = l3_count
     except ImportError:
         signals.append(_signal(
             "quality", "warning",
-            "Image Gen Module Not Loaded",
-            "backend/image_gen.py could not be imported — export images will be unavailable.",
+            "Image Cache Module Not Loaded",
+            "backend/image_cache.py could not be imported — cache stats unavailable.",
         ))
 
     # ── Export readiness assessment ────────────────────────────────
@@ -2235,7 +2256,8 @@ async def image_quality_monitor_agent(
         summary=(
             f"{len(providers_available)} providers active · "
             f"~{estimated_images} images per export · "
-            f"cache {metadata.get('cache_count', 0)}/{metadata.get('cache_max', 50)}"
+            f"cache hit rate {metadata.get('cache_stats', {}).get('hit_rate_pct', 0):.0f}% · "
+            f"L3 blob: {metadata.get('l3_stored', 0)} permanent"
         ),
         confidence=conf,
         metadata=metadata,

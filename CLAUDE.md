@@ -76,6 +76,27 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - Summary emitted within `cost_summary` SSE event as `timing` field
 - Integrated into `main.py` event_generator with `time.perf_counter()` wall-clock measurements
 
+**`image_cache.py`** — 3-Tier Serverless Image Cache (500+ user scale)
+- **L1 In-Memory**: OrderedDict LRU, 10 items max, thread-safe (`threading.Lock`), same-request dedup only
+- **L2 Redis Enterprise**: Shared across all App Service instances, binary mode (`decode_responses=False`), TTL via `REDIS_IMAGE_TTL` (default 3600s), key prefix `img:`, LRU-like TTL refresh on read
+- **L3 Azure Blob Storage**: Permanent, unlimited, content-addressed (`{md5}.png` blobs), container auto-created on first use
+- Content-addressed keys: `md5(f"{prompt}:{aspect}")` — identical prompts from ANY user share one cached image
+- Read path: L1 → L2 miss → L3 miss → miss (generate)
+- Write path: L3 (Blob, permanent) → L2 (Redis, TTL) → L1 (in-process)
+- Public API: `get(prompt, aspect)`, `put(prompt, aspect, data)`, `exists(prompt, aspect)`, `cache_key(prompt, aspect)`
+- Stats: `get_image_cache_stats()` returns l1/l2/l3 hits, misses, writes, errors, hit_rate_pct
+- `get_l2_count()` / `get_l3_count()` for Redis/Blob item counts (graceful -1 on failure)
+- Env vars: `REDIS_IMAGE_TTL` (default 3600), `AZURE_BLOB_IMAGES_CONTAINER` (default "images")
+- Graceful degradation: every tier failure is non-fatal — falls through to next tier or generates fresh
+
+**`image_gen.py`** — Multi-Provider Image Generation Engine
+- Providers (priority): Azure DALL-E → Google Imagen 4.0 Fast → Gemini Flash Image
+- Imports `image_cache` module for 3-tier caching (replaced old 50-item in-memory dict)
+- `generate_image(prompt, aspect, validate, context)`: async single image with provider fallback
+- `generate_images_parallel(prompts, aspect, max_concurrent, validate, context)`: batch parallel generation with semaphore
+- Optional quality validation via Gemini 2.5 Flash vision model, auto-retry with refined prompt on low scores
+- Legacy aliases `_image_cache` and `_MAX_CACHE_SIZE` kept for backward compat with Image Quality Monitor agent
+
 **`grounding.py`** — Bias-Free Grounding Score Engine + RAGAS Alignment
 - Hybrid Verbalized Sampling + Synthetic Math scoring
 - Pharma-specific safety metrics: Correctness, Precision, Recall, F1 from TP/FP/FN confusion matrix
