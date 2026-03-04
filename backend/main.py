@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import uuid
 import json
+import io
 import os
 import asyncio
 import base64
@@ -738,23 +739,47 @@ async def export_conversation(conversation_id: str, user_id: str = Depends(get_a
     
     Args:
         conversation_id: The conversation ID
-        format: Export format - 'markdown' or 'json' (default: markdown)
+        format: Export format - 'markdown', 'json', 'docx', or 'pptx' (default: markdown)
     
     Returns:
-        The conversation in the requested format
+        markdown/json → JSON with {filename, content, content_type}
+        docx/pptx     → Binary file download (StreamingResponse)
     """
     conversation = storage.get_conversation(user_id, conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
+    safe_title = re.sub(r'[^\w\s-]', '', conversation.get('title', 'conversation')).strip()[:80] or 'conversation'
+
+    # ── DOCX export ──────────────────────────────────────────────
+    if format == "docx":
+        from .export_docx import generate_docx
+        docx_bytes = generate_docx(conversation)
+        return StreamingResponse(
+            io.BytesIO(docx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}.docx"'},
+        )
+
+    # ── PPTX export ──────────────────────────────────────────────
+    if format == "pptx":
+        from .export_pptx import generate_pptx
+        pptx_bytes = generate_pptx(conversation)
+        return StreamingResponse(
+            io.BytesIO(pptx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}.pptx"'},
+        )
+
+    # ── JSON export ──────────────────────────────────────────────
     if format == "json":
         return {
-            "filename": f"{conversation['title']}.json",
+            "filename": f"{safe_title}.json",
             "content": json.dumps(conversation, indent=2),
             "content_type": "application/json"
         }
     
-    # Default to Markdown format
+    # ── Default: Markdown export ─────────────────────────────────
     md_lines = [
         f"# {conversation['title']}",
         f"",
@@ -808,7 +833,7 @@ async def export_conversation(conversation_id: str, user_id: str = Depends(get_a
             md_lines.append("")
     
     return {
-        "filename": f"{conversation['title']}.md",
+        "filename": f"{safe_title}.md",
         "content": "\n".join(md_lines),
         "content_type": "text/markdown"
     }

@@ -71,6 +71,8 @@ $filesToCopy = @(
     "backend\health_probe.py"
     "backend\citation.py"
     "backend\pipeline_timer.py"
+    "backend\export_docx.py"
+    "backend\export_pptx.py"
     "run_server.py"
     "startup.sh"
     ".well-known\agent-card.json"

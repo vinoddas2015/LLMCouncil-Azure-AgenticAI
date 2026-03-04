@@ -253,20 +253,32 @@ function AuthenticatedApp({ handleLogout, userDisplayName }) {
     savePreferences(newPrefs);
   };
 
-  const handleExportConversation = async (conversationId) => {
+  const handleExportConversation = async (conversationId, format = 'markdown') => {
     try {
-      const exportData = await api.exportConversation(conversationId, 'markdown');
-      
-      // Create a blob and download it
-      const blob = new Blob([exportData.content], { type: exportData.content_type });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = exportData.filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const exportData = await api.exportConversation(conversationId, format);
+
+      if (format === 'docx' || format === 'pptx') {
+        // Binary download — blob already returned by api layer
+        const url = URL.createObjectURL(exportData.blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = exportData.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        // Text-based formats (markdown, json)
+        const blob = new Blob([exportData.content], { type: exportData.content_type });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = exportData.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
     } catch (error) {
       console.error('Failed to export conversation:', error);
       alert('Failed to export conversation');

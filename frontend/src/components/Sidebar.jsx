@@ -42,9 +42,9 @@ export default function Sidebar({
     setShowMenu(convId);
   };
 
-  const handleMenuAction = (action, convId) => {
+  const handleMenuAction = (action, convId, format) => {
     if (action === 'export') {
-      onExportConversation?.(convId);
+      onExportConversation?.(convId, format || 'markdown');
     } else if (action === 'delete') {
       onDeleteConversation?.(convId);
     }
@@ -138,10 +138,16 @@ export default function Sidebar({
               </button>
               {showMenu === conv.id && (
                 <div className="conv-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-                  <button role="menuitem" onClick={() => handleMenuAction('export', conv.id)}>
-                    📥 Export
+                  <button role="menuitem" onClick={() => handleMenuAction('export', conv.id, 'markdown')}>
+                    📝 Export Markdown
                   </button>
-                  <button 
+                  <button role="menuitem" onClick={() => handleMenuAction('export', conv.id, 'docx')}>
+                    📄 Export Word
+                  </button>
+                  <button role="menuitem" onClick={() => handleMenuAction('export', conv.id, 'pptx')}>
+                    📊 Export PowerPoint
+                  </button>
+                  <button
                     className="delete-action"
                     role="menuitem"
                     onClick={() => handleMenuAction('delete', conv.id)}

@@ -10,6 +10,7 @@ import LearnUnlearn from './LearnUnlearn';
 import EnhancePrompt from './EnhancePrompt';
 import AudioInput from './AudioInput';
 import DoubtingThomas from './DoubtingThomas';
+import ExportActions from './ExportActions';
 import { api } from '../api';
 import './ChatInterface.css';
 
@@ -543,6 +544,11 @@ export default function ChatInterface({
 
                   {/* Doubting Thomas — Adversarial Self-Reflection */}
                   {msg.doubtingThomas && <DoubtingThomas data={msg.doubtingThomas} />}
+
+                  {/* Export Actions — show after all stages complete */}
+                  {msg.stage3 && !msg.loading?.stage3 && conversation?.id && (
+                    <ExportActions conversationId={conversation.id} />
+                  )}
 
                   {/* Empty assistant message fallback — pipeline errored or data missing */}
                   {!msg.stage1 && !msg.stage2 && !msg.stage3

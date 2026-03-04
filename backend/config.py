@@ -37,6 +37,7 @@ GOOGLE_AVAILABLE_MODELS = [
     # ── Gemini 3.x (latest generation) ──
     {"id": "google/gemini-3-pro-preview", "name": "Gemini 3 Pro", "description": "Latest Gemini — cutting-edge reasoning & tools", "provider": "google"},
     {"id": "google/gemini-3-flash-preview", "name": "Gemini 3 Flash", "description": "Next-gen fast model — multimodal reasoning", "provider": "google"},
+    {"id": "google/gemini-3.1-flash-lite", "name": "Gemini 3.1 Flash-Lite", "description": "Ultra-fast, cost-efficient multimodal model", "provider": "google"},
     # ── Gemini 2.5 (stable) ──
     {"id": "google/gemini-2.5-pro", "name": "Gemini 2.5 Pro", "description": "Best stable reasoning, 1M context, thinking", "provider": "google"},
     {"id": "google/gemini-2.5-flash", "name": "Gemini 2.5 Flash", "description": "Fast reasoning, 1M context, cost-efficient", "provider": "google"},

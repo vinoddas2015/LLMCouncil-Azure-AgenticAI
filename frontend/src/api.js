@@ -352,8 +352,8 @@ export const api = {
   /**
    * Export a conversation in the specified format.
    * @param {string} conversationId - The conversation ID
-   * @param {string} format - Export format: 'markdown' or 'json'
-   * @returns {Promise<{filename: string, content: string, content_type: string}>}
+   * @param {string} format - Export format: 'markdown', 'json', 'docx', or 'pptx'
+   * @returns {Promise<{filename: string, content: string, content_type: string}|Blob>}
    */
   async exportConversation(conversationId, format = 'markdown') {
     const response = await fetchWithAuth(
@@ -361,6 +361,15 @@ export const api = {
     );
     if (!response.ok) {
       throw new Error('Failed to export conversation');
+    }
+    // Binary formats return a file download directly
+    if (format === 'docx' || format === 'pptx') {
+      const blob = await response.blob();
+      // Extract filename from Content-Disposition header or use fallback
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const filenameMatch = disposition.match(/filename="?([^";\n]+)"?/);
+      const filename = filenameMatch ? filenameMatch[1] : `conversation.${format}`;
+      return { blob, filename };
     }
     return response.json();
   },
