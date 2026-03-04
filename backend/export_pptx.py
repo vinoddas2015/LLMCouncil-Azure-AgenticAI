@@ -78,8 +78,9 @@ def _add_title_slide(prs: Presentation, conversation: Dict[str, Any]):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     sw, sh = prs.slide_width, prs.slide_height
 
+    # Light background — NO black/dark backgrounds
     bg = slide.shapes.add_shape(1, 0, 0, sw, sh)
-    bg.fill.solid(); bg.fill.fore_color.rgb = BAYER_DARK; bg.line.fill.background()
+    bg.fill.solid(); bg.fill.fore_color.rgb = LIGHT_BG; bg.line.fill.background()
 
     band = slide.shapes.add_shape(1, 0, Cm(7), sw, Cm(0.6))
     band.fill.solid(); band.fill.fore_color.rgb = BAYER_GREEN; band.line.fill.background()
@@ -88,21 +89,21 @@ def _add_title_slide(prs: Presentation, conversation: Dict[str, Any]):
     tf = tb.text_frame; tf.word_wrap = True
     p = tf.paragraphs[0]; p.text = conversation.get('title', 'LLM Council Report')
     p.font.size = Pt(34); p.font.bold = True
-    p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); p.alignment = PP_ALIGN.CENTER
+    p.font.color.rgb = BAYER_DARK; p.alignment = PP_ALIGN.CENTER
     sp = tf.add_paragraph(); sp.text = 'Multi-Model Deliberation'
     sp.font.size = Pt(16); sp.font.color.rgb = BAYER_GREEN; sp.alignment = PP_ALIGN.CENTER
     if conversation.get('created_at'):
         dp = tf.add_paragraph()
         dp.text = f"Generated: {conversation['created_at']}"
         dp.font.size = Pt(11)
-        dp.font.color.rgb = RGBColor(0xBB, 0xBB, 0xBB)
+        dp.font.color.rgb = GRAY_TEXT
         dp.alignment = PP_ALIGN.CENTER
 
     footer = slide.shapes.add_textbox(Cm(2.0), sh - Cm(1.5), sw - Cm(4.0), Cm(1.0))
     ft = footer.text_frame
-    fp = ft.paragraphs[0]; fp.text = 'Powered by Bayer myGenAssist'
+    fp = ft.paragraphs[0]; fp.text = 'Powered by: llmcouncil@bayer.com team members'
     fp.font.size = Pt(10)
-    fp.font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
+    fp.font.color.rgb = GRAY_TEXT
     fp.alignment = PP_ALIGN.CENTER
 
 
@@ -216,7 +217,9 @@ def _collect_image_prompts(conversation: Dict[str, Any],
                            user_question: str) -> Dict[str, str]:
     """Collect all image prompts for the entire deck.
 
-    Returns {key: prompt_text}. Keys like 'hero_1', 's1_<model>', etc.
+    Returns {key: prompt_text}. Keys like 'hero_1', 's1_<model>_c<idx>', etc.
+    Each content chunk gets its own unique prompt with a different visual
+    perspective to eliminate duplicate imagery across slides.
     """
     prompts: Dict[str, str] = {}
 
@@ -224,32 +227,41 @@ def _collect_image_prompts(conversation: Dict[str, Any],
     for stage in (1, 2, 3):
         prompts[f'hero_{stage}'] = build_section_prompt(stage, user_question)
 
-    # Per-model content images
+    # Per-chunk content images — every content slide gets a unique image
     for msg in conversation.get('messages', []):
         if msg.get('role') == 'user':
             continue
 
         for resp in (msg.get('stage1') or []):
             model = resp.get('model', 'model')
-            key = f's1_{model}'
-            if key not in prompts:
+            raw = _strip_md(resp.get('response', ''))
+            chunks = _chunk(raw)
+            for ci, chunk_text in enumerate(chunks):
+                key = f's1_{model}_c{ci}'
                 prompts[key] = build_slide_prompt(
-                    model, _strip_md(resp.get('response', '')), 1, user_question)
+                    model, chunk_text, 1, user_question,
+                    chunk_index=ci, total_chunks=len(chunks))
 
         for ranking in (msg.get('stage2') or []):
             model = ranking.get('model', 'reviewer')
-            key = f's2_{model}'
-            if key not in prompts:
+            raw = _strip_md(ranking.get('response', ''))
+            chunks = _chunk(raw)
+            for ci, chunk_text in enumerate(chunks):
+                key = f's2_{model}_c{ci}'
                 prompts[key] = build_slide_prompt(
-                    model, _strip_md(ranking.get('response', '')), 2, user_question)
+                    model, chunk_text, 2, user_question,
+                    chunk_index=ci, total_chunks=len(chunks))
 
         stage3 = msg.get('stage3')
         if stage3:
             model = stage3.get('model', 'chairman')
-            key = f's3_{model}'
-            if key not in prompts:
+            raw = _strip_md(stage3.get('response', ''))
+            chunks = _chunk(raw)
+            for ci, chunk_text in enumerate(chunks):
+                key = f's3_{model}_c{ci}'
                 prompts[key] = build_slide_prompt(
-                    model, _strip_md(stage3.get('response', '')), 3, user_question)
+                    model, chunk_text, 3, user_question,
+                    chunk_index=ci, total_chunks=len(chunks))
 
     return prompts
 
@@ -301,13 +313,13 @@ def generate_pptx(conversation: Dict[str, Any]) -> bytes:
                                hero_image=all_images.get('hero_1'))
             for resp in stage1:
                 model = resp.get('model', 'Model')
-                model_img = all_images.get(f's1_{model}')
                 chunks = _chunk(_strip_md(resp.get('response', '')))
                 for idx, chunk in enumerate(chunks, start=1):
+                    chunk_img = all_images.get(f's1_{model}_c{idx - 1}')
                     _add_content_slide(
                         prs, f"{model} ({idx}/{len(chunks)})",
                         chunk, STAGE_THEME[1]['accent'], 1,
-                        image=model_img)
+                        image=chunk_img)
 
         # Stage 2
         stage2 = msg.get('stage2') or []
@@ -317,13 +329,13 @@ def generate_pptx(conversation: Dict[str, Any]) -> bytes:
                                hero_image=all_images.get('hero_2'))
             for ranking in stage2:
                 model = ranking.get('model', 'Reviewer')
-                model_img = all_images.get(f's2_{model}')
                 chunks = _chunk(_strip_md(ranking.get('response', '')))
                 for idx, chunk in enumerate(chunks, start=1):
+                    chunk_img = all_images.get(f's2_{model}_c{idx - 1}')
                     _add_content_slide(
                         prs, f"{model} ({idx}/{len(chunks)})",
                         chunk, STAGE_THEME[2]['accent'], 2,
-                        image=model_img)
+                        image=chunk_img)
 
         # Stage 3
         stage3 = msg.get('stage3')
@@ -332,31 +344,31 @@ def generate_pptx(conversation: Dict[str, Any]) -> bytes:
                                'Final synthesis',
                                hero_image=all_images.get('hero_3'))
             model = stage3.get('model', 'Chairman')
-            model_img = all_images.get(f's3_{model}')
             chunks = _chunk(_strip_md(stage3.get('response', '')))
             for idx, chunk in enumerate(chunks, start=1):
+                chunk_img = all_images.get(f's3_{model}_c{idx - 1}')
                 _add_content_slide(
                     prs, f"{model} ({idx}/{len(chunks)})",
                     chunk, STAGE_THEME[3]['accent'], 3,
-                    image=model_img)
+                    image=chunk_img)
 
-    # ── Closing slide ────────────────────────────────────────────
+    # ── Closing slide (light background) ─────────────────────────
     closing = prs.slides.add_slide(prs.slide_layouts[6])
     sw, sh = prs.slide_width, prs.slide_height
     bg = closing.shapes.add_shape(1, 0, 0, sw, sh)
-    bg.fill.solid(); bg.fill.fore_color.rgb = BAYER_DARK; bg.line.fill.background()
+    bg.fill.solid(); bg.fill.fore_color.rgb = LIGHT_BG; bg.line.fill.background()
     band = closing.shapes.add_shape(1, 0, Cm(9.0), sw, Cm(0.4))
     band.fill.solid(); band.fill.fore_color.rgb = BAYER_GREEN; band.line.fill.background()
     tb = closing.shapes.add_textbox(Cm(2.0), Cm(5.0), sw - Cm(4.0), Cm(4.0))
     tf = tb.text_frame; tf.word_wrap = True
     p = tf.paragraphs[0]; p.text = 'End of Report'
     p.font.size = Pt(28); p.font.bold = True
-    p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); p.alignment = PP_ALIGN.CENTER
+    p.font.color.rgb = BAYER_DARK; p.alignment = PP_ALIGN.CENTER
     sp = tf.add_paragraph(); sp.text = 'LLM Council \u2014 Multi-Model Deliberation'
     sp.font.size = Pt(14); sp.font.color.rgb = BAYER_GREEN; sp.alignment = PP_ALIGN.CENTER
-    sp2 = tf.add_paragraph(); sp2.text = 'Bayer myGenAssist Platform'
+    sp2 = tf.add_paragraph(); sp2.text = 'Powered by: llmcouncil@bayer.com team members'
     sp2.font.size = Pt(11)
-    sp2.font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
+    sp2.font.color.rgb = GRAY_TEXT
     sp2.alignment = PP_ALIGN.CENTER
 
     buf = io.BytesIO()

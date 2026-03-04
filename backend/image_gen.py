@@ -1,8 +1,9 @@
 """Multi-provider image generation engine with quality validation.
 
 Providers (priority order):
-1. Google Imagen 4.0 Fast   — highest quality, ~10s per image  (:predict endpoint)
-2. Gemini Flash Image       — fast fallback, generates via chat completions
+1. Azure GPT-Image-1.5       — Microsoft Copilot quality, clean text-free images
+2. Google Imagen 4.0 Fast    — fast fallback (:predict endpoint)
+3. Gemini Flash Image        — chat-completions fallback
 
 Caching (3-tier serverless — see image_cache.py):
   L1: In-memory (10 items, same-request dedup)
@@ -13,7 +14,7 @@ Quality features:
 - Parallel async generation for speed
 - Per-image quality validation using Gemini vision model
 - Automatic retry with refined prompt on low-quality images
-- Graceful fallback: Imagen → Gemini Flash → None
+- Graceful fallback chain: GPT-Image → Imagen → Gemini Flash → None
 """
 
 import asyncio
@@ -31,6 +32,12 @@ from .config import GOOGLE_API_KEY
 logger = logging.getLogger(__name__)
 
 # ── Provider config ──────────────────────────────────────────────────────
+# GPT-Image-1.5 via Azure OpenAI (East US 2) — Microsoft Copilot quality
+GPT_IMAGE_ENDPOINT = os.getenv("GPT_IMAGE_ENDPOINT", "")
+GPT_IMAGE_KEY = os.getenv("GPT_IMAGE_KEY", "")
+GPT_IMAGE_DEPLOYMENT = os.getenv("GPT_IMAGE_DEPLOYMENT", "gpt-image")
+
+# Legacy Azure OpenAI DALL-E (deprecated March 2026)
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY", "")
 AZURE_OPENAI_DALLE_DEPLOYMENT = os.getenv("AZURE_OPENAI_DALLE_DEPLOYMENT", "dalle3")
@@ -159,6 +166,61 @@ async def _generate_azure_dalle(prompt: str, size: str = "1792x1024") -> Optiona
         return None
 
 
+# ── Provider: Azure OpenAI GPT-Image-1.5 (Microsoft Copilot quality) ─────
+async def _generate_gpt_image(prompt: str, aspect_ratio: str = "16:9") -> Optional[bytes]:
+    """Generate image via Azure OpenAI GPT-Image-1.5 deployment.
+
+    Sizes supported by gpt-image-1.5:
+      1536x1024 (landscape/16:9), 1024x1536 (portrait), 1024x1024 (square)
+    """
+    if not GPT_IMAGE_ENDPOINT or not GPT_IMAGE_KEY:
+        return None
+
+    size_map = {
+        "16:9": "1536x1024",
+        "3:4": "1024x1536",
+        "9:16": "1024x1536",
+        "1:1": "1024x1024",
+    }
+    size = size_map.get(aspect_ratio, "1536x1024")
+
+    url = (
+        f"{GPT_IMAGE_ENDPOINT.rstrip('/')}/openai/deployments/{GPT_IMAGE_DEPLOYMENT}"
+        f"/images/generations?api-version=2025-04-01-preview"
+    )
+    headers = {"api-key": GPT_IMAGE_KEY, "Content-Type": "application/json"}
+    payload = {
+        "prompt": prompt[:4000],
+        "n": 1,
+        "size": size,
+        "quality": "high",
+        "response_format": "b64_json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=120, verify=False) as client:
+            for attempt in range(3):
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code == 429:
+                    retry_after = int(resp.headers.get("retry-after", 10 * (attempt + 1)))
+                    logger.info("GPT-Image 429 — retrying in %ds (attempt %d/3)", retry_after, attempt + 1)
+                    await asyncio.sleep(retry_after)
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                images = data.get("data", [])
+                if not images:
+                    return None
+                b64 = images[0].get("b64_json")
+                if not b64:
+                    return None
+                return base64.b64decode(b64)
+            return None  # exhausted retries
+    except Exception as e:
+        logger.warning("GPT-Image-1.5 generation failed: %s", e)
+        return None
+
+
 # ── Image Quality Validator ──────────────────────────────────────────────
 async def validate_image_quality(
     image_bytes: bytes,
@@ -225,7 +287,7 @@ async def generate_image(
 ) -> Optional[bytes]:
     """Generate an image with multi-provider fallback.
     
-    Priority: Azure DALL-E → Google Imagen 4.0 → Gemini Flash
+    Priority: GPT-Image-1.5 → Google Imagen 4.0 → Gemini Flash
     
     If validate=True, runs quality check and retries with refined prompt on low scores.
     """
@@ -236,20 +298,19 @@ async def generate_image(
 
     image = None
 
-    # Try Azure DALL-E first (if configured)
-    if AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_KEY:
-        size = "1792x1024" if aspect_ratio == "16:9" else "1024x1024"
-        image = await _generate_azure_dalle(prompt, size)
+    # 1) GPT-Image-1.5 (Microsoft Copilot quality)
+    if GPT_IMAGE_ENDPOINT and GPT_IMAGE_KEY:
+        image = await _generate_gpt_image(prompt, aspect_ratio)
         if image:
-            logger.info("Image generated via Azure DALL-E (%d bytes)", len(image))
+            logger.info("Image generated via GPT-Image-1.5 (%d bytes)", len(image))
 
-    # Fallback: Google Imagen 4.0 Fast
+    # 2) Fallback: Google Imagen 4.0 Fast
     if not image:
         image = await _generate_imagen(prompt, aspect_ratio)
         if image:
             logger.info("Image generated via Imagen 4.0 Fast (%d bytes)", len(image))
 
-    # Fallback: Gemini Flash
+    # 3) Fallback: Gemini Flash
     if not image:
         image = await _generate_gemini_flash(prompt)
         if image:
@@ -318,48 +379,86 @@ async def generate_images_parallel(
 
 
 # ── Prompt builder for slides ────────────────────────────────────────────
+
+# Visual perspectives cycled across chunks to ensure unique imagery per slide
+_PERSPECTIVES = [
+    "wide establishing shot, panoramic composition",
+    "close-up detail view, macro focus",
+    "isometric 3D diagram style, birds-eye view",
+    "split-screen comparison layout, side by side",
+    "dynamic diagonal composition, action perspective",
+    "minimalist flat illustration, clean geometric shapes",
+    "layered depth composition, foreground-midground-background",
+    "circular radial composition, hub-and-spoke layout",
+]
+
+
 def build_slide_prompt(
     model_name: str,
     content_snippet: str,
     stage: int,
     user_question: str = "",
+    chunk_index: int = 0,
+    total_chunks: int = 1,
 ) -> str:
-    """Build a contextual image prompt for a specific slide.
-    
-    Creates a prompt that captures the essence of the model's response content,
-    suitable for a professional pharma presentation backdrop.
+    """Build a unique image prompt for a specific slide chunk.
+
+    Each chunk gets a different visual perspective to eliminate duplicate imagery.
+    Strong no-text directive prevents garbled text artifacts in generated images.
     """
-    # Extract key topics from content (first 150 chars as seed)
-    snippet = content_snippet[:150].strip()
-    
+    snippet = content_snippet[:200].strip()
+
     stage_context = {
-        1: "scientific research, data analysis, model brainstorm",
-        2: "peer review, evaluation board, ranking assessment",
-        3: "executive synthesis, final decision, strategic summary",
+        1: "scientific research and data analysis",
+        2: "peer review evaluation and quality assessment",
+        3: "executive synthesis and strategic decision",
     }
-    
     base = stage_context.get(stage, "scientific illustration")
-    
+
+    # Cycle through perspectives based on chunk index
+    perspective = _PERSPECTIVES[chunk_index % len(_PERSPECTIVES)]
+
     prompt = (
-        f"Professional pharmaceutical illustration for corporate presentation. "
-        f"{base}. "
-        f"Topic context: {user_question[:100]}. "
-        f"Content focus: {snippet}. "
-        f"Style: clean, modern, Bayer corporate, scientific, data visualization. "
-        f"No text in image. High quality, sharp."
+        f"Professional photorealistic illustration for a pharma presentation slide. "
+        f"Visual style: {perspective}. "
+        f"Theme: {base}. "
+        f"Topic: {user_question[:100]}. "
+        f"Visual focus: {snippet}. "
+        f"Clean, modern, corporate design with rich colour palette. "
+        f"ABSOLUTELY NO TEXT, NO WORDS, NO LETTERS, NO NUMBERS, NO LABELS, "
+        f"NO WATERMARKS anywhere in the image. Pure visual imagery only."
     )
-    
-    return prompt[:500]
+
+    return prompt[:4000]
 
 
 def build_section_prompt(stage: int, user_question: str) -> str:
-    """Build a hero image prompt for a stage section slide."""
+    """Build a hero image prompt for a stage section divider slide."""
     prompts = {
-        1: f"Wide cinematic illustration: scientific brainstorm session, multiple AI models analyzing data, pharma research context. Topic: {user_question[:150]}",
-        2: f"Wide cinematic illustration: peer review and evaluation board, ranking charts, collaborative assessment. Topic: {user_question[:150]}",
-        3: f"Wide cinematic illustration: executive boardroom synthesis, unified decision from multiple perspectives, pharma strategy. Topic: {user_question[:150]}",
+        1: (
+            f"Wide cinematic photorealistic illustration: scientific brainstorm session, "
+            f"multiple perspectives analyzing complex data, pharma research laboratory setting. "
+            f"Topic: {user_question[:150]}. "
+            f"ABSOLUTELY NO TEXT, NO WORDS, NO LETTERS, NO NUMBERS in the image."
+        ),
+        2: (
+            f"Wide cinematic photorealistic illustration: peer review evaluation panel, "
+            f"quality assessment dashboard, collaborative scientific assessment. "
+            f"Topic: {user_question[:150]}. "
+            f"ABSOLUTELY NO TEXT, NO WORDS, NO LETTERS, NO NUMBERS in the image."
+        ),
+        3: (
+            f"Wide cinematic photorealistic illustration: executive boardroom synthesis, "
+            f"unified decision emerging from multiple data streams, strategic pharma overview. "
+            f"Topic: {user_question[:150]}. "
+            f"ABSOLUTELY NO TEXT, NO WORDS, NO LETTERS, NO NUMBERS in the image."
+        ),
     }
-    return prompts.get(stage, f"Professional pharmaceutical illustration about: {user_question[:200]}")
+    return prompts.get(stage, (
+        f"Professional photorealistic pharmaceutical illustration about: "
+        f"{user_question[:200]}. "
+        f"ABSOLUTELY NO TEXT, NO WORDS, NO LETTERS, NO NUMBERS in the image."
+    ))
 
 
 # ── Synchronous wrapper for non-async callers ────────────────────────────
