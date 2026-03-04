@@ -2116,6 +2116,133 @@ async def memory_orchestrator_agent(
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
+# ║  🖼️  Image Quality Monitor Agent                                    ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+async def image_quality_monitor_agent(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage3_result: Dict[str, Any],
+    cost_summary: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Monitors image generation subsystem health, provider availability,
+    and export readiness.  Reports on image quality capabilities.
+    """
+    import os
+    signals = []
+    metadata: Dict[str, Any] = {}
+
+    # ── Provider availability check ────────────────────────────────
+    google_key = bool(os.getenv("GOOGLE_API_KEY"))
+    azure_endpoint = bool(os.getenv("AZURE_OPENAI_ENDPOINT"))
+    azure_key = bool(os.getenv("AZURE_OPENAI_KEY"))
+
+    providers_available = []
+    providers_unavailable = []
+
+    if google_key:
+        providers_available.append("Google Imagen 4.0 Fast")
+        providers_available.append("Gemini Flash Image")
+    else:
+        providers_unavailable.append("Google Imagen 4.0 Fast")
+        providers_unavailable.append("Gemini Flash Image")
+
+    if azure_endpoint and azure_key:
+        providers_available.append("Azure DALL-E")
+    else:
+        providers_unavailable.append("Azure DALL-E (not configured)")
+
+    if providers_available:
+        signals.append(_signal(
+            "quality", "success",
+            f"{len(providers_available)} Image Providers Online",
+            f"Active: {', '.join(providers_available)}.",
+        ))
+    else:
+        signals.append(_signal(
+            "quality", "critical",
+            "No Image Providers Available",
+            "Export DOCX/PPTX will generate text-only documents. Set GOOGLE_API_KEY to enable.",
+        ))
+
+    # ── Image cache stats ──────────────────────────────────────────
+    try:
+        from .image_gen import _image_cache, _MAX_CACHE_SIZE
+        cache_count = len(_image_cache)
+        cache_pct = (cache_count / _MAX_CACHE_SIZE) * 100 if _MAX_CACHE_SIZE else 0
+        signals.append(_signal(
+            "quality", "info",
+            f"Image Cache: {cache_count}/{_MAX_CACHE_SIZE}",
+            f"Cache utilization: {cache_pct:.0f}%. Cached images avoid re-generation on repeated exports.",
+        ))
+        metadata["cache_count"] = cache_count
+        metadata["cache_max"] = _MAX_CACHE_SIZE
+    except ImportError:
+        signals.append(_signal(
+            "quality", "warning",
+            "Image Gen Module Not Loaded",
+            "backend/image_gen.py could not be imported — export images will be unavailable.",
+        ))
+
+    # ── Export readiness assessment ────────────────────────────────
+    model_count = len(stage1_results)
+    # Estimate total images needed for a full export
+    estimated_images = 3 + model_count  # 3 heroes + 1 per model (stage1 only for estimate)
+    est_time_sec = estimated_images * 8  # ~8s per image average
+
+    if providers_available:
+        signals.append(_signal(
+            "insight", "info",
+            f"Export Ready: ~{estimated_images} Images",
+            f"Full PPTX/DOCX export would generate ~{estimated_images} contextual images "
+            f"(~{est_time_sec}s with parallel 4x). Every slide gets a unique visual.",
+        ))
+    else:
+        signals.append(_signal(
+            "insight", "warning",
+            "Text-Only Export Mode",
+            "No image providers configured — exports will be text-only without visual enhancement.",
+        ))
+
+    # ── Content richness for image prompts ─────────────────────────
+    total_chars = sum(len(r.get("response", "")) for r in stage1_results)
+    avg_chars = total_chars // max(model_count, 1)
+    if avg_chars > 500:
+        signals.append(_signal(
+            "quality", "success",
+            "Rich Content for Image Prompts",
+            f"Average {avg_chars} chars/model — sufficient context for high-quality image generation.",
+        ))
+    elif avg_chars < 100:
+        signals.append(_signal(
+            "quality", "warning",
+            "Sparse Content for Images",
+            f"Average {avg_chars} chars/model — image prompts may lack context specificity.",
+        ))
+
+    metadata["providers_available"] = providers_available
+    metadata["providers_unavailable"] = providers_unavailable
+    metadata["estimated_images"] = estimated_images
+
+    conf = 0.9 if providers_available else 0.3
+
+    return _agent_result(
+        agent_id="image_quality_monitor",
+        role="Image Quality Monitor",
+        icon="\U0001f5bc\ufe0f",
+        signals=signals,
+        summary=(
+            f"{len(providers_available)} providers active · "
+            f"~{estimated_images} images per export · "
+            f"cache {metadata.get('cache_count', 0)}/{metadata.get('cache_max', 50)}"
+        ),
+        confidence=conf,
+        metadata=metadata,
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════════╗
 # ║  🎯  Competitive Intelligence Agent (Pharma Intel)                  ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -3189,6 +3316,7 @@ async def run_agent_team(
         citation_supervisor_agent(stage3_result, evidence_bundle),
         skills_manager_agent(evidence_bundle, web_search_enabled),
         memory_orchestrator_agent(user_query, stage3_result, grounding_scores, cost_summary),
+        image_quality_monitor_agent(user_query, stage1_results, stage3_result, cost_summary),
     ]
 
     # ── VP-specialist agents (only in value_proposition mode) ──

@@ -545,11 +545,6 @@ export default function ChatInterface({
                   {/* Doubting Thomas — Adversarial Self-Reflection */}
                   {msg.doubtingThomas && <DoubtingThomas data={msg.doubtingThomas} />}
 
-                  {/* Export Actions — show after all stages complete */}
-                  {msg.stage3 && !msg.loading?.stage3 && conversation?.id && (
-                    <ExportActions conversationId={conversation.id} />
-                  )}
-
                   {/* Empty assistant message fallback — pipeline errored or data missing */}
                   {!msg.stage1 && !msg.stage2 && !msg.stage3
                     && !msg.loading?.stage1 && !msg.loading?.stage2 && !msg.loading?.stage3
@@ -608,6 +603,11 @@ export default function ChatInterface({
                       memoryRecall={msg.memoryRecall || msg.metadata?.memory_recall}
                       memoryGate={msg.memoryGate || msg.metadata?.memory_gate}
                     />
+                  )}
+
+                  {/* Export Actions — show after all stages + learning controls */}
+                  {msg.stage3 && !msg.loading?.stage3 && conversation?.id && (
+                    <ExportActions conversationId={conversation.id} />
                   )}
                 </div>
               )}

@@ -12,6 +12,11 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 # Google AI Studio API key (get one at https://aistudio.google.com/apikey)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
+# Azure OpenAI (for DALL-E / image gen when available)
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY", "")
+AZURE_OPENAI_DALLE_DEPLOYMENT = os.getenv("AZURE_OPENAI_DALLE_DEPLOYMENT", "dalle3")
+
 # ── Bayer myGenAssist models (static fallback — auto-synced at runtime) ───
 # NOTE: These are only used if live sync hasn't populated yet.
 # Model IDs must match exactly as shown in the MyGenAssist API.
