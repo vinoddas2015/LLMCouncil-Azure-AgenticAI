@@ -52,27 +52,26 @@ def _strip_md(text: str) -> str:
 
 
 def _generate_stage_image(prompt: str) -> Optional[bytes]:
-    """Call Google Imagen to generate a base64 image. Returns PNG bytes or None on failure."""
+    """Call Google Imagen 4 Fast to generate an image. Returns PNG bytes or None on failure."""
     if not GOOGLE_API_KEY:
         return None
 
-    url = "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0:generateImage"
+    url = "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-fast-generate-001:predict"
     headers = {"x-goog-api-key": GOOGLE_API_KEY, "Content-Type": "application/json"}
     payload = {
-        "prompt": {"text": prompt[:500]},
-        "aspectRatio": "16:9",
-        "negativePrompt": "watermark, text, logo, words, artifacts",
+        "instances": [{"prompt": prompt[:500]}],
+        "parameters": {"sampleCount": 1, "aspectRatio": "16:9"},
     }
 
     try:
-        with httpx.Client(timeout=40, verify=False) as client:
+        with httpx.Client(timeout=60, verify=False) as client:
             resp = client.post(url, headers=headers, json=payload)
             resp.raise_for_status()
             data = resp.json()
-            images = data.get("images") or data.get("generatedImages") or []
-            if not images:
+            predictions = data.get("predictions", [])
+            if not predictions:
                 return None
-            b64 = images[0].get("image") or images[0].get("base64Data")
+            b64 = predictions[0].get("bytesBase64Encoded") or predictions[0].get("image")
             if not b64:
                 return None
             return base64.b64decode(b64)
